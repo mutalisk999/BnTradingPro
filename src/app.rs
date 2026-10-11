@@ -7,14 +7,16 @@ use crate::engine::state::SharedState;
 use crate::engine::{Command, Engine};
 use crate::security::vault;
 use crate::ui::{chart, orders, settings, theme, trade, unlock, widgets};
+use chrono::TimeZone;
 use eframe::egui;
 use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
-    SetupMaster,
+    /// 已有凭据库，等待解锁
     Unlock,
+    /// 配置 API 密钥（首次/重置/更换；与主密码一体设置）
     EnterKeys,
     Main,
 }
@@ -26,15 +28,17 @@ pub enum Tab {
     Futures,
     Portfolio,
     Settings,
+    Help,
 }
 
 impl Tab {
     pub fn label(&self) -> &'static str {
         match self {
-            Tab::Spot => "现货交易",
-            Tab::Futures => "期货交易",
-            Tab::Portfolio => "Portfolio",
-            Tab::Settings => "设置",
+            Tab::Spot => crate::i18n::tr("现货交易"),
+            Tab::Futures => crate::i18n::tr("期货交易"),
+            Tab::Portfolio => crate::i18n::tr("Portfolio"),
+            Tab::Settings => crate::i18n::tr("设置"),
+            Tab::Help => crate::i18n::tr("使用说明"),
         }
     }
 
@@ -104,6 +108,10 @@ pub struct SettingsDraft {
     pub override_fut_ws: String,
     pub proxy_enabled: bool,
     pub proxy_url: String,
+    pub lang: String,
+    pub theme_mode: String,
+    pub favorites_spot: Vec<String>,
+    pub favorites_futures: Vec<String>,
 }
 
 impl SettingsDraft {
@@ -121,6 +129,10 @@ impl SettingsDraft {
             override_fut_ws: cfg.override_fut_ws.clone(),
             proxy_enabled: cfg.proxy.enabled,
             proxy_url: cfg.proxy.url.clone(),
+            lang: cfg.lang.clone(),
+            theme_mode: cfg.theme_mode.clone(),
+            favorites_spot: cfg.favorites_spot.clone(),
+            favorites_futures: cfg.favorites_futures.clone(),
         }
     }
 
@@ -132,6 +144,10 @@ impl SettingsDraft {
             recv_window_ms: self.recv_window_ms,
             http_timeout_secs: self.http_timeout_secs,
             log_level: self.log_level,
+            lang: self.lang,
+            theme_mode: self.theme_mode,
+            favorites_spot: self.favorites_spot,
+            favorites_futures: self.favorites_futures,
             override_spot_rest: self.override_spot_rest,
             override_spot_ws: self.override_spot_ws,
             override_fut_rest: self.override_fut_rest,
@@ -159,13 +175,15 @@ pub struct BnApp {
 
     /// 当前顶层页签
     pub tab: Tab,
+    /// 已应用的主题/语言（用于配置变更时重新应用）
+    pub applied_theme: String,
+    pub applied_lang: String,
     /// 活动交易上下文（镜像自 spot/fut 页，切页时保存/恢复，UI 代码直接读写）
     pub market: Market,
     pub symbol: String,
     pub interval: Interval,
     pub symbol_filter: String,
-    pub symbol_picker_open: bool,
-    pub symbol_focus_search: bool,
+    pub symbol_info_open: bool,
     pub form: trade::OrderForm,
     pub chart: chart::ChartState,
     pub leverage_input: String,
@@ -193,9 +211,16 @@ impl BnApp {
         let phase = if vault::vault_exists(&dir) {
             Phase::Unlock
         } else {
-            Phase::SetupMaster
+            Phase::EnterKeys
         };
         let interval = Interval::from_str(&cfg.default_interval);
+        theme::set_mode_str(&cfg.theme_mode);
+        theme::apply(&cc.egui_ctx);
+        crate::i18n::set_lang(if cfg.lang == "en" {
+            crate::i18n::EN
+        } else {
+            crate::i18n::ZH
+        });
 
         let default_symbol = cfg.default_symbol.to_uppercase();
         Self {
@@ -210,12 +235,13 @@ impl BnApp {
             api_secret: String::new(),
             keys_err: String::new(),
             tab: Tab::Spot,
+            applied_theme: cfg.theme_mode.clone(),
+            applied_lang: cfg.lang.clone(),
             market: Market::Spot,
             symbol: default_symbol.clone(),
             interval,
             symbol_filter: String::new(),
-            symbol_picker_open: false,
-            symbol_focus_search: false,
+            symbol_info_open: false,
             form: trade::OrderForm::default(),
             chart: chart::ChartState::default(),
             leverage_input: String::new(),
@@ -235,7 +261,7 @@ impl BnApp {
         if self.tab == tab {
             return;
         }
-        self.symbol_picker_open = false;
+        self.symbol_info_open = false;
         self.save_active_page();
         self.tab = tab;
         self.load_active_page();
@@ -343,8 +369,8 @@ impl BnApp {
         egui::TopBottomPanel::top("top_bar")
             .frame(
                 egui::Frame::default()
-                    .fill(theme::PANEL)
-                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                    .fill(theme::cur().panel)
+                    .stroke(egui::Stroke::new(1.0_f32, theme::cur().border))
                     .inner_margin(egui::Margin::symmetric(14.0, 6.0)),
             )
             .show(ctx, |ui| {
@@ -368,6 +394,13 @@ impl BnApp {
                         .show(ui, |ui| settings::show(self, ui));
                 });
             }
+            Tab::Help => {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| crate::ui::help::show(self, ui));
+                });
+            }
         }
 
         self.confirm_dialog(ctx);
@@ -379,29 +412,77 @@ impl BnApp {
             ui.label(
                 egui::RichText::new("BnTradingPro")
                     .strong()
-                    .color(theme::ACCENT)
+                    .color(theme::cur().accent)
                     .size(16.0),
             );
             ui.add_space(10.0);
 
-            for tab in [Tab::Spot, Tab::Futures, Tab::Portfolio, Tab::Settings] {
+            for tab in [
+                Tab::Spot,
+                Tab::Futures,
+                Tab::Portfolio,
+                Tab::Settings,
+                Tab::Help,
+            ] {
                 if theme::nav_tab(ui, tab.label(), self.tab == tab) {
                     self.set_tab(tab);
                 }
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // 主题 / 语言快捷切换
+                let (theme_txt, lang_txt) = if theme::is_light() {
+                    ("🌙", "EN")
+                } else {
+                    ("☀", "中")
+                };
+                if ui
+                    .small_button(theme_txt)
+                    .on_hover_text(crate::i18n::tr("切换主题"))
+                    .clicked()
+                {
+                    let mut cfg = self.state.cfg.read().clone();
+                    let to_light = cfg.theme_mode == "light";
+                    cfg.theme_mode = if to_light {
+                        "dark".into()
+                    } else {
+                        "light".into()
+                    };
+                    cfg.save(&crate::config::data_dir());
+                    theme::set_mode_str(&cfg.theme_mode);
+                    theme::apply(ui.ctx());
+                    self.applied_theme = cfg.theme_mode.clone();
+                    *self.state.cfg.write() = cfg;
+                }
+                if ui
+                    .small_button(egui::RichText::new(lang_txt).size(12.0))
+                    .on_hover_text(crate::i18n::tr("切换语言"))
+                    .clicked()
+                {
+                    let mut cfg = self.state.cfg.read().clone();
+                    let to_en = cfg.lang == "en";
+                    cfg.lang = if to_en { "zh".into() } else { "en".into() };
+                    cfg.save(&crate::config::data_dir());
+                    crate::i18n::set_lang(if cfg.lang == "en" {
+                        crate::i18n::EN
+                    } else {
+                        crate::i18n::ZH
+                    });
+                    self.applied_lang = cfg.lang.clone();
+                    *self.state.cfg.write() = cfg;
+                }
+                ui.separator();
                 let testnet = self.state.cfg.read().testnet;
                 if testnet {
-                    theme::badge(ui, "TESTNET", theme::ACCENT);
+                    theme::badge(ui, "TESTNET", theme::cur().accent);
                 } else {
-                    theme::badge(ui, "实盘 · 真实资金", theme::ERR);
+                    theme::badge(ui, crate::i18n::tr("实盘 · 真实资金"), theme::cur().err);
                 }
                 ui.separator();
                 ui.label(
-                    egui::RichText::new("REST")
+                    egui::RichText::new(crate::i18n::tr("REST"))
                         .size(10.5)
-                        .color(theme::TEXT_DIM),
+                        .color(theme::cur().text_dim),
                 );
                 let rest_ok = self
                     .state
@@ -410,25 +491,25 @@ impl BnApp {
                 status_dot_bare(ui, rest_ok);
                 if let Some(m) = self.tab.market() {
                     ui.label(
-                        egui::RichText::new("行情")
+                        egui::RichText::new(crate::i18n::tr("行情"))
                             .size(10.5)
-                            .color(theme::TEXT_DIM),
+                            .color(theme::cur().text_dim),
                     );
                     let mws = self.state.md.lock().market_ws(m).clone();
                     widgets::status_dot(ui, &mws);
                     ui.label(
-                        egui::RichText::new("账户")
+                        egui::RichText::new(crate::i18n::tr("账户"))
                             .size(10.5)
-                            .color(theme::TEXT_DIM),
+                            .color(theme::cur().text_dim),
                     );
                     if self.state.has_creds() {
                         let uws = self.state.md.lock().user_ws(m).clone();
                         widgets::status_dot(ui, &uws);
                     } else {
                         ui.label(
-                            egui::RichText::new("未配置密钥")
+                            egui::RichText::new(crate::i18n::tr("未配置密钥"))
                                 .size(10.5)
-                                .color(theme::WARN),
+                                .color(theme::cur().warn),
                         );
                     }
                 }
@@ -436,13 +517,32 @@ impl BnApp {
         });
     }
 
-    /// 交易页：页头（交易对/周期/价格） + 图表 | 盘口+成交 | 下单面板 + 底部订单区
+    /// 交易页：左侧交易对列表 + 页头 + 图表 | 盘口+成交 | 下单面板 + 底部订单区
     fn trading_ui(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::left("symbols_panel")
+            .resizable(true)
+            .default_width(185.0)
+            .width_range(140.0..=320.0)
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::cur().panel)
+                    .inner_margin(8.0),
+            )
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| self.symbols_sidebar(ui));
+            });
+
         egui::SidePanel::right("trade_panel")
             .resizable(true)
             .default_width(300.0)
             .width_range(250.0..=420.0)
-            .frame(egui::Frame::default().fill(theme::PANEL).inner_margin(8.0))
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::cur().panel)
+                    .inner_margin(8.0),
+            )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| trade::show(self, ui));
             });
@@ -451,7 +551,11 @@ impl BnApp {
             .resizable(true)
             .default_width(230.0)
             .width_range(180.0..=340.0)
-            .frame(egui::Frame::default().fill(theme::PANEL).inner_margin(8.0))
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::cur().panel)
+                    .inner_margin(8.0),
+            )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     crate::ui::market::show_book(self, ui);
@@ -461,7 +565,11 @@ impl BnApp {
             });
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::default().fill(theme::BG).inner_margin(8.0))
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::cur().bg)
+                    .inner_margin(8.0),
+            )
             .show(ctx, |ui| {
                 self.page_header(ui);
                 ui.add_space(2.0);
@@ -470,20 +578,29 @@ impl BnApp {
                     .resizable(true)
                     .default_height(240.0)
                     .height_range(120.0..=500.0)
-                    .frame(egui::Frame::default().fill(theme::PANEL).inner_margin(8.0))
+                    .frame(
+                        egui::Frame::default()
+                            .fill(theme::cur().panel)
+                            .inner_margin(8.0),
+                    )
                     .show_inside(ui, |ui| self.sub_tabs(ui));
 
                 egui::CentralPanel::default()
-                    .frame(egui::Frame::default().fill(theme::BG).inner_margin(0.0))
+                    .frame(
+                        egui::Frame::default()
+                            .fill(theme::cur().bg)
+                            .inner_margin(0.0),
+                    )
                     .show_inside(ui, |ui| chart::show(self, ui));
             });
     }
 
-    /// 页头：交易对 / 周期 / 最新价
+    /// 页头：交易对 / 属性ⓘ / 周期 / 最新价
     fn page_header(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            self.symbol_picker(ui);
-            ui.add_space(2.0);
+            ui.label(egui::RichText::new(self.symbol.clone()).strong().size(16.5));
+            self.symbol_info(ui);
+            ui.add_space(4.0);
 
             // 周期
             egui::ComboBox::from_id_salt("interval_cb")
@@ -526,92 +643,194 @@ impl BnApp {
                         .color(c),
                 );
             } else {
-                ui.label(egui::RichText::new("获取行情中…").color(theme::TEXT_DIM));
+                ui.label(
+                    egui::RichText::new(crate::i18n::tr("获取行情中…"))
+                        .color(theme::cur().text_dim),
+                );
             }
         });
     }
 
-    /// 自绘交易对选择弹层：搜索框自动聚焦、点击外部关闭
-    fn symbol_picker(&mut self, ui: &mut egui::Ui) {
-        let btn = ui.add(
-            egui::Button::new(
-                egui::RichText::new(format!("{}  ▾", self.symbol))
-                    .strong()
-                    .size(15.0),
-            )
-            .fill(theme::PANEL2)
-            .rounding(4.0)
-            .min_size(egui::vec2(150.0, 28.0)),
+    /// 左侧边栏：搜索 + 自选置顶 + 全部交易对
+    fn symbols_sidebar(&mut self, ui: &mut egui::Ui) {
+        ui.add(
+            egui::TextEdit::singleline(&mut self.symbol_filter)
+                .id_salt(egui::Id::new("sidebar_search"))
+                .hint_text(crate::i18n::tr("搜索交易对…"))
+                .desired_width(f32::INFINITY),
         );
-        if btn.clicked() {
-            self.symbol_picker_open = !self.symbol_picker_open;
-            self.symbol_focus_search = self.symbol_picker_open;
-            if self.symbol_picker_open {
-                self.symbol_filter.clear();
+        ui.add_space(2.0);
+
+        let book = self.state.rules_of(self.market);
+        let favs = self.state.favorites(self.market);
+        let filter = self.symbol_filter.trim().to_uppercase();
+        let mut switched: Option<String> = None;
+        let mut toggled: Option<String> = None;
+
+        // 自选区（置顶）
+        let favs: Vec<String> = favs
+            .into_iter()
+            .filter(|s| filter.is_empty() || s.contains(&filter))
+            .collect();
+        if !favs.is_empty() {
+            theme::section(ui, crate::i18n::tr("⭐ 自选"));
+            for sym in &favs {
+                symbol_row(ui, self, sym, true, &mut switched, &mut toggled);
             }
-        }
-        if !self.symbol_picker_open {
-            return;
+            ui.add_space(2.0);
         }
 
-        let mut keep_open = true;
+        // 全部交易对（过滤掉已展示的自选）
+        theme::section(ui, crate::i18n::tr("全部"));
+        let mut count = 0;
+        for sym in &book.symbols {
+            if count >= 400 {
+                ui.label(
+                    egui::RichText::new(crate::i18n::tr("（仅显示前 400 个，请用搜索过滤）"))
+                        .size(10.5)
+                        .color(theme::cur().text_dim),
+                );
+                break;
+            }
+            if !filter.is_empty() && !sym.contains(&filter) {
+                continue;
+            }
+            if favs.contains(sym) {
+                continue;
+            }
+            count += 1;
+            symbol_row(ui, self, sym, false, &mut switched, &mut toggled);
+        }
+        if count == 0 && favs.is_empty() {
+            ui.label(
+                egui::RichText::new(crate::i18n::tr("无匹配交易对"))
+                    .size(12.0)
+                    .color(theme::cur().text_dim),
+            );
+        }
+
+        if let Some(sym) = toggled {
+            self.state.toggle_favorite(self.market, &sym);
+        }
+        if let Some(sym) = switched {
+            self.switch_symbol(sym);
+        }
+    }
+
+    /// 交易对属性弹层（ⓘ）
+    fn symbol_info(&mut self, ui: &mut egui::Ui) {
+        let btn = ui
+            .small_button(egui::RichText::new("ⓘ").size(12.0))
+            .on_hover_text(crate::i18n::tr("交易对属性"));
+        if btn.clicked() {
+            self.symbol_info_open = !self.symbol_info_open;
+        }
+        if !self.symbol_info_open {
+            return;
+        }
+        let Some(r) = self.state.rule_of(self.market, &self.symbol) else {
+            self.symbol_info_open = false;
+            return;
+        };
         let mut popup_rect = egui::Rect::NOTHING;
         let pos = egui::Pos2::new(btn.rect.left(), btn.rect.bottom() + 4.0);
-        egui::Area::new(egui::Id::new("symbol_picker"))
+        egui::Area::new(egui::Id::new("symbol_info_popup"))
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
             .show(ui.ctx(), |ui| {
                 egui::Frame::default()
-                    .fill(theme::PANEL2)
-                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                    .fill(theme::cur().panel2)
+                    .stroke(egui::Stroke::new(1.0_f32, theme::cur().border))
                     .rounding(6.0)
-                    .inner_margin(egui::Margin::same(8.0))
+                    .inner_margin(egui::Margin::same(10.0))
                     .show(ui, |ui| {
-                        ui.set_min_size(egui::vec2(280.0, 400.0));
-                        // 搜索框：打开时自动聚焦
-                        let search = ui.add(
-                            egui::TextEdit::singleline(&mut self.symbol_filter)
-                                .id_salt(egui::Id::new("symbol_search"))
-                                .hint_text("搜索交易对（如 BTC）…")
-                                .desired_width(f32::INFINITY),
+                        ui.set_min_width(300.0);
+                        ui.label(
+                            egui::RichText::new(crate::i18n::tr("交易对属性"))
+                                .strong()
+                                .size(13.5),
                         );
-                        if self.symbol_focus_search {
-                            search.request_focus();
-                            self.symbol_focus_search = false;
-                        }
                         ui.separator();
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            let book = self.state.rules_of(self.market);
-                            let f = self.symbol_filter.trim().to_uppercase();
-                            let mut count = 0;
-                            for s in &book.symbols {
-                                if count >= 300 {
-                                    break;
+                        egui::Grid::new("symbol_info_grid")
+                            .num_columns(2)
+                            .spacing([14.0, 3.0])
+                            .show(ui, |ui| {
+                                let row = |ui: &mut egui::Ui, k: &str, v: String| {
+                                    ui.label(theme::card_label(k));
+                                    ui.label(egui::RichText::new(v).monospace().size(12.0));
+                                    ui.end_row();
+                                };
+                                row(ui, crate::i18n::tr("状态"), r.status.clone());
+                                row(ui, crate::i18n::tr("基础资产"), r.base.clone());
+                                row(ui, crate::i18n::tr("计价资产"), r.quote.clone());
+                                if self.market == crate::binance::Market::UmFutures {
+                                    row(ui, crate::i18n::tr("合约类型"), r.contract_type.clone());
+                                    row(ui, crate::i18n::tr("保证金资产"), r.margin_asset.clone());
+                                    row(ui, crate::i18n::tr("标的类型"), {
+                                        let subs = r.underlying_sub_types.join("/");
+                                        if r.underlying_type.is_empty() {
+                                            subs
+                                        } else if subs.is_empty() {
+                                            r.underlying_type.clone()
+                                        } else {
+                                            format!("{} · {}", r.underlying_type, subs)
+                                        }
+                                    });
+                                    row(ui, crate::i18n::tr("上架时间"), {
+                                        if r.onboard_date > 0 {
+                                            chrono::Local
+                                                .timestamp_millis_opt(r.onboard_date)
+                                                .single()
+                                                .map(|t| t.format("%Y-%m-%d").to_string())
+                                                .unwrap_or_default()
+                                        } else {
+                                            "—".into()
+                                        }
+                                    });
                                 }
-                                if f.is_empty() || s.contains(&f) {
-                                    count += 1;
-                                    if ui
-                                        .selectable_label(*s == self.symbol, s.as_str())
-                                        .clicked()
-                                    {
-                                        self.switch_symbol(s.clone());
-                                        keep_open = false;
-                                    }
-                                }
-                            }
-                            if count == 0 {
-                                ui.label(
-                                    egui::RichText::new("无匹配交易对")
-                                        .size(12.5)
-                                        .color(theme::TEXT_DIM),
+                                row(
+                                    ui,
+                                    crate::i18n::tr("价格精度"),
+                                    r.price_precision.to_string(),
                                 );
-                            }
-                        });
+                                row(ui, crate::i18n::tr("数量精度"), r.qty_precision.to_string());
+                                row(
+                                    ui,
+                                    crate::i18n::tr("最小变动"),
+                                    r.tick.normalize().to_string(),
+                                );
+                                row(
+                                    ui,
+                                    crate::i18n::tr("最小数量"),
+                                    r.min_qty.normalize().to_string(),
+                                );
+                                if r.max_qty > rust_decimal::Decimal::ZERO {
+                                    row(
+                                        ui,
+                                        crate::i18n::tr("最大数量"),
+                                        r.max_qty.normalize().to_string(),
+                                    );
+                                }
+                                row(
+                                    ui,
+                                    crate::i18n::tr("最小名义金额"),
+                                    r.min_notional.normalize().to_string(),
+                                );
+                                if !r.order_types.is_empty() {
+                                    row(
+                                        ui,
+                                        crate::i18n::tr("支持订单类型"),
+                                        r.order_types.join(", "),
+                                    );
+                                }
+                                if !r.permissions.is_empty() {
+                                    row(ui, crate::i18n::tr("权限"), r.permissions.join(", "));
+                                }
+                            });
                     });
                 popup_rect = ui.min_rect();
             });
-
-        // 点击弹层与按钮之外的区域时关闭
+        // 点击弹层外关闭
         if let Some(click_pos) = ui.ctx().input(|i| {
             if i.pointer.any_click() {
                 i.pointer.interact_pos()
@@ -619,15 +838,11 @@ impl BnApp {
                 None
             }
         }) {
-            let outside = !popup_rect.contains(click_pos) && !btn.rect.contains(click_pos);
-            if outside {
-                keep_open = false;
+            if !popup_rect.contains(click_pos) && !btn.rect.contains(click_pos) {
+                self.symbol_info_open = false;
             }
         }
-        self.symbol_picker_open = keep_open;
     }
-
-
 
     /// 交易页底部子页签：挂单 / 持仓(期货) / 历史 / 成交
     fn sub_tabs(&mut self, ui: &mut egui::Ui) {
@@ -651,7 +866,7 @@ impl BnApp {
                 ui.label(
                     egui::RichText::new(format!("{} 笔挂单", open_n))
                         .size(11.5)
-                        .color(theme::TEXT_DIM),
+                        .color(theme::cur().text_dim),
                 );
             });
         });
@@ -673,7 +888,7 @@ impl BnApp {
         let mut submit = false;
         let mut keep = true;
         let mut cancel = false;
-        egui::Window::new(egui::RichText::new("确认下单").strong())
+        egui::Window::new(egui::RichText::new(crate::i18n::tr("确认下单")).strong())
             .open(&mut keep)
             .collapsible(false)
             .resizable(false)
@@ -681,9 +896,9 @@ impl BnApp {
             .show(ctx, |ui| {
                 if let Some(c) = &self.confirm {
                     let color = if c.side == Side::Buy {
-                        theme::UP
+                        theme::cur().up
                     } else {
-                        theme::DOWN
+                        theme::cur().down
                     };
                     let (word, testnet) = (
                         if c.side == Side::Buy {
@@ -701,9 +916,9 @@ impl BnApp {
                         })
                         .strong()
                         .color(if testnet {
-                            theme::ACCENT
+                            theme::cur().accent
                         } else {
-                            theme::ERR
+                            theme::cur().err
                         }),
                     );
                     ui.separator();
@@ -712,7 +927,7 @@ impl BnApp {
                         .spacing([16.0, 5.0])
                         .show(ui, |ui| {
                             for (k, v) in &c.rows {
-                                ui.label(egui::RichText::new(k).color(theme::TEXT_DIM));
+                                ui.label(egui::RichText::new(k).color(theme::cur().text_dim));
                                 ui.label(egui::RichText::new(v).monospace().strong().color(color));
                                 ui.end_row();
                             }
@@ -720,12 +935,14 @@ impl BnApp {
                     ui.add_space(6.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .add(egui::Button::new(egui::RichText::new("确认提交").strong()))
+                            .add(egui::Button::new(
+                                egui::RichText::new(crate::i18n::tr("确认提交")).strong(),
+                            ))
                             .clicked()
                         {
                             submit = true;
                         }
-                        if ui.button("取消").clicked() {
+                        if ui.button(crate::i18n::tr("取消")).clicked() {
                             cancel = true;
                         }
                     });
@@ -743,15 +960,95 @@ impl BnApp {
     }
 }
 
+/// 侧边栏交易对行：名称（点击切换）+ 星标（点击加/取自选）
+fn symbol_row(
+    ui: &mut egui::Ui,
+    app: &BnApp,
+    sym: &str,
+    is_fav: bool,
+    switched: &mut Option<String>,
+    toggled: &mut Option<String>,
+) {
+    let selected = *sym == app.symbol;
+    ui.horizontal(|ui| {
+        let name_txt = {
+            let t = egui::RichText::new(sym).size(12.5).color(if selected {
+                theme::cur().accent
+            } else {
+                theme::cur().text
+            });
+            if selected {
+                t.strong()
+            } else {
+                t
+            }
+        };
+        let name_btn = egui::Button::new(name_txt)
+            .fill(if selected {
+                theme::cur().card
+            } else {
+                egui::Color32::TRANSPARENT
+            })
+            .stroke(egui::Stroke::NONE)
+            .rounding(3.0)
+            .min_size(egui::vec2(ui.available_width() - 26.0, 20.0));
+        if ui.add(name_btn).clicked() {
+            *switched = Some(sym.to_string());
+        }
+        let star = if is_fav { "★" } else { "☆" };
+        let star_txt = egui::RichText::new(star).size(13.0).color(if is_fav {
+            theme::cur().accent
+        } else {
+            theme::cur().text_dim
+        });
+        if ui
+            .add(
+                egui::Button::new(star_txt)
+                    .fill(egui::Color32::TRANSPARENT)
+                    .rounding(3.0),
+            )
+            .on_hover_text(if is_fav {
+                crate::i18n::tr("取消自选")
+            } else {
+                crate::i18n::tr("加入自选")
+            })
+            .clicked()
+        {
+            *toggled = Some(sym.to_string());
+        }
+    });
+}
+
 /// 简化状态灯（布尔）
 fn status_dot_bare(ui: &mut egui::Ui, ok: bool) {
-    let c = if ok { theme::UP } else { theme::ERR };
+    let c = if ok {
+        theme::cur().up
+    } else {
+        theme::cur().err
+    };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 4.5, c);
 }
 
 impl eframe::App for BnApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 主题/语言跟随配置（设置页或顶栏修改后即时生效）
+        {
+            let cfg = self.state.cfg.read();
+            if self.applied_theme != cfg.theme_mode {
+                theme::set_mode_str(&cfg.theme_mode);
+                theme::apply(ctx);
+                self.applied_theme = cfg.theme_mode.clone();
+            }
+            if self.applied_lang != cfg.lang {
+                crate::i18n::set_lang(if cfg.lang == "en" {
+                    crate::i18n::EN
+                } else {
+                    crate::i18n::ZH
+                });
+                self.applied_lang = cfg.lang.clone();
+            }
+        }
         match self.phase {
             Phase::Main => self.main_ui(ctx),
             _ => unlock::show(self, ctx),

@@ -9,19 +9,27 @@ use rust_decimal::Decimal;
 
 pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
     let (c, label) = match st {
-        ConnState::Connected => (theme::UP, "已连接".to_string()),
-        ConnState::Connecting => (theme::ACCENT, "连接中".to_string()),
+        ConnState::Connected => (theme::cur().up, "已连接".to_string()),
+        ConnState::Connecting => (theme::cur().accent, "连接中".to_string()),
         ConnState::Disconnected => (Color32::from_rgb(90, 99, 112), "未连接".to_string()),
-        ConnState::Failed(e) => (theme::ERR, format!("错误: {e}")),
+        ConnState::Failed(e) => (theme::cur().err, format!("错误: {e}")),
     };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
     let p = ui.painter();
     p.circle_filled(rect.center(), 4.5, c);
     // 已连接时加一圈微光晕
     if *st == ConnState::Connected {
-        p.circle_stroke(rect.center(), 6.5, Stroke::new(1.0_f32, c.gamma_multiply(0.35)));
+        p.circle_stroke(
+            rect.center(),
+            6.5,
+            Stroke::new(1.0_f32, c.gamma_multiply(0.35)),
+        );
     }
-    ui.label(egui::RichText::new(label).size(11.5).color(theme::TEXT_DIM));
+    ui.label(
+        egui::RichText::new(label)
+            .size(11.5)
+            .color(theme::cur().text_dim),
+    );
 }
 
 /// 数字输入框：等宽字体 + 提示；返回当前合法解析值
@@ -30,7 +38,7 @@ pub fn num_field(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str) -> 
         .id_salt(Id::new(id))
         .desired_width(120.0)
         .font(egui::TextStyle::Monospace)
-        .text_color(theme::TEXT)
+        .text_color(theme::cur().text)
         .hint_text(hint)
         .show(ui);
     parse_dec(text)
@@ -101,20 +109,20 @@ pub fn draw_toasts(ctx: &egui::Context, state: &SharedState) {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 for t in toasts {
                     let (fg, icon) = match t.kind {
-                        ToastKind::Ok => (theme::UP, "✓"),
-                        ToastKind::Err => (theme::ERR, "✗"),
-                        ToastKind::Warn => (theme::WARN, "!"),
-                        ToastKind::Info => (theme::ACCENT, "i"),
+                        ToastKind::Ok => (theme::cur().up, "✓"),
+                        ToastKind::Err => (theme::cur().err, "✗"),
+                        ToastKind::Warn => (theme::cur().warn, "!"),
+                        ToastKind::Info => (theme::cur().accent, "i"),
                     };
                     egui::Frame::default()
-                        .fill(theme::PANEL2)
+                        .fill(theme::cur().panel2)
                         .stroke(Stroke::new(1.0_f32, fg.gamma_multiply(0.8)))
                         .rounding(6.0)
                         .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                         .show(ui, |ui| {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(egui::RichText::new(icon).color(fg).strong());
-                                ui.label(egui::RichText::new(t.msg).color(theme::TEXT));
+                                ui.label(egui::RichText::new(t.msg).color(theme::cur().text));
                             });
                         });
                 }
@@ -148,7 +156,7 @@ pub fn placeholder(ui: &mut egui::Ui, rect: egui::Rect, text: &str) {
         Align2::CENTER_CENTER,
         text,
         FontId::proportional(15.0),
-        theme::TEXT_DIM,
+        theme::cur().text_dim,
     );
 }
 

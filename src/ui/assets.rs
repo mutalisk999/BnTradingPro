@@ -39,7 +39,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         let c = if colored {
                             theme::signed_color(v)
                         } else {
-                            theme::TEXT
+                            theme::cur().text
                         };
                         ui.label(
                             egui::RichText::new(format!("{v:.4}"))
@@ -54,10 +54,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         });
         ui.horizontal(|ui| {
             let dual = state.acct.lock().fut_dual_side;
-            ui.label(theme::card_label(if dual {
-                "持仓模式：双向"
+            ui.label(theme::card_label(&if state.acct.lock().fut_dual_side {
+                crate::i18n::tr("持仓模式：双向").to_string()
             } else {
-                "持仓模式：单向"
+                crate::i18n::tr("持仓模式：单向").to_string()
             }));
             if ui.small_button("切换").clicked() {
                 state.send_cmd(Command::SetDualSide { dual: !dual });
@@ -67,7 +67,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             }
         });
     } else {
-        ui.label(egui::RichText::new("合约账户加载中…").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new("合约账户加载中…").color(theme::cur().text_dim));
     }
 
     ui.add_space(4.0);
@@ -92,7 +92,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) {
     let acct = state.acct.lock();
     let Some(a) = acct.spot.as_ref() else {
-        ui.label(egui::RichText::new("加载中…").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new("加载中…").color(theme::cur().text_dim));
         return;
     };
     let nonzero: Vec<_> = a
@@ -104,11 +104,11 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
         ui.label(
             egui::RichText::new("（该 Key 无交易权限）")
                 .size(11.5)
-                .color(theme::WARN),
+                .color(theme::cur().warn),
         );
     }
     if nonzero.is_empty() {
-        ui.label(egui::RichText::new("暂无非零资产").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new("暂无非零资产").color(theme::cur().text_dim));
         return;
     }
     TableBuilder::new(ui)
@@ -120,7 +120,7 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
         .header(22.0, |mut h| {
             for t in ["资产", "可用", "冻结"] {
                 h.col(|ui| {
-                    ui.label(theme::card_label(t));
+                    ui.label(theme::card_label(crate::i18n::tr(t)));
                 });
             }
         })
@@ -142,7 +142,7 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
                             egui::RichText::new(b.locked.normalize().to_string())
                                 .monospace()
                                 .size(12.0)
-                                .color(theme::TEXT_DIM),
+                                .color(theme::cur().text_dim),
                         );
                     });
                 });
@@ -153,7 +153,7 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
 fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) {
     let acct = state.acct.lock();
     let Some(a) = acct.fut.as_ref() else {
-        ui.label(egui::RichText::new("加载中…").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new("加载中…").color(theme::cur().text_dim));
         return;
     };
     let assets: Vec<_> = a
@@ -162,7 +162,7 @@ fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui
         .filter(|b| b.wallet != Decimal::ZERO)
         .collect();
     if assets.is_empty() {
-        ui.label(egui::RichText::new("暂无非零资产").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new("暂无非零资产").color(theme::cur().text_dim));
         return;
     }
     let f = |d: &Decimal| d.to_string().parse::<f64>().unwrap_or(0.0);
@@ -176,7 +176,7 @@ fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui
         .header(22.0, |mut h| {
             for t in ["资产", "钱包余额", "可用", "未实现盈亏"] {
                 h.col(|ui| {
-                    ui.label(theme::card_label(t));
+                    ui.label(theme::card_label(crate::i18n::tr(t)));
                 });
             }
         })
@@ -225,7 +225,7 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
         .cloned()
         .collect();
     if positions.is_empty() {
-        ui.label(egui::RichText::new("暂无持仓").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new("暂无持仓").color(theme::cur().text_dim));
         return;
     }
     let mut close_req: Option<(
@@ -259,7 +259,7 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                 "操作",
             ] {
                 h.col(|ui| {
-                    ui.label(theme::card_label(t));
+                    ui.label(theme::card_label(crate::i18n::tr(t)));
                 });
             }
         })
@@ -273,9 +273,9 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         let (txt, c) = if long {
-                            ("多", theme::UP)
+                            ("多", theme::cur().up)
                         } else {
-                            ("空", theme::DOWN)
+                            ("空", theme::cur().down)
                         };
                         ui.label(egui::RichText::new(txt).color(c).strong().size(12.0));
                     });

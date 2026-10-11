@@ -25,23 +25,23 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.selectable_value(&mut app.settings.testnet, true, "测试网 (Testnet)");
             ui.selectable_value(&mut app.settings.testnet, false, "实盘");
             if app.settings.testnet {
-                theme::badge(ui, "TESTNET", theme::ACCENT);
+                theme::badge(ui, "TESTNET", theme::cur().accent);
                 ui.label(
                     egui::RichText::new(
                         "测试网密钥在 testnet.binance.vision / testnet.binancefuture.com 申请",
                     )
                     .size(11.0)
-                    .color(theme::TEXT_DIM),
+                    .color(theme::cur().text_dim),
                 );
             } else {
-                theme::badge(ui, "实盘 · 真实资金", theme::ERR);
+                theme::badge(ui, "实盘 · 真实资金", theme::cur().err);
             }
         });
         if !app.settings.testnet {
             ui.label(
                 egui::RichText::new("⚠ 实盘模式下下单将使用真实资金，请确认密钥与环境正确！")
                     .size(12.0)
-                    .color(theme::ERR),
+                    .color(theme::cur().err),
             );
         }
     });
@@ -60,6 +60,49 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     ),
             );
         });
+    });
+
+    // ---------- 外观与语言 ----------
+    ui.group(|ui| {
+        ui.label(egui::RichText::new(crate::i18n::tr("语言与主题")).strong());
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(crate::i18n::tr("语言")).strong());
+            let mut lang = app.settings.lang.clone();
+            egui::ComboBox::from_id_salt("lang_cb")
+                .selected_text(if lang == "en" {
+                    "English".to_string()
+                } else {
+                    "中文".to_string()
+                })
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut lang, "zh".to_string(), "中文");
+                    ui.selectable_value(&mut lang, "en".to_string(), "English");
+                });
+            app.settings.lang = lang;
+            ui.separator();
+            ui.label(egui::RichText::new(crate::i18n::tr("主题")).strong());
+            let mut mode = app.settings.theme_mode.clone();
+            egui::ComboBox::from_id_salt("theme_cb")
+                .selected_text(if mode == "light" {
+                    crate::i18n::tr("浅色").to_string()
+                } else {
+                    crate::i18n::tr("深色").to_string()
+                })
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut mode, "dark".to_string(), crate::i18n::tr("深色"));
+                    ui.selectable_value(&mut mode, "light".to_string(), crate::i18n::tr("浅色"));
+                });
+            app.settings.theme_mode = mode;
+        });
+        ui.label(
+            egui::RichText::new(crate::i18n::tr(
+                "保存后生效；顶栏右侧 ☀/🌙 与 中/EN 按钮可即时切换",
+            ))
+            .size(11.0)
+            .color(theme::cur().text_dim),
+        );
     });
 
     // ---------- 参数 ----------
@@ -170,9 +213,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("API 密钥").strong());
         ui.horizontal(|ui| {
             if state.has_creds() {
-                theme::badge(ui, "已配置", theme::UP);
+                theme::badge(ui, "已配置", theme::cur().up);
             } else {
-                theme::badge(ui, "未配置（仅公开行情）", theme::WARN);
+                theme::badge(ui, "未配置（仅公开行情）", theme::cur().warn);
             }
             if ui
                 .small_button(if state.has_creds() {
@@ -191,7 +234,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 let _ = std::fs::remove_file(dir.join(vault::VAULT_FILE));
                 state.set_creds(None);
                 state.push_toast(ToastKind::Info, "已删除本机凭据库");
-                app.phase = Phase::SetupMaster;
+                app.phase = Phase::EnterKeys;
             }
         });
     });
@@ -206,12 +249,12 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 dir.display()
             ))
             .size(11.5)
-            .color(theme::TEXT_DIM),
+            .color(theme::cur().text_dim),
         );
         ui.label(
             egui::RichText::new("本工具仅供个人交易辅助与研究，不构成任何投资建议；使用实盘交易产生的一切后果由使用者自行承担。")
                 .size(11.0)
-                .color(theme::TEXT_DIM),
+                .color(theme::cur().text_dim),
         );
     });
 

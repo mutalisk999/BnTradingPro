@@ -26,7 +26,7 @@ pub fn tr(zh: &'static str) -> &'static str {
     en_lookup(zh)
 }
 
-fn en_lookup(zh: &str) -> &'static str {
+fn en_lookup(zh: &'static str) -> &'static str {
     match zh {
         // ---- 顶层导航 ----
         "现货交易" => "Spot",
@@ -78,8 +78,7 @@ fn en_lookup(zh: &str) -> &'static str {
         "开空 (SHORT)" => "Short (SHORT)",
         "只减仓 (ReduceOnly)" => "Reduce-Only",
         "杠杆" => "Leverage",
-        "设置" => "Set",
-        "触发价" => "Trigger",
+                "触发价" => "Trigger",
         "步进" => "Step",
         "比例" => "Size",
         "按可用余额估算" => "Estimate from available balance",
@@ -263,7 +262,6 @@ fn en_lookup(zh: &str) -> &'static str {
         "卖" => "Sell",
         "滚轮缩放 · 拖动平移 · 双击回最新" => "Scroll to zoom · Drag to pan · Double-click to reset",
         // ---- 引擎 toast ----
-        "未配置 API 密钥" => "No API key configured",
         "请求超时，请检查网络/代理" => "Request timed out — check network/proxy",
         "未配置 API 密钥，请在设置中配置" => "No API key — configure one in Settings",
         "网络错误: " => "Network error: ",
@@ -290,12 +288,9 @@ fn en_lookup(zh: &str) -> &'static str {
         "数量过小（步进 " => "Qty too small (step ",
         "缺少 " => "Missing rules for ",
         " 交易规则（等待行情初始化）" => " (waiting for market init)",
-        "部分成交" => "Partially filled",
-        "已成交" => "Filled",
         "已实现盈亏: " => "Realized PnL: ",
         // ---- 交易对属性 ----
         "交易对属性" => "Symbol Info",
-        "状态" => "Status",
         "基础资产" => "Base Asset",
         "计价资产" => "Quote Asset",
         "合约类型" => "Contract Type",
@@ -315,6 +310,6 @@ fn en_lookup(zh: &str) -> &'static str {
 }
 
 /// 带动态后缀的兜底（如 "96,000.12" 之类不会走到这里；数字拼接串直接原样返回）
-fn return_en_fallback(zh: &str) -> &'static str {
+fn return_en_fallback(zh: &'static str) -> &'static str {
     zh
 }

@@ -8,6 +8,7 @@ mod app;
 mod binance;
 mod config;
 mod engine;
+mod i18n;
 mod security;
 mod ui;
 

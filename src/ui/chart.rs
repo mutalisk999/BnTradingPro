@@ -68,7 +68,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             let label = if app.chart.ma[i] {
                 label.color(MA_COLORS[i])
             } else {
-                label.color(theme::TEXT_DIM)
+                label.color(theme::cur().text_dim)
             };
             if ui.selectable_label(app.chart.ma[i], label).clicked() {
                 app.chart.ma[i] = !app.chart.ma[i];
@@ -85,7 +85,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         widgets::fmt_dec(&t.low_price)
                     ))
                     .size(11.0)
-                    .color(theme::TEXT_DIM),
+                    .color(theme::cur().text_dim),
                 );
             }
             if app.market == crate::binance::Market::UmFutures {
@@ -95,7 +95,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         ui.label(
                             egui::RichText::new(format!("资金费率 {rf:+.4}%"))
                                 .size(11.0)
-                                .color(theme::ACCENT),
+                                .color(theme::cur().accent),
                         );
                     }
                 }
@@ -110,9 +110,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         for o in state.orders.lock().open(app.market).iter() {
             if o.symbol == app.symbol {
                 let color = if o.side == "BUY" {
-                    theme::UP
+                    theme::cur().up
                 } else {
-                    theme::DOWN
+                    theme::cur().down
                 };
                 let side_txt = if o.side == "BUY" { "买" } else { "卖" };
                 if let Some(p) = o.price.filter(|p| !p.is_zero()) {
@@ -135,7 +135,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 if p.symbol == app.symbol && p.amt != Decimal::ZERO {
                     overlays.push(Overlay {
                         price: to_f64(&p.entry_price),
-                        color: theme::ACCENT,
+                        color: theme::cur().accent,
                         label: format!("持仓开仓 {}", fmt_norm(&p.entry_price)),
                     });
                 }
@@ -163,7 +163,7 @@ fn widgets_placeholder(ui: &mut egui::Ui, rect: Rect, text: &str) {
         Align2::CENTER_CENTER,
         text,
         FontId::proportional(15.0),
-        theme::TEXT_DIM,
+        theme::cur().text_dim,
     );
 }
 
@@ -268,7 +268,9 @@ fn draw(
     let span = hi - lo;
 
     // 右侧价格轴宽度自适应数字位数（千分位），避免大数值被截断
-    let axis_w = ((widgets::fmt_thousands(hi as f64, dp as usize).chars().count() as f32)
+    let axis_w = ((widgets::fmt_thousands(hi as f64, dp as usize)
+        .chars()
+        .count() as f32)
         * 8.2
         + 16.0)
         .clamp(58.0, 120.0);
@@ -298,7 +300,7 @@ fn draw(
                 Align2::LEFT_CENTER,
                 fmt_f64(gp as f64, dp as usize),
                 grid_font.clone(),
-                theme::TEXT_DIM,
+                theme::cur().text_dim,
             );
         }
         gp += step as f32;
@@ -317,7 +319,7 @@ fn draw(
             Align2::CENTER_BOTTOM,
             label,
             FontId::proportional(10.5),
-            theme::TEXT_DIM,
+            theme::cur().text_dim,
         );
         painter.line_segment(
             [Pos2::new(x, plot.top()), Pos2::new(x, plot.bottom())],
@@ -334,9 +336,9 @@ fn draw(
         let vh = (v / max_vol * vol_h as f64) as f32;
         let [o, _, _, close] = c.f();
         let col = if close >= o {
-            theme::UP.gamma_multiply(0.45)
+            theme::cur().up.gamma_multiply(0.45)
         } else {
-            theme::DOWN.gamma_multiply(0.45)
+            theme::cur().down.gamma_multiply(0.45)
         };
         let x = x_of(idx);
         let w = (bar_w * 0.7).max(1.0);
@@ -369,7 +371,11 @@ fn draw(
     // ---------- 蜡烛 ----------
     for (idx, c) in visible.iter().enumerate() {
         let [o, h, l, close] = c.f();
-        let col = if close >= o { theme::UP } else { theme::DOWN };
+        let col = if close >= o {
+            theme::cur().up
+        } else {
+            theme::cur().down
+        };
         let x = x_of(idx);
         let w = (bar_w * 0.7).max(1.0);
         // 影线
@@ -396,9 +402,9 @@ fn draw(
     };
     let yl = y_of(last_close as f32).clamp(plot.top(), plot.top() + price_h);
     let col = if last_close >= prev_close {
-        theme::UP
+        theme::cur().up
     } else {
-        theme::DOWN
+        theme::cur().down
     };
     painter.extend(Shape::dashed_line(
         &[
@@ -459,10 +465,7 @@ fn draw(
         if plot.contains(hp) && hp.x < plot.left() + chart_w {
             let cross = Stroke::new(0.7_f32, Color32::from_rgb(120, 130, 148));
             painter.extend(Shape::dashed_line(
-                &[
-                    Pos2::new(hp.x, plot.top()),
-                    Pos2::new(hp.x, plot.bottom()),
-                ],
+                &[Pos2::new(hp.x, plot.top()), Pos2::new(hp.x, plot.bottom())],
                 cross,
                 4.0,
                 3.0,
@@ -482,7 +485,7 @@ fn draw(
                 Align2::LEFT_CENTER,
                 fmt_f64(p_of(hp.y) as f64, dp as usize),
                 grid_font.clone(),
-                theme::TEXT,
+                theme::cur().text,
             );
             // 定位 K 线
             let idx = (((hp.x - plot.left()) / bar_w) as usize).min(visible.len() - 1);
@@ -505,7 +508,7 @@ fn draw(
                 chg
             );
             let font = FontId::monospace(12.0);
-            let galley = painter.layout_no_wrap(lines.clone(), font.clone(), theme::TEXT);
+            let galley = painter.layout_no_wrap(lines.clone(), font.clone(), theme::cur().text);
             let mut pos = hp + Vec2::new(14.0, 14.0);
             let sz = galley.size() + Vec2::new(16.0, 12.0);
             if pos.x + sz.x > plot.right() {
@@ -522,19 +525,19 @@ fn draw(
             painter.rect_stroke(
                 Rect::from_min_size(pos, sz),
                 3.0,
-                Stroke::new(1.0_f32, theme::BORDER),
+                Stroke::new(1.0_f32, theme::cur().border),
             );
             painter.text(
                 pos + Vec2::new(8.0, 6.0),
                 Align2::LEFT_TOP,
                 lines,
                 font,
-                theme::TEXT,
+                theme::cur().text,
             );
             // 底部时间标签
             let t_txt = time_label_full(c.t);
             let t_galley =
-                painter.layout_no_wrap(t_txt.clone(), FontId::monospace(11.0), theme::TEXT);
+                painter.layout_no_wrap(t_txt.clone(), FontId::monospace(11.0), theme::cur().text);
             let tsz = t_galley.size() + Vec2::new(10.0, 4.0);
             let tx = (hp.x - tsz.x / 2.0).clamp(plot.left(), plot.left() + chart_w - tsz.x);
             painter.rect_filled(
@@ -547,7 +550,7 @@ fn draw(
                 Align2::CENTER_CENTER,
                 t_txt,
                 FontId::monospace(11.0),
-                theme::TEXT,
+                theme::cur().text,
             );
         }
     }
@@ -558,7 +561,7 @@ fn draw(
         Align2::LEFT_BOTTOM,
         "滚轮缩放 · 拖动平移 · 双击回最新",
         FontId::proportional(10.5),
-        theme::TEXT_DIM.gamma_multiply(0.8),
+        theme::cur().text_dim.gamma_multiply(0.8),
     );
 
     // ---------- 左上角图例：交易对 · 周期 + 最新 MA 值 ----------
@@ -569,7 +572,7 @@ fn draw(
         Align2::LEFT_TOP,
         format!("{} · {}", app.symbol, interval.label()),
         FontId::proportional(11.5),
-        theme::TEXT_DIM,
+        theme::cur().text_dim,
     );
     legend_y += 16.0;
     for (k, &period) in MA_PERIODS.iter().enumerate() {

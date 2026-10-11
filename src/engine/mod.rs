@@ -573,7 +573,7 @@ async fn handle_cmd(
         }
         Command::PlaceOrder { market, mut req } => {
             if !state.has_creds() {
-                state.push_toast(ToastKind::Err, "未配置 API 密钥");
+                state.push_toast(ToastKind::Err, crate::i18n::tr("未配置 API 密钥"));
                 return;
             }
             let cfg = state.cfg_snapshot();
@@ -615,7 +615,10 @@ async fn handle_cmd(
                 Some(())
             })();
             if quantized.is_none() {
-                state.push_toast(ToastKind::Err, "价格/数量超出可表示范围，请检查输入");
+                state.push_toast(
+                    ToastKind::Err,
+                    crate::i18n::tr("价格/数量超出可表示范围，请检查输入"),
+                );
                 return;
             }
             if req.kind.qty().is_zero() {
@@ -678,7 +681,10 @@ async fn handle_cmd(
             state.set_busy("cancel", false);
             match res {
                 Ok(_) => {
-                    state.push_toast(ToastKind::Ok, format!("已撤销委托 #{order_id}"));
+                    state.push_toast(
+                        ToastKind::Ok,
+                        format!("{}{order_id}", crate::i18n::tr("已撤销委托 #")),
+                    );
                     engine_tx.send(Command::RefreshOpenOrders { market }).ok();
                 }
                 Err(e) => toast_err(&state, &e),
@@ -712,7 +718,10 @@ async fn handle_cmd(
             state.set_busy("cancel", false);
             match res {
                 Ok(_) => {
-                    state.push_toast(ToastKind::Ok, format!("已撤销 {symbol} 全部挂单"));
+                    state.push_toast(
+                        ToastKind::Ok,
+                        format!("{}{symbol}", crate::i18n::tr("已撤销 ")),
+                    );
                     engine_tx.send(Command::RefreshOpenOrders { market }).ok();
                 }
                 Err(e) => toast_err(&state, &e),
@@ -777,7 +786,7 @@ async fn handle_cmd(
             match res {
                 Ok(_) => {
                     state.acct.lock().fut_dual_side = dual;
-                    state.push_toast(ToastKind::Ok, "持仓模式已切换".to_string());
+                    state.push_toast(ToastKind::Ok, crate::i18n::tr("持仓模式已切换").to_string());
                     engine_tx.send(Command::RefreshAccount).ok();
                 }
                 Err(e) => toast_err(&state, &e),

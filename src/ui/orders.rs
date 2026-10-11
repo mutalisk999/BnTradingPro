@@ -12,7 +12,7 @@ use rust_decimal::Decimal;
 use std::sync::Arc;
 
 pub fn status_cn(s: &str) -> &'static str {
-    match s {
+    let zh = match s {
         "NEW" => "待成交",
         "PARTIALLY_FILLED" => "部分成交",
         "FILLED" => "已成交",
@@ -23,11 +23,12 @@ pub fn status_cn(s: &str) -> &'static str {
         "EXPIRED_IN_MATCH" => "匹配过期",
         "NEW_ADL" => "ADL",
         _ => "其他",
-    }
+    };
+    crate::i18n::tr(zh)
 }
 
 fn type_cn(s: &str) -> &'static str {
-    match s {
+    let zh = match s {
         "LIMIT" => "限价",
         "MARKET" => "市价",
         "STOP_LOSS" => "止损市价",
@@ -39,7 +40,8 @@ fn type_cn(s: &str) -> &'static str {
         "TRAILING_STOP_MARKET" => "跟踪委托",
         "LIMIT_MAKER" => "只做 maker",
         _ => "其他",
-    }
+    };
+    crate::i18n::tr(zh)
 }
 
 /// 当前挂单
@@ -47,7 +49,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     let market = app.market;
     if !state.has_creds() {
-        ui.label(egui::RichText::new("未配置 API 密钥").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new("未配置 API 密钥").color(theme::cur().text_dim));
         return;
     }
     let list = state.orders.lock().open(market).clone();
@@ -55,7 +57,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.label(
             egui::RichText::new(format!("{} · {} 笔挂单", market.label(), list.len())).size(12.5),
         );
-        if ui.small_button("刷新").clicked() {
+        if ui.small_button(crate::i18n::tr("刷新")).clicked() {
             state.send_cmd(Command::RefreshOpenOrders { market });
         }
         if !list.is_empty() {
@@ -123,7 +125,11 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                 "操作",
             ] {
                 h.col(|ui| {
-                    ui.label(egui::RichText::new(t).size(11.5).color(theme::TEXT_DIM));
+                    ui.label(
+                        egui::RichText::new(t)
+                            .size(11.5)
+                            .color(theme::cur().text_dim),
+                    );
                 });
             }
         })
@@ -140,9 +146,9 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         let c = if o.side == "BUY" {
-                            theme::UP
+                            theme::cur().up
                         } else {
-                            theme::DOWN
+                            theme::cur().down
                         };
                         let txt = if o.side == "BUY" { "买入" } else { "卖出" };
                         ui.label(egui::RichText::new(txt).size(11.5).color(c).strong());
@@ -197,11 +203,11 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         ui.label(
                             egui::RichText::new(status_cn(&o.status))
                                 .size(11.5)
-                                .color(theme::ACCENT),
+                                .color(theme::cur().accent),
                         );
                     });
                     row.col(|ui| {
-                        if ui.small_button("撤销").clicked() {
+                        if ui.small_button(crate::i18n::tr("撤销")).clicked() {
                             cancel_id = Some(o.order_id);
                             cancel_sym = o.symbol.clone();
                         }
@@ -223,7 +229,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
 pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     if !state.has_creds() {
-        ui.label(egui::RichText::new("未配置 API 密钥").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new("未配置 API 密钥").color(theme::cur().text_dim));
         return;
     }
     let (positions, dual) = {
@@ -239,7 +245,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
     };
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(format!("U本位合约 · {} 个持仓", positions.len())).size(12.5));
-        if ui.small_button("刷新").clicked() {
+        if ui.small_button(crate::i18n::tr("刷新")).clicked() {
             state.send_cmd(Command::RefreshAccount);
         }
         if ui
@@ -290,7 +296,11 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                 "操作",
             ] {
                 h.col(|ui| {
-                    ui.label(egui::RichText::new(t).size(11.5).color(theme::TEXT_DIM));
+                    ui.label(
+                        egui::RichText::new(t)
+                            .size(11.5)
+                            .color(theme::cur().text_dim),
+                    );
                 });
             }
         })
@@ -304,9 +314,9 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         let (txt, c) = if long {
-                            ("多", theme::UP)
+                            ("多", theme::cur().up)
                         } else {
-                            ("空", theme::DOWN)
+                            ("空", theme::cur().down)
                         };
                         ui.label(egui::RichText::new(txt).color(c).strong().size(11.5));
                     });
@@ -333,7 +343,11 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         let up = f(&p.unrealized);
-                        let c = if up >= 0.0 { theme::UP } else { theme::DOWN };
+                        let c = if up >= 0.0 {
+                            theme::cur().up
+                        } else {
+                            theme::cur().down
+                        };
                         ui.label(
                             egui::RichText::new(format!("{up:+.4}"))
                                 .monospace()
@@ -359,7 +373,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                         );
                     });
                     row.col(|ui| {
-                        if ui.small_button("市价平仓").clicked() {
+                        if ui.small_button(crate::i18n::tr("市价平仓")).clicked() {
                             let side = if long { Side::Sell } else { Side::Buy };
                             let pos_side = FutPosSide::parse(&p.side);
                             close_req = Some((p.symbol.clone(), side, p.amt.abs(), pos_side));
@@ -396,7 +410,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
 pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     if !state.has_creds() {
-        ui.label(egui::RichText::new("未配置 API 密钥").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new("未配置 API 密钥").color(theme::cur().text_dim));
         return;
     }
     let (hist, key) = {
@@ -411,11 +425,11 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
             None => ui.label(
                 egui::RichText::new("切换交易对后自动加载")
                     .size(12.5)
-                    .color(theme::TEXT_DIM),
+                    .color(theme::cur().text_dim),
             ),
         };
         if let Some((m, s)) = key.clone() {
-            if ui.small_button("刷新").clicked() {
+            if ui.small_button(crate::i18n::tr("刷新")).clicked() {
                 state.send_cmd(Command::RefreshHistory {
                     market: m,
                     symbol: s,
@@ -456,7 +470,11 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 "状态",
             ] {
                 h.col(|ui| {
-                    ui.label(egui::RichText::new(t).size(11.5).color(theme::TEXT_DIM));
+                    ui.label(
+                        egui::RichText::new(t)
+                            .size(11.5)
+                            .color(theme::cur().text_dim),
+                    );
                 });
             }
         })
@@ -471,9 +489,9 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         let c = if o.side == "BUY" {
-                            theme::UP
+                            theme::cur().up
                         } else {
-                            theme::DOWN
+                            theme::cur().down
                         };
                         ui.label(egui::RichText::new(o.side_label()).color(c).size(11.5));
                     });
@@ -507,9 +525,9 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         let c = match o.status.as_str() {
-                            "FILLED" => theme::UP,
-                            "CANCELED" | "EXPIRED" | "REJECTED" => theme::TEXT_DIM,
-                            _ => theme::ACCENT,
+                            "FILLED" => theme::cur().up,
+                            "CANCELED" | "EXPIRED" | "REJECTED" => theme::cur().text_dim,
+                            _ => theme::cur().accent,
                         };
                         ui.label(
                             egui::RichText::new(status_cn(&o.status))
@@ -527,14 +545,14 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
 pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     if !state.has_creds() {
-        ui.label(egui::RichText::new("未配置 API 密钥").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new("未配置 API 密钥").color(theme::cur().text_dim));
         return;
     }
     let trades = state.orders.lock().trades.clone();
     let hist_key = state.orders.lock().history_symbol.clone();
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(format!("最近 {} 笔成交", trades.len())).size(12.5));
-        if ui.small_button("刷新").clicked() {
+        if ui.small_button(crate::i18n::tr("刷新")).clicked() {
             if let Some((m, s)) = hist_key.clone() {
                 state.send_cmd(Command::RefreshHistory {
                     market: m,
@@ -575,7 +593,11 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 "角色",
             ] {
                 h.col(|ui| {
-                    ui.label(egui::RichText::new(t).size(11.5).color(theme::TEXT_DIM));
+                    ui.label(
+                        egui::RichText::new(t)
+                            .size(11.5)
+                            .color(theme::cur().text_dim),
+                    );
                 });
             }
         })
@@ -590,9 +612,9 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         let (txt, c) = if t.is_buyer {
-                            ("买入", theme::UP)
+                            ("买入", theme::cur().up)
                         } else {
-                            ("卖出", theme::DOWN)
+                            ("卖出", theme::cur().down)
                         };
                         ui.label(egui::RichText::new(txt).color(c).size(11.5));
                     });
@@ -631,14 +653,14 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                             ))
                             .monospace()
                             .size(11.5)
-                            .color(theme::TEXT_DIM),
+                            .color(theme::cur().text_dim),
                         );
                     });
                     row.col(|ui| {
                         ui.label(
                             egui::RichText::new(if t.is_maker { "maker" } else { "taker" })
                                 .size(11.5)
-                                .color(theme::TEXT_DIM),
+                                .color(theme::cur().text_dim),
                         );
                     });
                 });

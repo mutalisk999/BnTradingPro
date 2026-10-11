@@ -107,7 +107,7 @@ pub fn badge(ui: &mut egui::Ui, text: &str, fg: Color32) {
 /// 从 Windows 字体目录按优先级加载第一个存在的字体
 fn load_font(fonts: &mut FontDefinitions, key: &str, candidates: &[&str]) -> bool {
     for name in candidates {
-        let path = std::path::PathBuf::from("C:\Windows\Fonts").join(name);
+        let path = std::path::PathBuf::from("C:\\Windows\\Fonts").join(name);
         if let Ok(bytes) = std::fs::read(&path) {
             tracing::info!("load font {}: {}", key, path.display());
             fonts
@@ -126,7 +126,13 @@ pub fn apply_fonts(ctx: &egui::Context) {
     if load_font(
         &mut fonts,
         "cjk",
-        &["msyh.ttc", "msyh.ttf", "msyhbd.ttc", "simhei.ttf", "Deng.ttf"],
+        &[
+            "msyh.ttc",
+            "msyh.ttf",
+            "msyhbd.ttc",
+            "simhei.ttf",
+            "Deng.ttf",
+        ],
     ) {
         if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
             fam.insert(0, "cjk".to_owned());
@@ -136,7 +142,12 @@ pub fn apply_fonts(ctx: &egui::Context) {
     if load_font(
         &mut fonts,
         "mono",
-        &["CascadiaCode.ttf", "CascadiaMono.ttf", "consola.ttf", "lucon.ttf"],
+        &[
+            "CascadiaCode.ttf",
+            "CascadiaMono.ttf",
+            "consola.ttf",
+            "lucon.ttf",
+        ],
     ) {
         if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
             fam.insert(0, "mono".to_owned());
@@ -258,4 +269,45 @@ pub fn card<R>(
 }
 
 /// 顶部导航页签（激活态金色文字 + 边框）
-pub fn nav_tab(ui: &mut egui::Ui, label: &str, active: bo
+pub fn nav_tab(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
+    let txt = if active {
+        egui::RichText::new(label)
+            .strong()
+            .size(14.5)
+            .color(cur().accent)
+    } else {
+        egui::RichText::new(label).size(14.0).color(cur().text_dim)
+    };
+    let btn = egui::Button::new(txt)
+        .fill(Color32::TRANSPARENT)
+        .stroke(if active {
+            Stroke::new(2.0_f32, cur().accent)
+        } else {
+            Stroke::NONE
+        })
+        .rounding(3.0)
+        .min_size(egui::vec2(0.0, 28.0));
+    ui.add(btn).clicked()
+}
+
+/// 区块小标题
+pub fn section(ui: &mut egui::Ui, label: &str) {
+    ui.label(
+        egui::RichText::new(label)
+            .size(11.5)
+            .strong()
+            .color(cur().text_dim),
+    );
+}
+
+/// 表格/卡片内的小标签文字
+pub fn card_label(label: &str) -> egui::RichText {
+    egui::RichText::new(label.to_string())
+        .size(11.5)
+        .color(cur().text_dim)
+}
+
+/// 由配置字符串设置主题模式
+pub fn set_mode_str(s: &str) {
+    set_mode(if s == "light" { LIGHT_MODE } else { DARK_MODE });
+}

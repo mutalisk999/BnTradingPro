@@ -155,6 +155,33 @@ impl SharedState {
         self.creds.read().is_some()
     }
 
+    /// 自选交易对列表
+    pub fn favorites(&self, market: Market) -> Vec<String> {
+        let cfg = self.cfg.read();
+        match market {
+            Market::Spot => cfg.favorites_spot.clone(),
+            Market::UmFutures => cfg.favorites_futures.clone(),
+        }
+    }
+
+    /// 切换自选（并落盘，不触发引擎重连）
+    pub fn toggle_favorite(&self, market: Market, symbol: &str) {
+        let cfg = {
+            let mut cfg = self.cfg.write();
+            let list = match market {
+                Market::Spot => &mut cfg.favorites_spot,
+                Market::UmFutures => &mut cfg.favorites_futures,
+            };
+            if let Some(i) = list.iter().position(|x| x == symbol) {
+                list.remove(i);
+            } else {
+                list.insert(0, symbol.to_string());
+            }
+            cfg.clone()
+        };
+        cfg.save(&crate::config::data_dir());
+    }
+
     /// 单个交易对的规则（避免整本规则簿克隆）
     pub fn rule_of(
         &self,

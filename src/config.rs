@@ -30,6 +30,10 @@ pub struct AppConfig {
     pub lang: String,
     /// 主题（dark/light）
     pub theme_mode: String,
+    /// 现货自选交易对（置顶显示）
+    pub favorites_spot: Vec<String>,
+    /// 合约自选交易对
+    pub favorites_futures: Vec<String>,
     /// 端点覆盖：留空使用内置默认
     pub override_spot_rest: String,
     pub override_spot_ws: String,
@@ -49,6 +53,8 @@ impl Default for AppConfig {
             log_level: "info".to_string(),
             lang: "zh".to_string(),
             theme_mode: "dark".to_string(),
+            favorites_spot: Vec::new(),
+            favorites_futures: Vec::new(),
             override_spot_rest: String::new(),
             override_spot_ws: String::new(),
             override_fut_rest: String::new(),

@@ -22,20 +22,22 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.heading(
         egui::RichText::new("盘口 20 档")
             .size(13.0)
-            .color(theme::TEXT),
+            .color(theme::cur().text),
     );
     ui.separator();
 
     let md = state.md.lock();
     let Some(md) = md.get(app.market, &app.symbol) else {
-        ui.label(egui::RichText::new("加载中…").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new(crate::i18n::tr("加载中…")).color(theme::cur().text_dim));
         return;
     };
 
     let asks = &md.depth.asks;
     let bids = &md.depth.bids;
     if asks.is_empty() && bids.is_empty() {
-        ui.label(egui::RichText::new("等待深度数据…").color(theme::TEXT_DIM));
+        ui.label(
+            egui::RichText::new(crate::i18n::tr("等待深度数据…")).color(theme::cur().text_dim),
+        );
         return;
     }
 
@@ -72,12 +74,12 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             row_h,
             w,
             ratio,
-            theme::DOWN.gamma_multiply(0.28),
+            theme::cur().down.gamma_multiply(0.28),
             &a.price.to_string(),
             dp,
             &a.qty.to_string(),
             qdp,
-            theme::DOWN,
+            theme::cur().down,
         );
     }
 
@@ -122,13 +124,13 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
                     .monospace()
                     .strong()
                     .size(13.5)
-                    .color(theme::TEXT),
+                    .color(theme::cur().text),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     egui::RichText::new(spread_txt)
                         .size(11.0)
-                        .color(theme::TEXT_DIM),
+                        .color(theme::cur().text_dim),
                 );
             });
         });
@@ -142,12 +144,12 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             row_h,
             w,
             ratio,
-            theme::UP.gamma_multiply(0.28),
+            theme::cur().up.gamma_multiply(0.28),
             &b.price.to_string(),
             dp,
             &b.qty.to_string(),
             qdp,
-            theme::UP,
+            theme::cur().up,
         );
     }
 }
@@ -200,7 +202,7 @@ fn book_row(
         egui::Align2::RIGHT_CENTER,
         qty_txt,
         egui::FontId::monospace(12.0),
-        theme::TEXT,
+        theme::cur().text,
     );
     if resp.clicked() {
         app.form.set_price(price_s);
@@ -219,13 +221,13 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.heading(
         egui::RichText::new("成交明细")
             .size(13.0)
-            .color(theme::TEXT),
+            .color(theme::cur().text),
     );
     ui.separator();
 
     let md = state.md.lock();
     let Some(md) = md.get(app.market, &app.symbol) else {
-        ui.label(egui::RichText::new("加载中…").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new(crate::i18n::tr("加载中…")).color(theme::cur().text_dim));
         return;
     };
 
@@ -237,26 +239,26 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.label(
                 egui::RichText::new("价格")
                     .size(11.0)
-                    .color(theme::TEXT_DIM),
+                    .color(theme::cur().text_dim),
             );
             ui.label(
                 egui::RichText::new("数量")
                     .size(11.0)
-                    .color(theme::TEXT_DIM),
+                    .color(theme::cur().text_dim),
             );
             ui.label(
                 egui::RichText::new("时间")
                     .size(11.0)
-                    .color(theme::TEXT_DIM),
+                    .color(theme::cur().text_dim),
             );
             ui.end_row();
 
             for t in md.trades.iter().rev().take(30) {
                 let price_f: f64 = t.price.to_string().parse().unwrap_or(0.0);
                 let col = if t.buyer_maker {
-                    theme::DOWN
+                    theme::cur().down
                 } else {
-                    theme::UP
+                    theme::cur().up
                 };
                 ui.label(
                     egui::RichText::new(format!("{:.*}", dp, price_f))
@@ -268,13 +270,13 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
                     egui::RichText::new(t.qty.normalize().to_string())
                         .monospace()
                         .size(12.0)
-                        .color(theme::TEXT),
+                        .color(theme::cur().text),
                 );
                 ui.label(
                     egui::RichText::new(crate::ui::widgets::fmt_time_short(t.time))
                         .monospace()
                         .size(12.0)
-                        .color(theme::TEXT_DIM),
+                        .color(theme::cur().text_dim),
                 );
                 ui.end_row();
             }
