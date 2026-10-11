@@ -1,6 +1,8 @@
 //! BnTradingPro — Binance 现货/U本位合约交易终端
 //!
 //! 入口：日志初始化、配置加载、eframe 启动
+// release 以 GUI 子系统启动（不带终端窗口）；debug 保留控制台便于看日志输出
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
 mod binance;
