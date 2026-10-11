@@ -129,7 +129,9 @@ impl BinanceRest {
         overrides: &crate::config::AppConfig,
     ) -> Result<(), BinanceError> {
         let ep = endpoints(ctx.market, ctx.testnet, overrides);
-        let v = self.get_public_raw(&ep, "/time", &[]).await?;
+        // 路径必须带市场前缀：现货 /api/v3/time、合约 /fapi/v1/time
+        let path = format!("{}/time", ctx.market.api_prefix());
+        let v = self.get_public_raw(&ep, &path, &[]).await?;
         let server = v
             .get("serverTime")
             .and_then(|x| x.as_i64())
@@ -321,8 +323,15 @@ async fn parse_response(resp: reqwest::Response) -> Result<Value, BinanceError> 
         .text()
         .await
         .map_err(|e| BinanceError::Decode(e.to_string()))?;
-    let v: Value = serde_json::from_str(&text)
-        .map_err(|e| BinanceError::Decode(format!("HTTP {status}: {e}")))?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| {
+        if text.trim().is_empty() {
+            BinanceError::Decode(format!(
+                "HTTP {status}（响应体为空，请检查 REST 端点/代理配置是否正确）"
+            ))
+        } else {
+            BinanceError::Decode(format!("HTTP {status}: {e}"))
+        }
+    })?;
     if !status.is_success() {
         if let (Some(code), Some(msg)) = (
             v.get("code").and_then(|c| c.as_i64()),
