@@ -9,3 +9,4 @@ logs/
 # 本地密钥类文件（vault 本应存于系统数据目录，防御性忽略）
 vault.bin
 .env
+.zcode/
