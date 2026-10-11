@@ -312,9 +312,10 @@ pub struct MyTrade {
     pub commission_asset: String,
     #[serde(rename = "time", default)]
     pub time: i64,
-    #[serde(rename = "isBuyer", default)]
+    // 现货为 isBuyer/isMaker，合约为 buyer/maker
+    #[serde(rename = "isBuyer", alias = "buyer", default)]
     pub is_buyer: bool,
-    #[serde(rename = "isMaker", default)]
+    #[serde(rename = "isMaker", alias = "maker", default)]
     pub is_maker: bool,
 }
 
@@ -405,6 +406,9 @@ pub struct FutExec {
     pub reduce_only: bool,
     #[serde(rename = "rp", deserialize_with = "opt_dec", default)]
     pub realized_profit: Option<Decimal>,
+    /// 止损/止盈触发价（STOP_MARKET / TAKE_PROFIT_MARKET）
+    #[serde(rename = "sp", deserialize_with = "opt_dec", default)]
+    pub stop_price: Option<Decimal>,
 }
 
 /// 合约 ACCOUNT_UPDATE

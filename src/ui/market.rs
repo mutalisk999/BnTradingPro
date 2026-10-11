@@ -81,18 +81,39 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
         );
     }
 
-    // 价差行
+    // 价差行（单边盘口时直接显示可得一侧价格，避免中间价=半价的错误数值）
     let (best_bid, best_ask) = match (bids.first(), asks.first()) {
         (Some(b), Some(a)) => (b.price, a.price),
         _ => (Decimal::ZERO, Decimal::ZERO),
     };
-    let mid = (best_bid + best_ask) / Decimal::from(2);
-    let spread = best_ask - best_bid;
+    let (mid, spread) = if best_bid.is_zero() || best_ask.is_zero() {
+        let only = if best_bid.is_zero() {
+            best_ask
+        } else {
+            best_bid
+        };
+        (only, Decimal::ZERO)
+    } else {
+        (
+            (best_bid + best_ask) / Decimal::from(2),
+            best_ask - best_bid,
+        )
+    };
     let mid_f = mid.to_string().parse::<f64>().unwrap_or(0.0);
     let spread_pct = if mid_f > 0.0 {
         spread.to_string().parse::<f64>().unwrap_or(0.0) / mid_f * 100.0
     } else {
         0.0
+    };
+    let spread_txt = if spread.is_zero() && (best_bid.is_zero() || best_ask.is_zero()) {
+        String::new()
+    } else {
+        format!(
+            "价差 {:.*} ({:.3}%)",
+            dp,
+            spread.to_string().parse::<f64>().unwrap_or(0.0),
+            spread_pct
+        )
     };
     ui.allocate_ui(egui::vec2(w, 20.0), |ui| {
         ui.horizontal(|ui| {
@@ -105,14 +126,9 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "价差 {:.*} ({:.3}%)",
-                        dp,
-                        spread.to_string().parse::<f64>().unwrap_or(0.0),
-                        spread_pct
-                    ))
-                    .size(11.0)
-                    .color(theme::TEXT_DIM),
+                    egui::RichText::new(spread_txt)
+                        .size(11.0)
+                        .color(theme::TEXT_DIM),
                 );
             });
         });

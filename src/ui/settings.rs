@@ -1,7 +1,9 @@
 //! 设置页：环境、代理、端点覆盖、参数与密钥管理
+//!
+//! 输入绑定到 `BnApp.settings` 草稿（egui 表单状态必须跨帧存活），保存时写回配置。
 
-use crate::app::{BnApp, Phase};
-use crate::config;
+use crate::app::{BnApp, Phase, SettingsDraft};
+use crate::config::{self, AppConfig};
 use crate::engine::state::ToastKind;
 use crate::security::vault;
 use crate::ui::theme;
@@ -10,7 +12,6 @@ use std::sync::Arc;
 
 pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
-    let mut cfg = state.cfg_snapshot();
     let dir = config::data_dir();
     let mut apply = false;
 
@@ -21,9 +22,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.group(|ui| {
         ui.label(egui::RichText::new("交易环境").strong());
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut cfg.testnet, true, "测试网 (Testnet)");
-            ui.selectable_value(&mut cfg.testnet, false, "实盘");
-            if cfg.testnet {
+            ui.selectable_value(&mut app.settings.testnet, true, "测试网 (Testnet)");
+            ui.selectable_value(&mut app.settings.testnet, false, "实盘");
+            if app.settings.testnet {
                 theme::badge(ui, "TESTNET", theme::ACCENT);
                 ui.label(
                     egui::RichText::new(
@@ -36,7 +37,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 theme::badge(ui, "实盘 · 真实资金", theme::ERR);
             }
         });
-        if !cfg.testnet {
+        if !app.settings.testnet {
             ui.label(
                 egui::RichText::new("⚠ 实盘模式下下单将使用真实资金，请确认密钥与环境正确！")
                     .size(12.0)
@@ -48,11 +49,11 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // ---------- 代理 ----------
     ui.group(|ui| {
         ui.label(egui::RichText::new("网络代理（REST 与 WebSocket 均生效）").strong());
-        ui.checkbox(&mut cfg.proxy.enabled, "启用代理");
+        ui.checkbox(&mut app.settings.proxy_enabled, "启用代理");
         ui.horizontal(|ui| {
             ui.label("地址");
             ui.add(
-                egui::TextEdit::singleline(&mut cfg.proxy.url)
+                egui::TextEdit::singleline(&mut app.settings.proxy_url)
                     .desired_width(320.0)
                     .hint_text(
                         "http://127.0.0.1:7890 或 socks5://127.0.0.1:7890（支持 user:pass@）",
@@ -67,43 +68,43 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("recvWindow");
             ui.add(
-                egui::DragValue::new(&mut cfg.recv_window_ms)
+                egui::DragValue::new(&mut app.settings.recv_window_ms)
                     .range(1000..=60000)
                     .suffix(" ms"),
             );
             ui.separator();
             ui.label("HTTP 超时");
             ui.add(
-                egui::DragValue::new(&mut cfg.http_timeout_secs)
+                egui::DragValue::new(&mut app.settings.http_timeout_secs)
                     .range(3..=120)
                     .suffix(" s"),
             );
             ui.separator();
             ui.label("日志级别");
             egui::ComboBox::from_id_salt("log_level")
-                .selected_text(cfg.log_level.clone())
+                .selected_text(app.settings.log_level.clone())
                 .width(90.0)
                 .show_ui(ui, |ui| {
                     for l in ["trace", "debug", "info", "warn", "error"] {
-                        ui.selectable_value(&mut cfg.log_level, l.to_string(), l);
+                        ui.selectable_value(&mut app.settings.log_level, l.to_string(), l);
                     }
                 });
         });
         ui.horizontal(|ui| {
             ui.label("默认交易对");
             ui.add(
-                egui::TextEdit::singleline(&mut cfg.default_symbol)
+                egui::TextEdit::singleline(&mut app.settings.default_symbol)
                     .desired_width(110.0)
                     .hint_text("BTCUSDT"),
             );
             ui.label("默认K线周期");
             egui::ComboBox::from_id_salt("default_iv")
-                .selected_text(cfg.default_interval.clone())
+                .selected_text(app.settings.default_interval.clone())
                 .width(70.0)
                 .show_ui(ui, |ui| {
                     for iv in crate::binance::Interval::all() {
                         ui.selectable_value(
-                            &mut cfg.default_interval,
+                            &mut app.settings.default_interval,
                             iv.as_str().to_string(),
                             iv.label(),
                         );
@@ -121,28 +122,28 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             .show(ui, |ui| {
                 ui.label("现货 REST");
                 ui.add(
-                    egui::TextEdit::singleline(&mut cfg.override_spot_rest)
+                    egui::TextEdit::singleline(&mut app.settings.override_spot_rest)
                         .desired_width(360.0)
                         .hint_text("https://api.binance.com"),
                 );
                 ui.end_row();
                 ui.label("现货 WS");
                 ui.add(
-                    egui::TextEdit::singleline(&mut cfg.override_spot_ws)
+                    egui::TextEdit::singleline(&mut app.settings.override_spot_ws)
                         .desired_width(360.0)
                         .hint_text("wss://stream.binance.com:9443"),
                 );
                 ui.end_row();
                 ui.label("合约 REST");
                 ui.add(
-                    egui::TextEdit::singleline(&mut cfg.override_fut_rest)
+                    egui::TextEdit::singleline(&mut app.settings.override_fut_rest)
                         .desired_width(360.0)
                         .hint_text("https://fapi.binance.com"),
                 );
                 ui.end_row();
                 ui.label("合约 WS");
                 ui.add(
-                    egui::TextEdit::singleline(&mut cfg.override_fut_ws)
+                    egui::TextEdit::singleline(&mut app.settings.override_fut_ws)
                         .desired_width(360.0)
                         .hint_text("wss://fstream.binance.com"),
                 );
@@ -158,7 +159,6 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         )
         .clicked()
     {
-        cfg.default_symbol = cfg.default_symbol.trim().to_uppercase();
         apply = true;
     }
 
@@ -199,15 +199,26 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // ---------- 关于 ----------
     ui.group(|ui| {
         ui.label(egui::RichText::new("关于").strong());
-        ui.label(egui::RichText::new(format!(
-            "BnTradingPro v{} · 数据目录: {}",
-            env!("CARGO_PKG_VERSION"),
-            dir.display()
-        )).size(11.5).color(theme::TEXT_DIM));
-        ui.label(egui::RichText::new("本工具仅供个人交易辅助与研究，不构成任何投资建议；使用实盘交易产生的一切后果由使用者自行承担。").size(11.0).color(theme::TEXT_DIM));
+        ui.label(
+            egui::RichText::new(format!(
+                "BnTradingPro v{} · 数据目录: {}",
+                env!("CARGO_PKG_VERSION"),
+                dir.display()
+            ))
+            .size(11.5)
+            .color(theme::TEXT_DIM),
+        );
+        ui.label(
+            egui::RichText::new("本工具仅供个人交易辅助与研究，不构成任何投资建议；使用实盘交易产生的一切后果由使用者自行承担。")
+                .size(11.0)
+                .color(theme::TEXT_DIM),
+        );
     });
 
     if apply {
+        let cfg: AppConfig = std::mem::take(&mut app.settings).into_cfg();
+        // 保留草稿（into_cfg 消耗了草稿），保证继续编辑不丢字段
+        app.settings = SettingsDraft::from_cfg(&cfg);
         cfg.save(&dir);
         state.update_cfg(cfg);
         state.push_toast(ToastKind::Ok, "设置已保存，正在重连…");

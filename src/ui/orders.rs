@@ -155,21 +155,20 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         );
                     });
                     row.col(|ui| {
-                        let p = o
-                            .price
-                            .map(|p| {
+                        // 止损/止盈市价单 price 为 0，真实价格在 stopPrice
+                        let p = match o.price.filter(|p| !p.is_zero()) {
+                            Some(p) => {
                                 format!("{:.*}", dp, p.to_string().parse::<f64>().unwrap_or(0.0))
-                            })
-                            .or_else(|| {
-                                o.stop_price.map(|s| {
-                                    format!(
-                                        "触发 {:.*}",
-                                        dp,
-                                        s.to_string().parse::<f64>().unwrap_or(0.0)
-                                    )
-                                })
-                            })
-                            .unwrap_or_else(|| "—".into());
+                            }
+                            None => match o.stop_price.filter(|s| !s.is_zero()) {
+                                Some(s) => format!(
+                                    "触发 {:.*}",
+                                    dp,
+                                    s.to_string().parse::<f64>().unwrap_or(0.0)
+                                ),
+                                None => "市价".into(),
+                            },
+                        };
                         ui.label(egui::RichText::new(p).monospace().size(11.5));
                     });
                     row.col(|ui| {
@@ -382,9 +381,13 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
             reduce_only: !dual,
             client_id: None,
         };
-        app.state.send_cmd(Command::PlaceOrder {
+        // 走确认弹窗，避免误触直接发真实市价单
+        let rows = crate::ui::trade::order_rows(&req);
+        app.confirm = Some(crate::app::ConfirmOrder {
             market: Market::UmFutures,
+            side: req.side,
             req,
+            rows,
         });
     }
 }
@@ -478,10 +481,14 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         ui.label(egui::RichText::new(type_cn(&o.order_type)).size(11.5));
                     });
                     row.col(|ui| {
-                        let p = o
-                            .price
-                            .map(|p| p.normalize().to_string())
-                            .unwrap_or_else(|| "市价".into());
+                        // 止损/止盈单 price 为 0 时展示触发价
+                        let p = match o.price.filter(|p| !p.is_zero()) {
+                            Some(p) => p.normalize().to_string(),
+                            None => match o.stop_price.filter(|s| !s.is_zero()) {
+                                Some(s) => format!("触发 {}", s.normalize()),
+                                None => "市价".into(),
+                            },
+                        };
                         ui.label(egui::RichText::new(p).monospace().size(11.5));
                     });
                     row.col(|ui| {

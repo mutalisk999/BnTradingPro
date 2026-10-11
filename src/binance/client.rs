@@ -94,7 +94,7 @@ impl BinanceRest {
             time_offset_ms: AtomicI64::new(0),
             weight_used: AtomicU64::new(0),
             weight_window: Mutex::new(None),
-            weight_limit: 4000, // 低于 6000/min 上限的保护阈值
+            weight_limit: 2000, // 兼顾现货 6000/min 与合约 2400/min 的保守阈值
         })
     }
 
@@ -164,13 +164,15 @@ impl BinanceRest {
         self.signed_raw(method, &ep, ctx, path, params).await
     }
 
-    /// 仅需 API Key 头的端点（listenKey 管理），不签名
+    /// 仅需 API Key 头的端点（listenKey 管理），不签名。
+    /// 现货 PUT/DELETE /api/v3/userDataStream 必须携带 listenKey 参数。
     pub async fn key_auth(
         &self,
         method: reqwest::Method,
         ctx: RestCtx,
         overrides: &crate::config::AppConfig,
         path: &str,
+        params: &[(&str, &str)],
     ) -> Result<Value, BinanceError> {
         if !self.has_creds() {
             return Err(BinanceError::NoCreds);
@@ -179,9 +181,11 @@ impl BinanceRest {
         let ep = endpoints(ctx.market, ctx.testnet, overrides);
         let url = format!("{}{}", ep.rest, path);
         let key = self.api_key.as_ref().unwrap();
-        let resp = self
-            .http
-            .request(method, &url)
+        let mut req = self.http.request(method, &url);
+        if !params.is_empty() {
+            req = req.query(params);
+        }
+        let resp = req
             .header("X-MBX-APIKEY", key.as_str())
             .send()
             .await
@@ -331,15 +335,23 @@ async fn parse_response(resp: reqwest::Response) -> Result<Value, BinanceError> 
         }
         return Err(BinanceError::Decode(format!("HTTP {status}: {text}")));
     }
-    if let (Some(code), Some(msg)) = (
-        v.get("code").and_then(|c| c.as_i64()),
-        v.get("msg").and_then(|m| m.as_str()),
-    ) {
-        // 200 但带 code 的异常返回
-        return Err(BinanceError::Api {
-            code,
-            msg: msg.to_string(),
-        });
+    // 部分合约端点（如 positionSide/dual）成功时返回 {"code":200,"msg":"success"}；
+    // 错误码为负数，其余正数 code 视为异常
+    if let Some(code_v) = v.get("code") {
+        let code = code_v
+            .as_i64()
+            .or_else(|| code_v.as_str().and_then(|s| s.parse().ok()));
+        if let Some(code) = code {
+            if code == 200 {
+                return Ok(v);
+            }
+            let msg = v
+                .get("msg")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+            return Err(BinanceError::Api { code, msg });
+        }
     }
     Ok(v)
 }

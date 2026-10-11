@@ -19,14 +19,67 @@ pub enum Phase {
     Main,
 }
 
+/// 顶层功能页签
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BottomTab {
+pub enum Tab {
+    Spot,
+    Futures,
+    Portfolio,
+    Settings,
+}
+
+impl Tab {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Tab::Spot => "现货交易",
+            Tab::Futures => "期货交易",
+            Tab::Portfolio => "Portfolio",
+            Tab::Settings => "设置",
+        }
+    }
+
+    pub fn market(&self) -> Option<Market> {
+        match self {
+            Tab::Spot => Some(Market::Spot),
+            Tab::Futures => Some(Market::UmFutures),
+            _ => None,
+        }
+    }
+}
+
+/// 交易页内的底部子页签
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubTab {
     Open,
     Positions,
     History,
     Trades,
-    Assets,
-    Settings,
+}
+
+/// 单个交易页（现货/期货各一份）的独立状态
+#[derive(Debug, Clone)]
+pub struct TradingPage {
+    pub symbol: String,
+    pub interval: Interval,
+    pub symbol_filter: String,
+    pub form: trade::OrderForm,
+    pub chart: chart::ChartState,
+    pub sub_tab: SubTab,
+    pub leverage_input: String,
+}
+
+impl TradingPage {
+    pub fn new(symbol: String, interval: Interval) -> Self {
+        Self {
+            symbol,
+            interval,
+            symbol_filter: String::new(),
+            form: trade::OrderForm::default(),
+            chart: chart::ChartState::default(),
+            sub_tab: SubTab::Open,
+            leverage_input: String::new(),
+        }
+    }
 }
 
 pub struct ConfirmOrder {
@@ -34,6 +87,61 @@ pub struct ConfirmOrder {
     pub req: OrderRequest,
     pub rows: Vec<(String, String)>,
     pub side: Side,
+}
+
+/// 设置页的编辑草稿：存放在 BnApp 上，避免 egui 每帧从快照重建导致输入被重置
+#[derive(Debug, Clone, Default)]
+pub struct SettingsDraft {
+    pub testnet: bool,
+    pub recv_window_ms: u64,
+    pub http_timeout_secs: u64,
+    pub log_level: String,
+    pub default_symbol: String,
+    pub default_interval: String,
+    pub override_spot_rest: String,
+    pub override_spot_ws: String,
+    pub override_fut_rest: String,
+    pub override_fut_ws: String,
+    pub proxy_enabled: bool,
+    pub proxy_url: String,
+}
+
+impl SettingsDraft {
+    pub fn from_cfg(cfg: &AppConfig) -> Self {
+        Self {
+            testnet: cfg.testnet,
+            recv_window_ms: cfg.recv_window_ms,
+            http_timeout_secs: cfg.http_timeout_secs,
+            log_level: cfg.log_level.clone(),
+            default_symbol: cfg.default_symbol.clone(),
+            default_interval: cfg.default_interval.clone(),
+            override_spot_rest: cfg.override_spot_rest.clone(),
+            override_spot_ws: cfg.override_spot_ws.clone(),
+            override_fut_rest: cfg.override_fut_rest.clone(),
+            override_fut_ws: cfg.override_fut_ws.clone(),
+            proxy_enabled: cfg.proxy.enabled,
+            proxy_url: cfg.proxy.url.clone(),
+        }
+    }
+
+    pub fn into_cfg(self) -> AppConfig {
+        AppConfig {
+            testnet: self.testnet,
+            default_symbol: self.default_symbol.trim().to_uppercase(),
+            default_interval: self.default_interval,
+            recv_window_ms: self.recv_window_ms,
+            http_timeout_secs: self.http_timeout_secs,
+            log_level: self.log_level,
+            override_spot_rest: self.override_spot_rest,
+            override_spot_ws: self.override_spot_ws,
+            override_fut_rest: self.override_fut_rest,
+            override_fut_ws: self.override_fut_ws,
+            proxy: crate::config::ProxyConfig {
+                enabled: self.proxy_enabled,
+                url: self.proxy_url,
+            },
+        }
+    }
 }
 
 pub struct BnApp {
@@ -49,15 +157,25 @@ pub struct BnApp {
     pub api_secret: String,
     pub keys_err: String,
 
+    /// 当前顶层页签
+    pub tab: Tab,
+    /// 活动交易上下文（镜像自 spot/fut 页，切页时保存/恢复，UI 代码直接读写）
     pub market: Market,
     pub symbol: String,
     pub interval: Interval,
     pub symbol_filter: String,
     pub form: trade::OrderForm,
-    pub leverage_input: String,
-    pub confirm: Option<ConfirmOrder>,
-    pub bottom_tab: BottomTab,
     pub chart: chart::ChartState,
+    pub leverage_input: String,
+    pub sub_tab: SubTab,
+    pub confirm: Option<ConfirmOrder>,
+    pub settings: SettingsDraft,
+
+    /// 现货/期货页各自的持久状态
+    pub spot: TradingPage,
+    pub fut: TradingPage,
+    /// 已向引擎发送的订阅（market → (symbol, interval)），避免重复拉取 K 线
+    pub subscribed: [Option<(String, Interval)>; 2],
 }
 
 impl BnApp {
@@ -77,6 +195,7 @@ impl BnApp {
         };
         let interval = Interval::from_str(&cfg.default_interval);
 
+        let default_symbol = cfg.default_symbol.to_uppercase();
         Self {
             state,
             engine,
@@ -88,34 +207,71 @@ impl BnApp {
             api_key: String::new(),
             api_secret: String::new(),
             keys_err: String::new(),
+            tab: Tab::Spot,
             market: Market::Spot,
-            symbol: cfg.default_symbol.to_uppercase(),
+            symbol: default_symbol.clone(),
             interval,
             symbol_filter: String::new(),
             form: trade::OrderForm::default(),
-            leverage_input: String::new(),
-            confirm: None,
-            bottom_tab: BottomTab::Open,
             chart: chart::ChartState::default(),
+            leverage_input: String::new(),
+            sub_tab: SubTab::Open,
+            confirm: None,
+            settings: SettingsDraft::from_cfg(&cfg),
+            spot: TradingPage::new(default_symbol.clone(), interval),
+            fut: TradingPage::new(default_symbol, interval),
+            // 引擎启动时已订阅现货默认交易对
+            subscribed: [Some((cfg.default_symbol.to_uppercase(), interval)), None],
         }
     }
 
-    // ---------- 订阅切换 ----------
+    // ---------- 页签切换（镜像保存/恢复） ----------
 
-    pub fn switch_market(&mut self, m: Market) {
-        if self.market == m {
+    pub fn set_tab(&mut self, tab: Tab) {
+        if self.tab == tab {
             return;
         }
+        self.save_active_page();
+        self.tab = tab;
+        self.load_active_page();
+    }
+
+    /// 把活动镜像保存回当前页
+    fn save_active_page(&mut self) {
+        let page = match self.tab {
+            Tab::Spot => &mut self.spot,
+            Tab::Futures => &mut self.fut,
+            _ => return,
+        };
+        page.symbol = self.symbol.clone();
+        page.interval = self.interval;
+        page.symbol_filter = self.symbol_filter.clone();
+        page.form = self.form.clone();
+        page.chart = self.chart.clone();
+        page.sub_tab = self.sub_tab;
+        page.leverage_input = self.leverage_input.clone();
+    }
+
+    /// 从目标页恢复镜像（仅交易页）
+    fn load_active_page(&mut self) {
+        let Some(m) = self.tab.market() else {
+            return;
+        };
+        let page = match self.tab {
+            Tab::Spot => self.spot.clone(),
+            Tab::Futures => self.fut.clone(),
+            _ => return,
+        };
         self.market = m;
-        // 订单类型可用性
-        if !trade::UiKind::available(m).contains(&self.form.kind) {
-            self.form.kind = trade::UiKind::Limit;
-        }
-        self.state.send_cmd(Command::Subscribe {
-            market: m,
-            symbol: self.symbol.clone(),
-            interval: self.interval,
-        });
+        self.symbol = page.symbol;
+        self.interval = page.interval;
+        self.symbol_filter = page.symbol_filter;
+        self.form = page.form;
+        self.chart = page.chart;
+        self.sub_tab = page.sub_tab;
+        self.leverage_input = page.leverage_input;
+
+        self.subscribe(m, self.symbol.clone(), self.interval);
         if self.state.has_creds() {
             self.state
                 .send_cmd(Command::RefreshOpenOrders { market: m });
@@ -125,17 +281,35 @@ impl BnApp {
         }
     }
 
+    /// 订阅行情（同交易对+周期不重复订阅）
+    fn subscribe(&mut self, market: Market, symbol: String, interval: Interval) {
+        let same = self.subscribed[market as usize]
+            .as_ref()
+            .map(|(s, i)| *s == symbol && *i == interval)
+            .unwrap_or(false);
+        if !same {
+            self.state.send_cmd(Command::Subscribe {
+                market,
+                symbol: symbol.clone(),
+                interval,
+            });
+            self.subscribed[market as usize] = Some((symbol, interval));
+        }
+    }
+
+    // ---------- 订阅切换 ----------
+
     pub fn switch_symbol(&mut self, s: String) {
         if self.symbol == s {
             return;
         }
         self.symbol = s.clone();
+        // 表单残留清空 + 图表回到最新
         self.form.price.clear();
-        self.state.send_cmd(Command::Subscribe {
-            market: self.market,
-            symbol: s.clone(),
-            interval: self.interval,
-        });
+        self.form.qty.clear();
+        self.form.trigger.clear();
+        self.chart.right_off = 0.0;
+        self.subscribe(self.market, s.clone(), self.interval);
         if self.state.has_creds() {
             self.state.send_cmd(Command::RefreshOpenOrders {
                 market: self.market,
@@ -152,51 +326,46 @@ impl BnApp {
             return;
         }
         self.interval = iv;
-        self.state.send_cmd(Command::Subscribe {
-            market: self.market,
-            symbol: self.symbol.clone(),
-            interval: iv,
-        });
+        let symbol = self.symbol.clone();
+        self.subscribe(self.market, symbol, iv);
     }
 
     // ---------- eframe::App ----------
 
+    // ---------- 布局 ----------
+
     fn main_ui(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| self.topbar(ui));
+        egui::TopBottomPanel::top("top_bar")
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::PANEL)
+                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                    .inner_margin(egui::Margin::symmetric(12.0, 4.0)),
+            )
+            .show(ctx, |ui| self.topbar(ui));
 
-        egui::SidePanel::right("trade_panel")
-            .resizable(true)
-            .default_width(300.0)
-            .width_range(240.0..=420.0)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| trade::show(self, ui));
-            });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::TopBottomPanel::bottom("bottom_tabs")
-                .resizable(true)
-                .default_height(250.0)
-                .height_range(120.0..=500.0)
-                .show_inside(ui, |ui| self.bottom_tabs(ui));
-
-            egui::SidePanel::right("book_panel")
-                .resizable(true)
-                .default_width(230.0)
-                .width_range(170.0..=340.0)
-                .show_inside(ui, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        crate::ui::market::show_book(self, ui);
-                        ui.add_space(6.0);
-                        crate::ui::market::show_trades(self, ui);
-                    });
+        match self.tab {
+            Tab::Spot | Tab::Futures => self.trading_ui(ctx),
+            Tab::Portfolio => {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| crate::ui::assets::show(self, ui));
                 });
-
-            egui::CentralPanel::default().show_inside(ui, |ui| chart::show(self, ui));
-        });
+            }
+            Tab::Settings => {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| settings::show(self, ui));
+                });
+            }
+        }
 
         self.confirm_dialog(ctx);
     }
 
+    /// 顶部导航：品牌 + 四大页签 + 连接状态
     fn topbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(
@@ -205,20 +374,110 @@ impl BnApp {
                     .color(theme::ACCENT)
                     .size(16.0),
             );
-            ui.separator();
+            ui.add_space(10.0);
 
-            // 市场切换
-            for m in Market::all() {
-                if ui.selectable_label(self.market == m, m.label()).clicked() {
-                    self.switch_market(m);
+            for tab in [Tab::Spot, Tab::Futures, Tab::Portfolio, Tab::Settings] {
+                if theme::nav_tab(ui, tab.label(), self.tab == tab) {
+                    self.set_tab(tab);
                 }
             }
-            ui.separator();
 
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let testnet = self.state.cfg.read().testnet;
+                if testnet {
+                    theme::badge(ui, "TESTNET", theme::ACCENT);
+                } else {
+                    theme::badge(ui, "实盘 · 真实资金", theme::ERR);
+                }
+                ui.separator();
+                ui.label(
+                    egui::RichText::new("REST")
+                        .size(10.5)
+                        .color(theme::TEXT_DIM),
+                );
+                let rest_ok = self
+                    .state
+                    .rest_ok
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                status_dot_bare(ui, rest_ok);
+                if let Some(m) = self.tab.market() {
+                    ui.label(
+                        egui::RichText::new("行情")
+                            .size(10.5)
+                            .color(theme::TEXT_DIM),
+                    );
+                    let mws = self.state.md.lock().market_ws(m).clone();
+                    widgets::status_dot(ui, &mws);
+                    ui.label(
+                        egui::RichText::new("账户")
+                            .size(10.5)
+                            .color(theme::TEXT_DIM),
+                    );
+                    if self.state.has_creds() {
+                        let uws = self.state.md.lock().user_ws(m).clone();
+                        widgets::status_dot(ui, &uws);
+                    } else {
+                        ui.label(
+                            egui::RichText::new("未配置密钥")
+                                .size(10.5)
+                                .color(theme::WARN),
+                        );
+                    }
+                }
+            });
+        });
+    }
+
+    /// 交易页：页头（交易对/周期/价格） + 图表 | 盘口+成交 | 下单面板 + 底部订单区
+    fn trading_ui(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::right("trade_panel")
+            .resizable(true)
+            .default_width(300.0)
+            .width_range(250.0..=420.0)
+            .frame(egui::Frame::default().fill(theme::PANEL).inner_margin(8.0))
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| trade::show(self, ui));
+            });
+
+        egui::SidePanel::right("book_panel")
+            .resizable(true)
+            .default_width(230.0)
+            .width_range(180.0..=340.0)
+            .frame(egui::Frame::default().fill(theme::PANEL).inner_margin(8.0))
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    crate::ui::market::show_book(self, ui);
+                    ui.add_space(8.0);
+                    crate::ui::market::show_trades(self, ui);
+                });
+            });
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().fill(theme::BG).inner_margin(8.0))
+            .show(ctx, |ui| {
+                self.page_header(ui);
+                ui.add_space(2.0);
+
+                egui::TopBottomPanel::bottom("orders_panel")
+                    .resizable(true)
+                    .default_height(240.0)
+                    .height_range(120.0..=500.0)
+                    .frame(egui::Frame::default().fill(theme::PANEL).inner_margin(8.0))
+                    .show_inside(ui, |ui| self.sub_tabs(ui));
+
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::default().fill(theme::BG).inner_margin(0.0))
+                    .show_inside(ui, |ui| chart::show(self, ui));
+            });
+    }
+
+    /// 页头：交易对 / 周期 / 最新价
+    fn page_header(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
             // 交易对
             egui::ComboBox::from_id_salt("symbol_cb")
-                .selected_text(egui::RichText::new(self.symbol.clone()).strong())
-                .width(130.0)
+                .selected_text(egui::RichText::new(self.symbol.clone()).strong().size(15.0))
+                .width(150.0)
                 .show_ui(ui, |ui| {
                     let book = self.state.rules_of(self.market);
                     ui.add(
@@ -248,122 +507,84 @@ impl BnApp {
                 });
 
             // 周期
-            for iv in Interval::all() {
-                if ui
-                    .selectable_label(self.interval == iv, iv.label())
-                    .clicked()
-                {
-                    self.switch_interval(iv);
-                }
-            }
+            egui::ComboBox::from_id_salt("interval_cb")
+                .selected_text(egui::RichText::new(self.interval.label()).strong())
+                .width(62.0)
+                .show_ui(ui, |ui| {
+                    for iv in Interval::all() {
+                        if ui
+                            .selectable_label(self.interval == iv, iv.label())
+                            .clicked()
+                        {
+                            self.switch_interval(iv);
+                        }
+                    }
+                });
 
-            // 右侧：连接状态 + 最新价
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let testnet = self.state.cfg.read().testnet;
-                if testnet {
-                    theme::badge(ui, "TESTNET", theme::ACCENT);
-                } else {
-                    theme::badge(ui, "实盘 · 真实资金", theme::ERR);
-                }
-                ui.separator();
+            ui.separator();
+            // 最新价
+            let tick = self
+                .state
+                .md
+                .lock()
+                .get(self.market, &self.symbol)
+                .and_then(|md| md.ticker.clone());
+            if let Some(t) = tick {
+                let chg: f64 = t.price_change_percent.to_string().parse().unwrap_or(0.0);
+                let c = theme::signed_color(chg);
                 ui.label(
-                    egui::RichText::new("REST")
-                        .size(10.5)
-                        .color(theme::TEXT_DIM),
+                    egui::RichText::new(widgets::fmt_dec(&t.last_price))
+                        .monospace()
+                        .strong()
+                        .size(20.0)
+                        .color(c),
                 );
-                let rest_ok = self
-                    .state
-                    .rest_ok
-                    .load(std::sync::atomic::Ordering::Relaxed);
-                status_dot_bare(ui, rest_ok);
                 ui.label(
-                    egui::RichText::new("行情")
-                        .size(10.5)
-                        .color(theme::TEXT_DIM),
+                    egui::RichText::new(format!("{chg:+.2}%"))
+                        .monospace()
+                        .size(13.0)
+                        .color(c),
                 );
-                let mws = self.state.md.lock().market_ws(self.market).clone();
-                widgets::status_dot(ui, &mws);
-                ui.label(
-                    egui::RichText::new("账户")
-                        .size(10.5)
-                        .color(theme::TEXT_DIM),
-                );
-                if self.state.has_creds() {
-                    let uws = self.state.md.lock().user_ws(self.market).clone();
-                    widgets::status_dot(ui, &uws);
-                } else {
-                    ui.label(
-                        egui::RichText::new("未配置密钥")
-                            .size(10.5)
-                            .color(theme::WARN),
-                    );
-                }
-                ui.separator();
-                let tick = self
-                    .state
-                    .md
-                    .lock()
-                    .get(self.market, &self.symbol)
-                    .and_then(|md| md.ticker.clone());
-                if let Some(t) = tick {
-                    let chg: f64 = t.price_change_percent.to_string().parse().unwrap_or(0.0);
-                    let c = theme::signed_color(chg);
-                    ui.label(
-                        egui::RichText::new(widgets::fmt_dec(&t.last_price))
-                            .monospace()
-                            .strong()
-                            .size(17.0)
-                            .color(c),
-                    );
-                    ui.label(
-                        egui::RichText::new(format!("{chg:+.2}%"))
-                            .monospace()
-                            .size(12.5)
-                            .color(c),
-                    );
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "24h 高 {} / 低 {}",
-                            widgets::fmt_dec(&t.high_price),
-                            widgets::fmt_dec(&t.low_price)
-                        ))
-                        .size(11.0)
-                        .color(theme::TEXT_DIM),
-                    );
-                } else {
-                    ui.label(egui::RichText::new("获取行情中…").color(theme::TEXT_DIM));
-                }
-            });
+            } else {
+                ui.label(egui::RichText::new("获取行情中…").color(theme::TEXT_DIM));
+            }
         });
     }
 
-    fn bottom_tabs(&mut self, ui: &mut egui::Ui) {
-        let tabs = [
-            (BottomTab::Open, "当前挂单"),
-            (BottomTab::Positions, "合约持仓"),
-            (BottomTab::History, "订单历史"),
-            (BottomTab::Trades, "成交历史"),
-            (BottomTab::Assets, "资产"),
-            (BottomTab::Settings, "设置"),
+    /// 交易页底部子页签：挂单 / 持仓(期货) / 历史 / 成交
+    fn sub_tabs(&mut self, ui: &mut egui::Ui) {
+        let mut tabs: Vec<(SubTab, &str)> = vec![
+            (SubTab::Open, "当前挂单"),
+            (SubTab::History, "订单历史"),
+            (SubTab::Trades, "成交历史"),
         ];
+        if self.market == Market::UmFutures {
+            tabs.insert(1, (SubTab::Positions, "持仓"));
+        }
         ui.horizontal(|ui| {
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             for (t, label) in tabs {
-                if ui.selectable_label(self.bottom_tab == t, label).clicked() {
-                    self.bottom_tab = t;
+                if ui.selectable_label(self.sub_tab == t, label).clicked() {
+                    self.sub_tab = t;
                 }
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let open_n = self.state.orders.lock().open(self.market).len();
+                ui.label(
+                    egui::RichText::new(format!("{} 笔挂单", open_n))
+                        .size(11.5)
+                        .color(theme::TEXT_DIM),
+                );
+            });
         });
         ui.separator();
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| match self.bottom_tab {
-                BottomTab::Open => orders::show_open(self, ui),
-                BottomTab::Positions => orders::show_positions(self, ui),
-                BottomTab::History => orders::show_history(self, ui),
-                BottomTab::Trades => orders::show_trades_history(self, ui),
-                BottomTab::Assets => crate::ui::assets::show(self, ui),
-                BottomTab::Settings => settings::show(self, ui),
+            .show(ui, |ui| match self.sub_tab {
+                SubTab::Open => orders::show_open(self, ui),
+                SubTab::Positions => orders::show_positions(self, ui),
+                SubTab::History => orders::show_history(self, ui),
+                SubTab::Trades => orders::show_trades_history(self, ui),
             });
     }
 

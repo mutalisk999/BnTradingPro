@@ -91,37 +91,58 @@ fn non_empty(s: &str, default: &str) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Interval {
     M1,
+    M3,
     M5,
     #[default]
     M15,
     M30,
     H1,
+    H2,
     H4,
+    H6,
+    H12,
     D1,
+    D3,
+    W1,
+    MO1,
 }
 
 impl Interval {
     pub fn as_str(&self) -> &'static str {
         match self {
             Interval::M1 => "1m",
+            Interval::M3 => "3m",
             Interval::M5 => "5m",
             Interval::M15 => "15m",
             Interval::M30 => "30m",
             Interval::H1 => "1h",
+            Interval::H2 => "2h",
             Interval::H4 => "4h",
+            Interval::H6 => "6h",
+            Interval::H12 => "12h",
             Interval::D1 => "1d",
+            Interval::D3 => "3d",
+            Interval::W1 => "1w",
+            Interval::MO1 => "1M",
         }
     }
 
-    pub fn all() -> [Interval; 7] {
+    pub fn all() -> [Interval; 14] {
         [
             Interval::M1,
+            Interval::M3,
             Interval::M5,
             Interval::M15,
             Interval::M30,
             Interval::H1,
+            Interval::H2,
             Interval::H4,
+            Interval::H6,
+            Interval::H12,
             Interval::D1,
+            Interval::D3,
+            Interval::W1,
+            Interval::MO1,
         ]
     }
 

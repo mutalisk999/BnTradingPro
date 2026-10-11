@@ -53,7 +53,16 @@ async fn proxy_tcp(host: &str, port: u16, proxy: &ProxyConfig) -> Result<TcpStre
     let purl = Url::parse(proxy.url.trim()).map_err(|e| format!("代理地址无效: {e}"))?;
     let scheme = purl.scheme().to_ascii_lowercase();
     let phost = purl.host_str().ok_or("代理地址缺少主机")?.to_string();
-    let pport = purl.port().ok_or("代理地址缺少端口")?;
+    // 未写端口时按协议补默认端口（与 REST 侧 reqwest 行为一致）
+    let pport = purl
+        .port()
+        .or(match scheme.as_str() {
+            "http" => Some(80),
+            "https" => Some(443),
+            "socks5" | "socks5h" => Some(1080),
+            _ => None,
+        })
+        .ok_or("代理地址缺少端口")?;
     let user = purl.username();
     let pass = purl.password().unwrap_or("");
 

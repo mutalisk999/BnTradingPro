@@ -123,20 +123,22 @@ impl RuleBook {
     }
 }
 
-/// 价格向下取整到 tick 的整数倍
-pub fn quantize_price(price: Decimal, tick: Decimal) -> Decimal {
+/// 价格向下取整到 tick 的整数倍（溢出时返回 None，防 rust_decimal panic）
+pub fn quantize_price(price: Decimal, tick: Decimal) -> Option<Decimal> {
     if tick.is_zero() {
-        return price;
+        return Some(price);
     }
-    (price / tick).floor() * tick
+    let n = price.checked_div(tick)?.floor();
+    n.checked_mul(tick)
 }
 
-/// 数量向下取整到 step 的整数倍
-pub fn quantize_qty(qty: Decimal, step: Decimal) -> Decimal {
+/// 数量向下取整到 step 的整数倍（溢出时返回 None）
+pub fn quantize_qty(qty: Decimal, step: Decimal) -> Option<Decimal> {
     if step.is_zero() {
-        return qty;
+        return Some(qty);
     }
-    (qty / step).floor() * step
+    let n = qty.checked_div(step)?.floor();
+    n.checked_mul(step)
 }
 
 #[cfg(test)]
@@ -159,22 +161,34 @@ mod tests {
     fn quantize_boundaries() {
         let r = rules();
         assert_eq!(
-            quantize_price(Decimal::new(30000123, 3), r.tick).to_string(),
+            quantize_price(Decimal::new(30000123, 3), r.tick)
+                .unwrap()
+                .to_string(),
             "30000.12"
         );
         assert_eq!(
-            quantize_price(Decimal::new(12345, 2), Decimal::new(5, 1)).to_string(),
+            quantize_price(Decimal::new(12345, 2), Decimal::new(5, 1))
+                .unwrap()
+                .to_string(),
             "123.0"
         );
         assert_eq!(
-            quantize_qty(Decimal::new(1234567, 6), r.step).to_string(),
+            quantize_qty(Decimal::new(1234567, 6), r.step)
+                .unwrap()
+                .to_string(),
             "1.23456"
         );
         // 恰好为整数倍时保持不变
         assert_eq!(
-            quantize_qty(Decimal::new(1, 0), r.step).to_string(),
+            quantize_qty(Decimal::new(1, 0), r.step)
+                .unwrap()
+                .to_string(),
             "1.00000"
         );
+        // 溢出防护：超大值返回 None 而非 panic
+        let huge = Decimal::from_str_exact("79228162514264337593543950335").unwrap();
+        assert!(quantize_price(huge, r.tick).is_none());
+        assert!(quantize_qty(huge, r.step).is_none());
     }
 
     #[test]

@@ -587,43 +587,36 @@ async fn handle_cmd(
                 return;
             };
             let mut note = String::new();
-            match &mut req.kind {
-                OrderKind::Limit { price, qty } => {
-                    let np = quantize_price(*price, r.tick);
-                    if np != *price {
-                        note = format!("价格已按最小变动量化: {price} → {np}");
+            // 量化失败（数值溢出）时拒绝下单，避免向交易所发送错误数量
+            let quantized: Option<()> = (|| {
+                match &mut req.kind {
+                    OrderKind::Limit { price, qty } => {
+                        *price = quantize_with_note(*price, r.tick, true, &mut note)?;
+                        *qty = quantize_with_note(*qty, r.step, false, &mut note)?;
                     }
-                    *price = np;
-                    let nq = quantize_qty(*qty, r.step);
-                    if nq != *qty {
-                        if !note.is_empty() {
-                            note.push('；');
-                        }
-                        note.push_str(&format!("数量已按步进量化: {qty} → {nq}"));
+                    OrderKind::Market { qty } => {
+                        *qty = quantize_with_note(*qty, r.step, false, &mut note)?;
                     }
-                    *qty = nq;
-                }
-                OrderKind::Market { qty } => {
-                    let nq = quantize_qty(*qty, r.step);
-                    if nq != *qty {
-                        note = format!("数量已按步进量化: {qty} → {nq}");
+                    OrderKind::StopLimit {
+                        trigger,
+                        price,
+                        qty,
+                        ..
+                    } => {
+                        *trigger = quantize_with_note(*trigger, r.tick, true, &mut note)?;
+                        *price = quantize_with_note(*price, r.tick, true, &mut note)?;
+                        *qty = quantize_with_note(*qty, r.step, false, &mut note)?;
                     }
-                    *qty = nq;
+                    OrderKind::StopMarket { trigger, qty, .. } => {
+                        *trigger = quantize_with_note(*trigger, r.tick, true, &mut note)?;
+                        *qty = quantize_with_note(*qty, r.step, false, &mut note)?;
+                    }
                 }
-                OrderKind::StopLimit {
-                    trigger,
-                    price,
-                    qty,
-                    ..
-                } => {
-                    *trigger = quantize_price(*trigger, r.tick);
-                    *price = quantize_price(*price, r.tick);
-                    *qty = quantize_qty(*qty, r.step);
-                }
-                OrderKind::StopMarket { trigger, qty, .. } => {
-                    *trigger = quantize_price(*trigger, r.tick);
-                    *qty = quantize_qty(*qty, r.step);
-                }
+                Some(())
+            })();
+            if quantized.is_none() {
+                state.push_toast(ToastKind::Err, "价格/数量超出可表示范围，请检查输入");
+                return;
             }
             if req.kind.qty().is_zero() {
                 state.push_toast(ToastKind::Warn, format!("数量过小（步进 {}）", r.step));
@@ -854,15 +847,25 @@ async fn market_ws_loop(
                 repaint(&ctx);
 
                 let (_, mut read) = futures_util::StreamExt::split(ws);
-                let mut version = last_version(&state);
+                let version = last_version(&state);
+                // 记录读循环退出原因：出错时保留 Failed 状态（不被下方 Disconnected 覆盖）
+                let mut read_fail: Option<String> = None;
                 loop {
+                    // 循环顶部比对配置版本，避免被高频行情消息饿死
+                    if last_version(&state) != version {
+                        break;
+                    }
                     tokio::select! {
                         msg = read.next() => {
                             match msg {
                                 None => break,
                                 Some(Err(e)) => {
                                     tracing::warn!("行情WS错误: {e}");
-                                    state.set_market_ws(spec.market, ConnState::Failed(short_err(&e.to_string())));
+                                    let msg = short_err(&e.to_string());
+                                    read_fail = Some(msg.clone());
+                                    state.with_symbol_md(spec.market, &spec.symbol, |md| {
+                                        md.ws = ConnState::Failed(msg)
+                                    });
                                     break;
                                 }
                                 Some(Ok(m)) => {
@@ -874,17 +877,20 @@ async fn market_ws_loop(
                             }
                         }
                         _ = rx_sub.changed() => break,
-                        _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                            if last_version(&state) != version {
-                                break;
-                            }
-                            version = last_version(&state);
-                        }
                     }
+                }
+                if let Some(msg) = read_fail {
+                    state.set_market_ws(spec.market, ConnState::Failed(msg));
+                } else {
+                    state.with_symbol_md(spec.market, &spec.symbol, |md| {
+                        md.ws = ConnState::Disconnected
+                    });
                 }
             }
         }
-        state.set_market_ws(spec.market, ConnState::Disconnected);
+        if !matches!(state.md.lock().market_ws(spec.market), ConnState::Failed(_)) {
+            state.set_market_ws(spec.market, ConnState::Disconnected);
+        }
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
 }
@@ -904,6 +910,27 @@ fn short_err(e: &str) -> String {
     } else {
         e.to_string()
     }
+}
+
+/// 按规则量化并记录变化说明；溢出返回 None
+fn quantize_with_note(
+    v: Decimal,
+    unit: Decimal,
+    is_price: bool,
+    note: &mut String,
+) -> Option<Decimal> {
+    let q = if is_price {
+        quantize_price(v, unit)?
+    } else {
+        quantize_qty(v, unit)?
+    };
+    if q != v {
+        if !note.is_empty() {
+            note.push('；');
+        }
+        note.push_str(&format!("{v} → {q}"));
+    }
+    Some(q)
 }
 
 fn handle_market_msg_text(state: &SharedState, spec: &SubSpec, text: &str) {
@@ -946,12 +973,10 @@ async fn user_ws_loop(
     market: Market,
     engine_tx: mpsc::UnboundedSender<Command>,
 ) {
-    let mut last_seen = (0u64, 0u64);
     loop {
         // 无凭据则等待
         if !state.has_creds() {
             tokio::time::sleep(Duration::from_millis(800)).await;
-            last_seen = last_version(&state);
             continue;
         }
         let cfg = state.cfg_snapshot();
@@ -980,7 +1005,7 @@ async fn user_ws_loop(
         };
         let lk_path = market.listen_key_path();
         let key = match client
-            .key_auth(reqwest::Method::POST, rc, &cfg, lk_path)
+            .key_auth(reqwest::Method::POST, rc, &cfg, lk_path, &[])
             .await
         {
             Ok(v) => v
@@ -1001,6 +1026,8 @@ async fn user_ws_loop(
             continue;
         };
         let url = format!("{}/ws/{}", ep.ws, key);
+        // 建连前采样版本号：循环顶部比对，避免被高频事件饿死
+        let last_seen = last_version(&state);
         state.set_user_ws(market, ConnState::Connecting);
         repaint(&ctx);
 
@@ -1022,8 +1049,18 @@ async fn user_ws_loop(
                 let (_, mut read) = futures_util::StreamExt::split(ws);
                 let mut keepalive = tokio::time::interval(Duration::from_secs(25 * 60));
                 keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                // interval 首个 tick 立即完成，先消费掉，避免建连即触发保活
+                keepalive.tick().await;
+                // 现货 PUT/DELETE 需携带 listenKey 参数，合约端点无参
+                let keepalive_params: Vec<(&str, &str)> = match market {
+                    Market::Spot => vec![("listenKey", key.as_str())],
+                    Market::UmFutures => vec![],
+                };
                 let mut alive = true;
                 while alive {
+                    if last_version(&state) != last_seen {
+                        break;
+                    }
                     tokio::select! {
                         msg = read.next() => match msg {
                             None => alive = false,
@@ -1039,23 +1076,20 @@ async fn user_ws_loop(
                             }
                         },
                         _ = keepalive.tick() => {
-                            if let Err(e) = client.key_auth(reqwest::Method::PUT, rc, &cfg, lk_path).await {
+                            if let Err(e) = client.key_auth(reqwest::Method::PUT, rc, &cfg, lk_path, &keepalive_params).await {
                                 tracing::warn!("listenKey 保活失败({market}): {e}，将重建");
                                 alive = false;
                             }
                         }
-                        _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                            let cur = last_version(&state);
-                            if cur != last_seen {
-                                alive = false;
-                            }
-                            last_seen = cur;
-                        }
                     }
                 }
                 // 尽力关闭 listenKey
+                let close_params: Vec<(&str, &str)> = match market {
+                    Market::Spot => vec![("listenKey", key.as_str())],
+                    Market::UmFutures => vec![],
+                };
                 let _ = client
-                    .key_auth(reqwest::Method::DELETE, rc, &cfg, lk_path)
+                    .key_auth(reqwest::Method::DELETE, rc, &cfg, lk_path, &close_params)
                     .await;
             }
         }
@@ -1136,7 +1170,7 @@ fn handle_user_event(
                 status: f.o.status.clone(),
                 side: f.o.side.clone(),
                 order_type: f.o.order_type.clone(),
-                stop_price: None,
+                stop_price: f.o.stop_price,
                 time: f.o.trade_time,
                 update_time: f.o.trade_time,
                 position_side: f.o.position_side.clone(),

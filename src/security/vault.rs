@@ -66,7 +66,11 @@ pub fn save_creds(dir: &Path, password: &str, creds: &Creds) -> Result<(), Strin
 
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir.join(VAULT_FILE);
-    std::fs::write(&path, buf).map_err(|e| format!("写入凭据文件失败({}): {e}", path.display()))?;
+    // 先写临时文件再原子替换，避免写入中断留下损坏的凭据库
+    let tmp = dir.join(format!("{VAULT_FILE}.tmp"));
+    std::fs::write(&tmp, buf).map_err(|e| format!("写入凭据文件失败({}): {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path)
+        .map_err(|e| format!("替换凭据文件失败({}): {e}", path.display()))?;
     Ok(())
 }
 

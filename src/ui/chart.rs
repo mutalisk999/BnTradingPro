@@ -4,15 +4,26 @@ use crate::app::BnApp;
 use crate::binance::model::Candle;
 use crate::binance::Interval;
 use crate::ui::theme;
+use crate::ui::widgets;
 use chrono::TimeZone;
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 use rust_decimal::Decimal;
 
+/// 均线周期与配色（MA5/MA10/MA20/MA60）
+pub const MA_PERIODS: [usize; 4] = [5, 10, 20, 60];
+pub const MA_COLORS: [Color32; 4] = [
+    Color32::from_rgb(255, 193, 61),  // 琥珀
+    Color32::from_rgb(240, 100, 181), // 粉
+    Color32::from_rgb(80, 200, 255),  // 青
+    Color32::from_rgb(170, 130, 255), // 紫
+];
+
 #[derive(Debug, Clone)]
 pub struct ChartState {
     pub bars_visible: f32,
     pub right_off: f32,
+    pub ma: [bool; 4],
 }
 
 impl Default for ChartState {
@@ -20,6 +31,7 @@ impl Default for ChartState {
         Self {
             bars_visible: 120.0,
             right_off: 0.0,
+            ma: [true, true, true, false],
         }
     }
 }
@@ -37,22 +49,89 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         .map(|r| r.price_dp())
         .unwrap_or(2);
 
-    // 叠加线：当前挂单 + 合约持仓开仓价
+    // 头部信息：24h 统计（合约附标记价/资金费率）
+    let (tick, mark) = {
+        let md = state.md.lock();
+        let t = md
+            .get(app.market, &app.symbol)
+            .and_then(|m| m.ticker.clone());
+        let m = md.get(app.market, &app.symbol).and_then(|m| m.mark.clone());
+        (t, m)
+    };
+
+    // ---------- 头部工具行：MA 开关 + 24h 统计 ----------
+    ui.horizontal(|ui| {
+        for (i, &period) in MA_PERIODS.iter().enumerate() {
+            let label = egui::RichText::new(format!("MA{period}"))
+                .size(11.5)
+                .strong();
+            let label = if app.chart.ma[i] {
+                label.color(MA_COLORS[i])
+            } else {
+                label.color(theme::TEXT_DIM)
+            };
+            if ui.selectable_label(app.chart.ma[i], label).clicked() {
+                app.chart.ma[i] = !app.chart.ma[i];
+            }
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(t) = &tick {
+                let vol_f: f64 = t.quote_volume.to_string().parse().unwrap_or(0.0);
+                let vol_txt = if vol_f >= 1e8 {
+                    format!("{:.2}亿", vol_f / 1e8)
+                } else if vol_f >= 1e4 {
+                    format!("{:.1}万", vol_f / 1e4)
+                } else {
+                    format!("{vol_f:.0}")
+                };
+                ui.label(
+                    egui::RichText::new(format!(
+                        "24h 高 {} · 低 {} · 额 {vol_txt}",
+                        widgets::fmt_dec(&t.high_price),
+                        widgets::fmt_dec(&t.low_price)
+                    ))
+                    .size(11.0)
+                    .color(theme::TEXT_DIM),
+                );
+            }
+            if app.market == crate::binance::Market::UmFutures {
+                if let Some(m) = &mark {
+                    if let Some(r) = &m.funding_rate {
+                        let rf: f64 = r.to_string().parse().unwrap_or(0.0);
+                        ui.label(
+                            egui::RichText::new(format!("资金费率 {rf:+.4}%"))
+                                .size(11.0)
+                                .color(theme::ACCENT),
+                        );
+                    }
+                }
+            }
+        });
+    });
+    ui.separator();
+
+    // 叠加线：当前挂单（含止损触发价）+ 合约持仓开仓价
     let mut overlays: Vec<Overlay> = Vec::new();
     if state.has_creds() {
         for o in state.orders.lock().open(app.market).iter() {
             if o.symbol == app.symbol {
+                let color = if o.side == "BUY" {
+                    theme::UP
+                } else {
+                    theme::DOWN
+                };
+                let side_txt = if o.side == "BUY" { "买" } else { "卖" };
                 if let Some(p) = o.price.filter(|p| !p.is_zero()) {
-                    let color = if o.side == "BUY" {
-                        theme::UP
-                    } else {
-                        theme::DOWN
-                    };
-                    let side_txt = if o.side == "BUY" { "买" } else { "卖" };
                     overlays.push(Overlay {
                         price: to_f64(&p),
                         color,
                         label: format!("挂单 {side_txt} {}", fmt_norm(&p)),
+                    });
+                } else if let Some(s) = o.stop_price.filter(|s| !s.is_zero()) {
+                    overlays.push(Overlay {
+                        price: to_f64(&s),
+                        color,
+                        label: format!("触发 {side_txt} {}", fmt_norm(&s)),
                     });
                 }
             }
@@ -102,6 +181,18 @@ fn fmt_norm(d: &Decimal) -> String {
     d.normalize().to_string()
 }
 
+/// 简单移动平均（含历史窗口），历史不足返回 None
+fn sma(candles: &[Candle], end_idx: usize, period: usize) -> Option<f64> {
+    if end_idx + 1 < period {
+        return None;
+    }
+    let mut sum = 0.0;
+    for c in &candles[end_idx + 1 - period..=end_idx] {
+        sum += to_f64(&c.c);
+    }
+    Some(sum / period as f64)
+}
+
 fn draw(
     ui: &mut egui::Ui,
     app: &mut BnApp,
@@ -125,8 +216,9 @@ fn draw(
     if resp.dragged() {
         let d = resp.drag_delta();
         let bar_w = plot.width() / app.chart.bars_visible.max(1.0);
-        app.chart.right_off =
-            (app.chart.right_off + d.x / bar_w).clamp(0.0, candles.len() as f32 - 10.0);
+        // 上界取 max(0)，K 线不足 10 根时 clamp 不会 panic
+        let max_off = (candles.len() as f32 - 10.0).max(0.0);
+        app.chart.right_off = (app.chart.right_off + d.x / bar_w).clamp(0.0, max_off);
     }
     if resp.double_clicked() {
         app.chart.right_off = 0.0;
@@ -156,6 +248,20 @@ fn draw(
         hi = hi.max(h);
         lo = lo.min(l);
         max_vol = max_vol.max(to_f64(&c.v));
+    }
+    // 可见范围的均线也纳入范围
+    for gi in start as usize..end as usize {
+        for (k, &period) in MA_PERIODS.iter().enumerate() {
+            if !app.chart.ma[k] {
+                continue;
+            }
+            if let Some(v) = sma(candles, gi, period) {
+                if v > 0.0 {
+                    hi = hi.max(v);
+                    lo = lo.min(v);
+                }
+            }
+        }
     }
     // 叠加线也纳入范围
     for ov in overlays {
@@ -243,6 +349,22 @@ fn draw(
             0.0,
             col,
         );
+    }
+
+    // ---------- MA 均线 ----------
+    for (k, &period) in MA_PERIODS.iter().enumerate() {
+        if !app.chart.ma[k] {
+            continue;
+        }
+        let mut pts: Vec<Pos2> = Vec::new();
+        for (local, gi) in (start as usize..end as usize).enumerate() {
+            if let Some(v) = sma(candles, gi, period) {
+                pts.push(Pos2::new(x_of(local), y_of(v as f32)));
+            }
+        }
+        if pts.len() > 1 {
+            painter.add(Shape::line(pts, Stroke::new(1.2_f32, MA_COLORS[k])));
+        }
     }
 
     // ---------- 蜡烛 ----------
@@ -402,21 +524,63 @@ fn draw(
                 font,
                 theme::TEXT,
             );
+            // 底部时间标签
+            let t_txt = time_label_full(c.t);
+            let t_galley =
+                painter.layout_no_wrap(t_txt.clone(), FontId::monospace(11.0), theme::TEXT);
+            let tsz = t_galley.size() + Vec2::new(10.0, 4.0);
+            let tx = (hp.x - tsz.x / 2.0).clamp(plot.left(), plot.left() + chart_w - tsz.x);
+            painter.rect_filled(
+                Rect::from_min_size(Pos2::new(tx, plot.bottom() - tsz.y), tsz),
+                2.0,
+                Color32::from_rgb(44, 52, 66),
+            );
+            painter.text(
+                Pos2::new(tx + tsz.x / 2.0, plot.bottom() - tsz.y / 2.0),
+                Align2::CENTER_CENTER,
+                t_txt,
+                FontId::monospace(11.0),
+                theme::TEXT,
+            );
         }
     }
 
-    // 提示角标
+    // 底部操作提示
     painter.text(
-        Pos2::new(plot.left() + 8.0, plot.top() + 8.0),
+        Pos2::new(plot.left() + 8.0, plot.bottom() - 6.0),
+        Align2::LEFT_BOTTOM,
+        "滚轮缩放 · 拖动平移 · 双击回最新",
+        FontId::proportional(10.5),
+        theme::TEXT_DIM.gamma_multiply(0.8),
+    );
+
+    // ---------- 左上角图例：交易对 · 周期 + 最新 MA 值 ----------
+    let last_gi = end as usize - 1;
+    let mut legend_y = plot.top() + 8.0;
+    painter.text(
+        Pos2::new(plot.left() + 8.0, legend_y),
         Align2::LEFT_TOP,
-        format!(
-            "{} · {} · 滚轮缩放/拖动平移/双击回最新",
-            app.symbol,
-            interval.label()
-        ),
+        format!("{} · {}", app.symbol, interval.label()),
         FontId::proportional(11.5),
         theme::TEXT_DIM,
     );
+    legend_y += 16.0;
+    for (k, &period) in MA_PERIODS.iter().enumerate() {
+        if !app.chart.ma[k] {
+            continue;
+        }
+        let val = sma(candles, last_gi, period)
+            .map(|v| fmt_f64(v, dp as usize))
+            .unwrap_or_else(|| "—".into());
+        painter.text(
+            Pos2::new(plot.left() + 8.0, legend_y),
+            Align2::LEFT_TOP,
+            format!("MA{period} {val}"),
+            FontId::monospace(11.0),
+            MA_COLORS[k],
+        );
+        legend_y += 14.0;
+    }
 }
 
 fn time_label(ms: i64, interval: Interval) -> String {
@@ -425,7 +589,8 @@ fn time_label(ms: i64, interval: Interval) -> String {
         None => return "—".into(),
     };
     match interval {
-        Interval::D1 => t.format("%m-%d").to_string(),
+        Interval::MO1 => t.format("%Y-%m").to_string(),
+        Interval::D1 | Interval::D3 | Interval::W1 => t.format("%m-%d").to_string(),
         _ => t.format("%H:%M").to_string(),
     }
 }

@@ -1,14 +1,15 @@
 //! 主题与字体：暗色专业配色 + 中文字体加载
 
 use eframe::egui;
-use egui::{Color32, FontData, FontDefinitions, Style, Visuals};
+use egui::{Color32, FontData, FontDefinitions, Stroke, Style, Visuals};
 
 pub const UP: Color32 = Color32::from_rgb(46, 189, 133); // 涨/买（国际惯例绿涨红跌）
 pub const DOWN: Color32 = Color32::from_rgb(246, 70, 93); // 跌/卖
-pub const BG: Color32 = Color32::from_rgb(13, 17, 23);
-pub const PANEL: Color32 = Color32::from_rgb(19, 24, 33);
-pub const PANEL2: Color32 = Color32::from_rgb(25, 31, 42);
-pub const BORDER: Color32 = Color32::from_rgb(44, 52, 66);
+pub const BG: Color32 = Color32::from_rgb(11, 14, 19);
+pub const PANEL: Color32 = Color32::from_rgb(17, 22, 30);
+pub const PANEL2: Color32 = Color32::from_rgb(23, 29, 39);
+pub const CARD: Color32 = Color32::from_rgb(26, 33, 44);
+pub const BORDER: Color32 = Color32::from_rgb(40, 48, 62);
 pub const TEXT: Color32 = Color32::from_rgb(222, 226, 232);
 pub const TEXT_DIM: Color32 = Color32::from_rgb(132, 142, 156);
 pub const ACCENT: Color32 = Color32::from_rgb(240, 185, 11); // 品牌黄
@@ -93,6 +94,7 @@ pub fn apply(ctx: &egui::Context) {
     v.hyperlink_color = ACCENT;
 
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+    style.spacing.menu_margin = egui::Margin::symmetric(6.0, 4.0);
     style.spacing.button_padding = egui::vec2(10.0, 5.0);
     style.text_styles = [
         (egui::TextStyle::Heading, egui::FontId::proportional(20.0)),
@@ -103,4 +105,54 @@ pub fn apply(ctx: &egui::Context) {
     ]
     .into();
     ctx.set_style(style);
+}
+
+/// 卡片容器：圆角 + 细边框 + 内边距
+pub fn card<R>(
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    egui::Frame::default()
+        .fill(CARD)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .rounding(4.0)
+        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+        .outer_margin(egui::Margin::symmetric(0.0, 4.0))
+        .show(ui, add_contents)
+}
+
+/// 顶部导航页签（激活态金色 + 下划线感）
+pub fn nav_tab(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
+    let txt = if active {
+        egui::RichText::new(label).strong().size(14.5).color(ACCENT)
+    } else {
+        egui::RichText::new(label).size(14.0).color(TEXT_DIM)
+    };
+    let btn = egui::Button::new(txt)
+        .fill(Color32::TRANSPARENT)
+        .stroke(if active {
+            Stroke::new(2.0_f32, ACCENT)
+        } else {
+            Stroke::NONE
+        })
+        .rounding(3.0)
+        .min_size(egui::vec2(0.0, 26.0));
+    ui.add(btn).clicked()
+}
+
+/// 区块小标题
+pub fn section(ui: &mut egui::Ui, label: &str) {
+    ui.label(
+        egui::RichText::new(label)
+            .size(11.5)
+            .strong()
+            .color(TEXT_DIM),
+    );
+}
+
+/// 表格/卡片内的小标签文字
+pub fn card_label(label: &str) -> egui::RichText {
+    egui::RichText::new(label.to_string())
+        .size(11.5)
+        .color(TEXT_DIM)
 }
