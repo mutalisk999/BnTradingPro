@@ -1,0 +1,561 @@
+//! Binance REST 客户端：请求构建、HMAC-SHA256 签名、时间同步、限速与错误映射
+
+use crate::binance::{endpoints, Market, Side};
+use crate::config::ProxyConfig;
+use hmac::{Hmac, Mac};
+use rust_decimal::Decimal;
+use serde_json::Value;
+use sha2::Sha256;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use thiserror::Error;
+use zeroize::Zeroizing;
+
+type HmacSha256 = Hmac<Sha256>;
+
+#[derive(Debug, Error)]
+pub enum BinanceError {
+    #[error("未配置 API 密钥")]
+    NoCreds,
+    #[error("请求超时")]
+    Timeout,
+    #[error("网络错误: {0}")]
+    Network(String),
+    #[error("Binance 错误 [{code}]: {msg}")]
+    Api { code: i64, msg: String },
+    #[error("响应解析失败: {0}")]
+    Decode(String),
+}
+
+impl BinanceError {
+    /// UI 展示用友好信息
+    pub fn friendly(&self) -> String {
+        match self {
+            BinanceError::NoCreds => "未配置 API 密钥，请在设置中配置".into(),
+            BinanceError::Timeout => "请求超时，请检查网络/代理".into(),
+            BinanceError::Network(e) => format!("网络错误: {e}"),
+            BinanceError::Decode(e) => format!("响应解析失败: {e}"),
+            BinanceError::Api { code, msg } => match code {
+                -1021 => "本地时间与服务器偏差过大，正在自动校时，请重试".into(),
+                -2015 => {
+                    "API Key 无效或权限不足（检查 Key、IP 白名单、是否用对测试网/实盘）".into()
+                }
+                -2014 => "API Key 格式错误".into(),
+                -1022 => "签名错误（Secret 不匹配）".into(),
+                -1013 => "下单参数不满足过滤器（价格/数量/最小名义金额）".into(),
+                -2010 => format!("下单被拒绝: {msg}"),
+                -2019 => "保证金不足".into(),
+                -2021 => "订单会立即触发（止盈止损价过于贴近市价）".into(),
+                -2022 => "订单方向与持仓方向冲突（ReduceOnly）".into(),
+                -4061 => "持仓方向与订单冲突（检查双向/单向持仓模式）".into(),
+                _ => format!("Binance 错误[{code}]: {msg}"),
+            },
+        }
+    }
+}
+
+/// 单个请求的上下文（市场 + 环境）
+#[derive(Debug, Clone, Copy)]
+pub struct RestCtx {
+    pub market: Market,
+    pub testnet: bool,
+    pub recv_window_ms: u64,
+}
+
+pub struct BinanceRest {
+    http: reqwest::Client,
+    api_key: Option<Zeroizing<String>>,
+    api_secret: Option<Zeroizing<String>>,
+    time_offset_ms: AtomicI64,
+    weight_used: AtomicU64,
+    weight_window: Mutex<Option<std::time::Instant>>,
+    weight_limit: u64,
+}
+
+impl BinanceRest {
+    pub fn new(timeout: Duration, proxy: &ProxyConfig) -> Result<Self, BinanceError> {
+        let mut builder = reqwest::Client::builder()
+            .timeout(timeout)
+            .connect_timeout(Duration::from_secs(15))
+            .user_agent(concat!("BnTradingPro/", env!("CARGO_PKG_VERSION")));
+        if proxy.enabled && !proxy.url.trim().is_empty() {
+            let p = reqwest::Proxy::all(proxy.url.trim())
+                .map_err(|e| BinanceError::Network(format!("代理配置无效: {e}")))?;
+            builder = builder.proxy(p);
+        }
+        let http = builder
+            .build()
+            .map_err(|e| BinanceError::Network(e.to_string()))?;
+        Ok(Self {
+            http,
+            api_key: None,
+            api_secret: None,
+            time_offset_ms: AtomicI64::new(0),
+            weight_used: AtomicU64::new(0),
+            weight_window: Mutex::new(None),
+            weight_limit: 4000, // 低于 6000/min 上限的保护阈值
+        })
+    }
+
+    pub fn set_creds(&mut self, key: String, secret: String) {
+        self.api_key = Some(Zeroizing::new(key));
+        self.api_secret = Some(Zeroizing::new(secret));
+    }
+
+    pub fn has_creds(&self) -> bool {
+        self.api_key.is_some() && self.api_secret.is_some()
+    }
+
+    pub fn time_offset_ms(&self) -> i64 {
+        self.time_offset_ms.load(Ordering::Relaxed)
+    }
+
+    fn now_ms() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+    }
+
+    fn signed_now_ms(&self) -> i64 {
+        Self::now_ms() + self.time_offset_ms()
+    }
+
+    /// 与服务器校时（签名请求的 timestamp 需要该偏移）
+    pub async fn sync_time(
+        &self,
+        ctx: RestCtx,
+        overrides: &crate::config::AppConfig,
+    ) -> Result<(), BinanceError> {
+        let ep = endpoints(ctx.market, ctx.testnet, overrides);
+        let v = self.get_public_raw(&ep, "/time", &[]).await?;
+        let server = v
+            .get("serverTime")
+            .and_then(|x| x.as_i64())
+            .ok_or_else(|| BinanceError::Decode("serverTime 缺失".into()))?;
+        let offset = server - Self::now_ms();
+        self.time_offset_ms.store(offset, Ordering::Relaxed);
+        tracing::info!("时间同步完成，偏移 {offset}ms ({:?})", ctx.market);
+        Ok(())
+    }
+
+    /// 带端点覆盖的请求包装（由 engine 传入当前配置）
+    pub async fn get_public(
+        &self,
+        ctx: RestCtx,
+        overrides: &crate::config::AppConfig,
+        path: &str,
+        params: &[(&str, &str)],
+    ) -> Result<Value, BinanceError> {
+        let ep = endpoints(ctx.market, ctx.testnet, overrides);
+        self.get_public_raw(&ep, path, params).await
+    }
+
+    pub async fn signed(
+        &self,
+        method: reqwest::Method,
+        ctx: RestCtx,
+        overrides: &crate::config::AppConfig,
+        path: &str,
+        params: Vec<(String, String)>,
+    ) -> Result<Value, BinanceError> {
+        let ep = endpoints(ctx.market, ctx.testnet, overrides);
+        self.signed_raw(method, &ep, ctx, path, params).await
+    }
+
+    /// 仅需 API Key 头的端点（listenKey 管理），不签名
+    pub async fn key_auth(
+        &self,
+        method: reqwest::Method,
+        ctx: RestCtx,
+        overrides: &crate::config::AppConfig,
+        path: &str,
+    ) -> Result<Value, BinanceError> {
+        if !self.has_creds() {
+            return Err(BinanceError::NoCreds);
+        }
+        self.wait_for_weight().await?;
+        let ep = endpoints(ctx.market, ctx.testnet, overrides);
+        let url = format!("{}{}", ep.rest, path);
+        let key = self.api_key.as_ref().unwrap();
+        let resp = self
+            .http
+            .request(method, &url)
+            .header("X-MBX-APIKEY", key.as_str())
+            .send()
+            .await
+            .map_err(map_req_err)?;
+        self.track_weight(&resp);
+        parse_response(resp).await
+    }
+
+    async fn wait_for_weight(&self) -> Result<(), BinanceError> {
+        let wait = {
+            let mut window = self.weight_window.lock().unwrap();
+            match *window {
+                None => None,
+                Some(start) => {
+                    if start.elapsed() > Duration::from_secs(60) {
+                        *window = None;
+                        self.weight_used.store(0, Ordering::Relaxed);
+                        None
+                    } else if self.weight_used.load(Ordering::Relaxed) >= self.weight_limit {
+                        Some(Duration::from_secs(60) - start.elapsed())
+                    } else {
+                        None
+                    }
+                }
+            }
+        };
+        // 在锁外等待，避免 MutexGuard 跨 await 导致 future 非 Send
+        if let Some(wait) = wait {
+            tracing::warn!(
+                "已用权重 {} 过高，等待 {:?}",
+                self.weight_used.load(Ordering::Relaxed),
+                wait
+            );
+            tokio::time::sleep(wait).await;
+            let mut window = self.weight_window.lock().unwrap();
+            *window = None;
+            self.weight_used.store(0, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    fn track_weight(&self, resp: &reqwest::Response) {
+        let h = resp
+            .headers()
+            .get("x-mbx-used-weight-1m")
+            .or_else(|| resp.headers().get("x-mbx-used-weight"));
+        if let Some(w) = h
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            self.weight_used.store(w, Ordering::Relaxed);
+            let mut window = self.weight_window.lock().unwrap();
+            if window.is_none() {
+                *window = Some(std::time::Instant::now());
+            }
+        }
+    }
+
+    async fn get_public_raw(
+        &self,
+        ep: &crate::binance::Endpoints,
+        path: &str,
+        params: &[(&str, &str)],
+    ) -> Result<Value, BinanceError> {
+        self.wait_for_weight().await?;
+        let full = format!("{}{}", ep.rest, path);
+        let mut req = self.http.get(&full);
+        if !params.is_empty() {
+            req = req.query(params);
+        }
+        let resp = req.send().await.map_err(map_req_err)?;
+        self.track_weight(&resp);
+        parse_response(resp).await
+    }
+
+    async fn signed_raw(
+        &self,
+        method: reqwest::Method,
+        ep: &crate::binance::Endpoints,
+        ctx: RestCtx,
+        path: &str,
+        mut params: Vec<(String, String)>,
+    ) -> Result<Value, BinanceError> {
+        if !self.has_creds() {
+            return Err(BinanceError::NoCreds);
+        }
+        self.wait_for_weight().await?;
+
+        params.push(("timestamp".into(), self.signed_now_ms().to_string()));
+        if ctx.recv_window_ms > 0 {
+            params.push(("recvWindow".into(), ctx.recv_window_ms.to_string()));
+        }
+        let query: String = params
+            .iter()
+            .map(|(k, v)| format!("{k}={}", urlencode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let secret = self.api_secret.as_ref().unwrap();
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(query.as_bytes());
+        let sig = hex::encode(mac.finalize().into_bytes());
+
+        let url = format!("{}{}?{}&signature={}", ep.rest, path, query, sig);
+        let key = self.api_key.as_ref().unwrap();
+        let resp = self
+            .http
+            .request(method, &url)
+            .header("X-MBX-APIKEY", key.as_str())
+            .send()
+            .await
+            .map_err(map_req_err)?;
+        self.track_weight(&resp);
+        parse_response(resp).await
+    }
+}
+
+fn map_req_err(e: reqwest::Error) -> BinanceError {
+    if e.is_timeout() {
+        BinanceError::Timeout
+    } else {
+        BinanceError::Network(e.to_string())
+    }
+}
+
+fn urlencode(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
+}
+
+async fn parse_response(resp: reqwest::Response) -> Result<Value, BinanceError> {
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| BinanceError::Decode(e.to_string()))?;
+    let v: Value = serde_json::from_str(&text)
+        .map_err(|e| BinanceError::Decode(format!("HTTP {status}: {e}")))?;
+    if !status.is_success() {
+        if let (Some(code), Some(msg)) = (
+            v.get("code").and_then(|c| c.as_i64()),
+            v.get("msg").and_then(|m| m.as_str()),
+        ) {
+            return Err(BinanceError::Api {
+                code,
+                msg: msg.to_string(),
+            });
+        }
+        return Err(BinanceError::Decode(format!("HTTP {status}: {text}")));
+    }
+    if let (Some(code), Some(msg)) = (
+        v.get("code").and_then(|c| c.as_i64()),
+        v.get("msg").and_then(|m| m.as_str()),
+    ) {
+        // 200 但带 code 的异常返回
+        return Err(BinanceError::Api {
+            code,
+            msg: msg.to_string(),
+        });
+    }
+    Ok(v)
+}
+
+// ---------- 下单参数构建（纯函数，便于测试） ----------
+
+/// UI 层的订单请求描述
+#[derive(Debug, Clone)]
+pub struct OrderRequest {
+    pub symbol: String,
+    pub side: Side,
+    pub kind: OrderKind,
+    /// 合约双向持仓模式下的持仓方向
+    pub position_side: crate::binance::FutPosSide,
+    pub reduce_only: bool,
+    pub client_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum OrderKind {
+    Limit {
+        price: Decimal,
+        qty: Decimal,
+    },
+    Market {
+        qty: Decimal,
+    },
+    /// 现货：止损限价 / 止盈限价（trigger 触发后以 price 挂限价单）
+    StopLimit {
+        trigger: Decimal,
+        price: Decimal,
+        qty: Decimal,
+        take_profit: bool,
+    },
+    /// 合约：止损市价 / 止盈市价
+    StopMarket {
+        trigger: Decimal,
+        qty: Decimal,
+        take_profit: bool,
+    },
+}
+
+impl OrderKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            OrderKind::Limit { .. } => "限价",
+            OrderKind::Market { .. } => "市价",
+            OrderKind::StopLimit {
+                take_profit: false, ..
+            } => "止损限价",
+            OrderKind::StopLimit {
+                take_profit: true, ..
+            } => "止盈限价",
+            OrderKind::StopMarket {
+                take_profit: false, ..
+            } => "止损市价",
+            OrderKind::StopMarket {
+                take_profit: true, ..
+            } => "止盈市价",
+        }
+    }
+
+    pub fn qty(&self) -> Decimal {
+        match self {
+            OrderKind::Limit { qty, .. } | OrderKind::Market { qty } => *qty,
+            OrderKind::StopLimit { qty, .. } | OrderKind::StopMarket { qty, .. } => *qty,
+        }
+    }
+}
+
+/// 构建下单请求参数（不含签名与公共字段）
+pub fn build_order_params(market: Market, req: &OrderRequest) -> Vec<(String, String)> {
+    let mut p: Vec<(String, String)> = vec![
+        ("symbol".into(), req.symbol.clone()),
+        ("side".into(), req.side.as_str().into()),
+    ];
+    match &req.kind {
+        OrderKind::Limit { price, qty } => {
+            p.push(("type".into(), "LIMIT".into()));
+            p.push(("timeInForce".into(), "GTC".into()));
+            p.push(("quantity".into(), qty.normalize().to_string()));
+            p.push(("price".into(), price.normalize().to_string()));
+        }
+        OrderKind::Market { qty } => {
+            p.push(("type".into(), "MARKET".into()));
+            p.push(("quantity".into(), qty.normalize().to_string()));
+        }
+        OrderKind::StopLimit {
+            trigger,
+            price,
+            qty,
+            take_profit,
+        } => {
+            p.push((
+                "type".into(),
+                if *take_profit {
+                    "TAKE_PROFIT_LIMIT".into()
+                } else {
+                    "STOP_LOSS_LIMIT".into()
+                },
+            ));
+            p.push(("timeInForce".into(), "GTC".into()));
+            p.push(("quantity".into(), qty.normalize().to_string()));
+            p.push(("price".into(), price.normalize().to_string()));
+            p.push(("stopPrice".into(), trigger.normalize().to_string()));
+        }
+        OrderKind::StopMarket {
+            trigger,
+            qty,
+            take_profit,
+        } => {
+            p.push((
+                "type".into(),
+                if *take_profit {
+                    "TAKE_PROFIT_MARKET".into()
+                } else {
+                    "STOP_MARKET".into()
+                },
+            ));
+            p.push(("quantity".into(), qty.normalize().to_string()));
+            p.push(("stopPrice".into(), trigger.normalize().to_string()));
+        }
+    }
+    if market == Market::UmFutures {
+        match req.position_side {
+            crate::binance::FutPosSide::Both => {
+                if req.reduce_only {
+                    p.push(("reduceOnly".into(), "true".into()));
+                }
+            }
+            s => {
+                p.push(("positionSide".into(), s.as_str().into()));
+            }
+        }
+    }
+    if let Some(cid) = &req.client_id {
+        p.push(("newClientOrderId".into(), cid.clone()));
+    }
+    p
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::binance::FutPosSide;
+
+    fn hmac_sha256(key: &str, msg: &str) -> String {
+        let mut mac = HmacSha256::new_from_slice(key.as_bytes()).unwrap();
+        mac.update(msg.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
+    #[test]
+    fn hmac_known_vector() {
+        // RFC 4231 test case 2
+        assert_eq!(
+            hmac_sha256("Jefe", "what do ya want for nothing?"),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
+    #[test]
+    fn build_limit_order_spot() {
+        let req = OrderRequest {
+            symbol: "BTCUSDT".into(),
+            side: Side::Buy,
+            kind: OrderKind::Limit {
+                price: Decimal::new(3000012, 2), // 30000.12
+                qty: Decimal::new(1, 4),         // 0.0001
+            },
+            position_side: FutPosSide::Both,
+            reduce_only: false,
+            client_id: Some("c-1".into()),
+        };
+        let p = build_order_params(Market::Spot, &req);
+        assert!(p.contains(&("type".into(), "LIMIT".into())));
+        assert!(p.contains(&("price".into(), "30000.12".into())));
+        assert!(p.contains(&("quantity".into(), "0.0001".into())));
+        assert!(p.contains(&("newClientOrderId".into(), "c-1".into())));
+        assert!(!p.iter().any(|(k, _)| k == "reduceOnly"));
+    }
+
+    #[test]
+    fn build_stop_market_futures_hedge() {
+        let req = OrderRequest {
+            symbol: "BTCUSDT".into(),
+            side: Side::Sell,
+            kind: OrderKind::StopMarket {
+                trigger: Decimal::new(900000, 1),
+                qty: Decimal::new(2, 3),
+                take_profit: false,
+            },
+            position_side: FutPosSide::Long,
+            reduce_only: false,
+            client_id: None,
+        };
+        let p = build_order_params(Market::UmFutures, &req);
+        assert!(p.contains(&("type".into(), "STOP_MARKET".into())));
+        assert!(p.contains(&("positionSide".into(), "LONG".into())));
+        assert!(p.contains(&("stopPrice".into(), "90000".into())));
+    }
+
+    #[test]
+    fn build_market_futures_one_way_reduce_only() {
+        let req = OrderRequest {
+            symbol: "BTCUSDT".into(),
+            side: Side::Sell,
+            kind: OrderKind::Market {
+                qty: Decimal::new(1, 3),
+            },
+            position_side: FutPosSide::Both,
+            reduce_only: true,
+            client_id: None,
+        };
+        let p = build_order_params(Market::UmFutures, &req);
+        assert!(p.contains(&("reduceOnly".into(), "true".into())));
+        assert!(!p.iter().any(|(k, _)| k == "positionSide"));
+    }
+}

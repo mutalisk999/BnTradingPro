@@ -1,0 +1,60 @@
+[package]
+name = "bn-trading-pro"
+version = "0.1.0"
+edition = "2021"
+description = "Binance 现货/U本位合约专业交易终端（Rust + egui）"
+
+[dependencies]
+# GUI
+eframe = "0.29"
+egui_extras = "0.29"
+
+# 异步运行时
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+futures-util = "0.3"
+
+# REST（Windows 走 schannel，支持 http/socks5 代理）
+reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "native-tls", "socks"] }
+
+# WebSocket（含代理隧道支持）
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+tokio-native-tls = "0.3"
+native-tls = "0.2"
+tokio-socks = "0.5"
+url = "2"
+httparse = "1"
+
+# 序列化 / 数值
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+rust_decimal = { version = "1", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# 签名
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
+# 加密存储
+argon2 = "0.5"
+aes-gcm = "0.10"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+rand = "0.8"
+
+# 杂项
+dirs = "5"
+parking_lot = "0.12"
+thiserror = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+# 依赖以 O2 编译，自身代码保持快速增量编译
+[profile.dev.package."*"]
+opt-level = 2
