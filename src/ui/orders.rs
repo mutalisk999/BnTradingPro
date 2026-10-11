@@ -110,7 +110,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::auto().at_least(95.0)) // 已成交
         .column(Column::auto().at_least(70.0)) // 状态
         .column(Column::remainder()) // 操作
-        .header(20.0, |mut h| {
+        .header(22.0, |mut h| {
             for t in [
                 "时间",
                 "交易对",
@@ -129,7 +129,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .body(|mut body| {
             for o in &list {
-                body.row(20.0, |mut row| {
+                body.row(22.0, |mut row| {
                     let dp = dp_of(&o.symbol);
                     let qdp = qdp_of(&o.symbol);
                     row.col(|ui| {
@@ -277,7 +277,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::auto().at_least(95.0))
         .column(Column::auto().at_least(55.0))
         .column(Column::remainder())
-        .header(20.0, |mut h| {
+        .header(22.0, |mut h| {
             for t in [
                 "交易对",
                 "方向",
@@ -296,7 +296,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .body(|mut body| {
             for p in &positions {
-                body.row(20.0, |mut row| {
+                body.row(22.0, |mut row| {
                     let long = p.amt > Decimal::ZERO;
                     let f = |d: &Decimal| d.to_string().parse::<f64>().unwrap_or(0.0);
                     row.col(|ui| {
@@ -444,7 +444,7 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::auto().at_least(95.0))
         .column(Column::auto().at_least(95.0))
         .column(Column::remainder())
-        .header(20.0, |mut h| {
+        .header(22.0, |mut h| {
             for t in [
                 "时间",
                 "交易对",
@@ -462,7 +462,7 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .body(|mut body| {
             for o in &hist {
-                body.row(19.0, |mut row| {
+                body.row(22.0, |mut row| {
                     row.col(|ui| {
                         ui.label(egui::RichText::new(widgets::fmt_time(o.time)).size(11.5));
                     });
@@ -563,7 +563,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::auto().at_least(110.0))
         .column(Column::auto().at_least(90.0))
         .column(Column::remainder())
-        .header(20.0, |mut h| {
+        .header(22.0, |mut h| {
             for t in [
                 "时间",
                 "交易对",
@@ -581,7 +581,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .body(|mut body| {
             for t in &trades {
-                body.row(19.0, |mut row| {
+                body.row(22.0, |mut row| {
                     row.col(|ui| {
                         ui.label(egui::RichText::new(widgets::fmt_time(t.time)).size(11.5));
                     });

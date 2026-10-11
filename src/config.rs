@@ -26,6 +26,10 @@ pub struct AppConfig {
     pub http_timeout_secs: u64,
     /// 日志级别（trace/debug/info/warn/error）
     pub log_level: String,
+    /// 界面语言（zh/en）
+    pub lang: String,
+    /// 主题（dark/light）
+    pub theme_mode: String,
     /// 端点覆盖：留空使用内置默认
     pub override_spot_rest: String,
     pub override_spot_ws: String,
@@ -43,6 +47,8 @@ impl Default for AppConfig {
             recv_window_ms: 5000,
             http_timeout_secs: 15,
             log_level: "info".to_string(),
+            lang: "zh".to_string(),
+            theme_mode: "dark".to_string(),
             override_spot_rest: String::new(),
             override_spot_ws: String::new(),
             override_fut_rest: String::new(),

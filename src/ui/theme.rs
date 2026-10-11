@@ -1,28 +1,91 @@
-//! 主题与字体：暗色专业配色 + 中文字体加载
+//! 主题与字体：明暗双主题 + Windows 系统字体（雅黑 UI / 等宽数字）
+//!
+//! 颜色通过 `theme::cur()` 运行时取值（`theme::cur().up` 等），主题切换即时生效。
 
 use eframe::egui;
 use egui::{Color32, FontData, FontDefinitions, Stroke, Style, Visuals};
 
-pub const UP: Color32 = Color32::from_rgb(46, 189, 133); // 涨/买（国际惯例绿涨红跌）
-pub const DOWN: Color32 = Color32::from_rgb(246, 70, 93); // 跌/卖
-pub const BG: Color32 = Color32::from_rgb(11, 14, 19);
-pub const PANEL: Color32 = Color32::from_rgb(17, 22, 30);
-pub const PANEL2: Color32 = Color32::from_rgb(23, 29, 39);
-pub const CARD: Color32 = Color32::from_rgb(26, 33, 44);
-pub const BORDER: Color32 = Color32::from_rgb(40, 48, 62);
-pub const TEXT: Color32 = Color32::from_rgb(222, 226, 232);
-pub const TEXT_DIM: Color32 = Color32::from_rgb(132, 142, 156);
-pub const ACCENT: Color32 = Color32::from_rgb(240, 185, 11); // 品牌黄
-pub const WARN: Color32 = Color32::from_rgb(240, 150, 30);
-pub const ERR: Color32 = DOWN;
+// ---------- 主题定义 ----------
+
+#[derive(Debug, Clone, Copy)]
+pub struct Theme {
+    pub up: Color32,
+    pub down: Color32,
+    pub bg: Color32,
+    pub panel: Color32,
+    pub panel2: Color32,
+    pub card: Color32,
+    pub border: Color32,
+    pub text: Color32,
+    pub text_dim: Color32,
+    pub accent: Color32,
+    pub warn: Color32,
+    pub err: Color32,
+}
+
+pub const DARK: Theme = Theme {
+    up: Color32::from_rgb(14, 203, 129),
+    down: Color32::from_rgb(246, 70, 93),
+    bg: Color32::from_rgb(10, 13, 18),
+    panel: Color32::from_rgb(18, 22, 30),
+    panel2: Color32::from_rgb(25, 31, 42),
+    card: Color32::from_rgb(31, 38, 50),
+    border: Color32::from_rgb(44, 53, 66),
+    text: Color32::from_rgb(232, 234, 237),
+    text_dim: Color32::from_rgb(139, 149, 165),
+    accent: Color32::from_rgb(240, 185, 11),
+    warn: Color32::from_rgb(240, 160, 48),
+    err: Color32::from_rgb(246, 70, 93),
+};
+
+pub const LIGHT: Theme = Theme {
+    up: Color32::from_rgb(6, 158, 98),
+    down: Color32::from_rgb(214, 58, 80),
+    bg: Color32::from_rgb(244, 246, 249),
+    panel: Color32::from_rgb(255, 255, 255),
+    panel2: Color32::from_rgb(248, 250, 252),
+    card: Color32::from_rgb(239, 242, 247),
+    border: Color32::from_rgb(216, 222, 231),
+    text: Color32::from_rgb(27, 32, 38),
+    text_dim: Color32::from_rgb(107, 118, 132),
+    accent: Color32::from_rgb(201, 148, 0),
+    warn: Color32::from_rgb(185, 122, 20),
+    err: Color32::from_rgb(214, 58, 80),
+};
+
+static MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+pub const DARK_MODE: u8 = 0;
+pub const LIGHT_MODE: u8 = 1;
+
+pub fn set_mode(mode: u8) {
+    MODE.store(mode, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn mode() -> u8 {
+    MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn is_light() -> bool {
+    mode() == LIGHT_MODE
+}
+
+/// 当前主题配色
+pub fn cur() -> &'static Theme {
+    if is_light() {
+        &LIGHT
+    } else {
+        &DARK
+    }
+}
 
 pub fn signed_color(d: f64) -> Color32 {
+    let t = cur();
     if d > 0.0 {
-        UP
+        t.up
     } else if d < 0.0 {
-        DOWN
+        t.down
     } else {
-        TEXT_DIM
+        t.text_dim
     }
 }
 
@@ -30,82 +93,155 @@ pub fn signed_color(d: f64) -> Color32 {
 pub fn badge(ui: &mut egui::Ui, text: &str, fg: Color32) {
     let txt = egui::RichText::new(format!(" {text} ")).size(11.5).strong();
     egui::Frame::default()
-        .fill(fg.gamma_multiply(0.25))
-        .stroke(egui::Stroke::new(1.0_f32, fg))
-        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+        .fill(fg.gamma_multiply(0.22))
+        .stroke(Stroke::new(1.0_f32, fg.gamma_multiply(0.85)))
+        .rounding(3.0)
+        .inner_margin(egui::Margin::symmetric(7.0, 2.0))
         .show(ui, |ui| {
             ui.label(txt.color(fg));
         });
 }
 
-pub fn apply_fonts(ctx: &egui::Context) {
-    let mut fonts = FontDefinitions::default();
-    // Windows 常见中文字体，逐一尝试
-    let candidates = [
-        "msyh.ttc",
-        "msyh.ttf",
-        "msyhbd.ttc",
-        "simhei.ttf",
-        "simsun.ttc",
-        "Deng.ttf",
-    ];
-    'outer: for name in candidates {
-        let path = std::path::PathBuf::from("C:\\Windows\\Fonts").join(name);
+// ---------- 字体 ----------
+
+/// 从 Windows 字体目录按优先级加载第一个存在的字体
+fn load_font(fonts: &mut FontDefinitions, key: &str, candidates: &[&str]) -> bool {
+    for name in candidates {
+        let path = std::path::PathBuf::from("C:\Windows\Fonts").join(name);
         if let Ok(bytes) = std::fs::read(&path) {
-            tracing::info!("加载中文字体: {}", path.display());
+            tracing::info!("load font {}: {}", key, path.display());
             fonts
                 .font_data
-                .insert("cjk".to_owned(), FontData::from_owned(bytes));
-            if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-                fam.push("cjk".to_owned());
-            }
-            if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-                fam.push("cjk".to_owned());
-            }
-            break 'outer;
+                .insert(key.to_owned(), FontData::from_owned(bytes));
+            return true;
+        }
+    }
+    false
+}
+
+pub fn apply_fonts(ctx: &egui::Context) {
+    let mut fonts = FontDefinitions::default();
+
+    // UI 主字体：微软雅黑（拉丁+CJK 统一渲染），放最前优先命中
+    if load_font(
+        &mut fonts,
+        "cjk",
+        &["msyh.ttc", "msyh.ttf", "msyhbd.ttc", "simhei.ttf", "Deng.ttf"],
+    ) {
+        if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+            fam.insert(0, "cjk".to_owned());
+        }
+    }
+    // 等宽数字字体：Cascadia（Win11）→ Consolas（Win10 均有），中文回退雅黑
+    if load_font(
+        &mut fonts,
+        "mono",
+        &["CascadiaCode.ttf", "CascadiaMono.ttf", "consola.ttf", "lucon.ttf"],
+    ) {
+        if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+            fam.insert(0, "mono".to_owned());
+        }
+    }
+    if fonts.font_data.contains_key("cjk") {
+        if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+            fam.push("cjk".to_owned());
         }
     }
     ctx.set_fonts(fonts);
 }
 
+// ---------- 全局样式（随主题） ----------
+
 pub fn apply(ctx: &egui::Context) {
+    let t = cur();
     let mut style = Style {
         visuals: Visuals::dark(),
         ..Default::default()
     };
     let v = &mut style.visuals;
-    v.dark_mode = true;
-    v.override_text_color = Some(TEXT);
-    v.panel_fill = PANEL;
-    v.window_fill = PANEL2;
-    v.extreme_bg_color = BG;
-    v.faint_bg_color = Color32::from_rgb(23, 29, 39);
-    v.window_stroke = egui::Stroke::new(1.0_f32, BORDER);
-    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, BORDER);
-    v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, TEXT);
-    v.widgets.inactive.bg_fill = PANEL2;
-    v.widgets.inactive.weak_bg_fill = PANEL2;
-    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, BORDER);
-    v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, TEXT_DIM);
-    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(33, 41, 56);
-    v.widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, TEXT);
-    v.widgets.active.weak_bg_fill = Color32::from_rgb(38, 47, 63);
-    v.selection.bg_fill = Color32::from_rgb(52, 86, 128);
-    v.hyperlink_color = ACCENT;
+    v.dark_mode = !is_light();
+    v.override_text_color = Some(t.text);
+    v.panel_fill = t.panel;
+    v.window_fill = t.panel2;
+    v.extreme_bg_color = t.bg;
+    v.faint_bg_color = if is_light() {
+        Color32::from_rgb(236, 240, 246)
+    } else {
+        Color32::from_rgb(24, 30, 40)
+    };
+    v.window_rounding = 6.0.into();
+    v.menu_rounding = 4.0.into();
+    v.window_stroke = Stroke::new(1.0_f32, t.border);
+    v.window_shadow = egui::Shadow::NONE;
+    v.popup_shadow = egui::Shadow::NONE;
 
-    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+    let hover_bg = if is_light() {
+        Color32::from_rgb(226, 232, 241)
+    } else {
+        Color32::from_rgb(38, 46, 60)
+    };
+    let active_bg = if is_light() {
+        Color32::from_rgb(214, 222, 234)
+    } else {
+        Color32::from_rgb(46, 56, 72)
+    };
+    let widget_bg = if is_light() {
+        Color32::from_rgb(255, 255, 255)
+    } else {
+        Color32::from_rgb(30, 37, 48)
+    };
+    let hover_border = if is_light() {
+        Color32::from_rgb(176, 187, 202)
+    } else {
+        Color32::from_rgb(70, 82, 100)
+    };
+
+    v.widgets.noninteractive.bg_fill = t.panel2;
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, t.border);
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, t.text);
+    v.widgets.noninteractive.rounding = 4.0.into();
+
+    v.widgets.inactive.bg_fill = widget_bg;
+    v.widgets.inactive.weak_bg_fill = widget_bg;
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, t.border);
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, t.text_dim);
+    v.widgets.inactive.rounding = 4.0.into();
+
+    v.widgets.hovered.bg_fill = hover_bg;
+    v.widgets.hovered.weak_bg_fill = hover_bg;
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, hover_border);
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, t.text);
+    v.widgets.hovered.rounding = 4.0.into();
+
+    v.widgets.active.bg_fill = active_bg;
+    v.widgets.active.weak_bg_fill = active_bg;
+    v.widgets.active.fg_stroke = Stroke::new(1.0_f32, t.text);
+    v.widgets.active.rounding = 4.0.into();
+
+    v.selection.bg_fill = if is_light() {
+        Color32::from_rgb(191, 214, 241)
+    } else {
+        Color32::from_rgb(42, 75, 117)
+    };
+    v.selection.stroke = Stroke::NONE;
+    v.hyperlink_color = t.accent;
+
+    style.spacing.item_spacing = egui::vec2(8.0, 7.0);
+    style.spacing.button_padding = egui::vec2(12.0, 5.0);
     style.spacing.menu_margin = egui::Margin::symmetric(6.0, 4.0);
-    style.spacing.button_padding = egui::vec2(10.0, 5.0);
+    style.spacing.combo_width = 90.0;
     style.text_styles = [
-        (egui::TextStyle::Heading, egui::FontId::proportional(20.0)),
+        (egui::TextStyle::Heading, egui::FontId::proportional(19.0)),
         (egui::TextStyle::Body, egui::FontId::proportional(14.0)),
         (egui::TextStyle::Button, egui::FontId::proportional(14.0)),
         (egui::TextStyle::Small, egui::FontId::proportional(11.5)),
-        (egui::TextStyle::Monospace, egui::FontId::monospace(13.0)),
+        (egui::TextStyle::Monospace, egui::FontId::monospace(13.5)),
     ]
     .into();
     ctx.set_style(style);
 }
+
+// ---------- 组件辅助 ----------
 
 /// 卡片容器：圆角 + 细边框 + 内边距
 pub fn card<R>(
@@ -113,46 +249,13 @@ pub fn card<R>(
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> egui::InnerResponse<R> {
     egui::Frame::default()
-        .fill(CARD)
-        .stroke(Stroke::new(1.0_f32, BORDER))
-        .rounding(4.0)
+        .fill(cur().card)
+        .stroke(Stroke::new(1.0_f32, cur().border))
+        .rounding(6.0)
         .inner_margin(egui::Margin::symmetric(12.0, 10.0))
         .outer_margin(egui::Margin::symmetric(0.0, 4.0))
         .show(ui, add_contents)
 }
 
-/// 顶部导航页签（激活态金色 + 下划线感）
-pub fn nav_tab(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
-    let txt = if active {
-        egui::RichText::new(label).strong().size(14.5).color(ACCENT)
-    } else {
-        egui::RichText::new(label).size(14.0).color(TEXT_DIM)
-    };
-    let btn = egui::Button::new(txt)
-        .fill(Color32::TRANSPARENT)
-        .stroke(if active {
-            Stroke::new(2.0_f32, ACCENT)
-        } else {
-            Stroke::NONE
-        })
-        .rounding(3.0)
-        .min_size(egui::vec2(0.0, 26.0));
-    ui.add(btn).clicked()
-}
-
-/// 区块小标题
-pub fn section(ui: &mut egui::Ui, label: &str) {
-    ui.label(
-        egui::RichText::new(label)
-            .size(11.5)
-            .strong()
-            .color(TEXT_DIM),
-    );
-}
-
-/// 表格/卡片内的小标签文字
-pub fn card_label(label: &str) -> egui::RichText {
-    egui::RichText::new(label.to_string())
-        .size(11.5)
-        .color(TEXT_DIM)
-}
+/// 顶部导航页签（激活态金色文字 + 边框）
+pub fn nav_tab(ui: &mut egui::Ui, label: &str, active: bo

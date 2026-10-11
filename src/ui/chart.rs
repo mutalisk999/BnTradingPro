@@ -77,13 +77,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if let Some(t) = &tick {
                 let vol_f: f64 = t.quote_volume.to_string().parse().unwrap_or(0.0);
-                let vol_txt = if vol_f >= 1e8 {
-                    format!("{:.2}亿", vol_f / 1e8)
-                } else if vol_f >= 1e4 {
-                    format!("{:.1}万", vol_f / 1e4)
-                } else {
-                    format!("{vol_f:.0}")
-                };
+                let vol_txt = widgets::fmt_compact(vol_f);
                 ui.label(
                     egui::RichText::new(format!(
                         "24h 高 {} · 低 {} · 额 {vol_txt}",
@@ -237,8 +231,6 @@ fn draw(
     let pad_ratio = 0.06;
     let price_h = plot.height() * 0.82;
     let vol_h = plot.height() * 0.14;
-    let axis_w = 62.0; // 右侧价格轴
-    let chart_w = plot.width() - axis_w;
 
     let mut hi = f64::MIN;
     let mut lo = f64::MAX;
@@ -275,6 +267,13 @@ fn draw(
     let lo = (lo - span * pad_ratio) as f32;
     let span = hi - lo;
 
+    // 右侧价格轴宽度自适应数字位数（千分位），避免大数值被截断
+    let axis_w = ((widgets::fmt_thousands(hi as f64, dp as usize).chars().count() as f32)
+        * 8.2
+        + 16.0)
+        .clamp(58.0, 120.0);
+    let chart_w = plot.width() - axis_w;
+
     let y_of = |p: f32| plot.top() + (hi - p) / span * price_h;
     let p_of = |y: f32| hi - (y - plot.top()) / price_h * span;
     let bar_w = chart_w / bars;
@@ -292,7 +291,7 @@ fn draw(
                     Pos2::new(plot.left(), y),
                     Pos2::new(plot.left() + chart_w, y),
                 ],
-                Stroke::new(0.5_f32, Color32::from_rgb(34, 41, 54)),
+                Stroke::new(0.5_f32, Color32::from_rgb(28, 34, 44)),
             );
             painter.text(
                 Pos2::new(plot.left() + chart_w + 6.0, y),
@@ -322,7 +321,7 @@ fn draw(
         );
         painter.line_segment(
             [Pos2::new(x, plot.top()), Pos2::new(x, plot.bottom())],
-            Stroke::new(0.4_f32, Color32::from_rgb(30, 36, 47)),
+            Stroke::new(0.4_f32, Color32::from_rgb(26, 32, 42)),
         );
     }
 
@@ -363,7 +362,7 @@ fn draw(
             }
         }
         if pts.len() > 1 {
-            painter.add(Shape::line(pts, Stroke::new(1.2_f32, MA_COLORS[k])));
+            painter.add(Shape::line(pts, Stroke::new(1.3_f32, MA_COLORS[k])));
         }
     }
 
@@ -417,7 +416,7 @@ fn draw(
             Pos2::new(plot.left() + chart_w + 4.0, yl - tag_size.y / 2.0),
             tag_size,
         ),
-        2.0,
+        3.0,
         col,
     );
     painter.text(
@@ -458,17 +457,25 @@ fn draw(
     // ---------- 十字光标与 tooltip ----------
     if let Some(hp) = resp.hover_pos() {
         if plot.contains(hp) && hp.x < plot.left() + chart_w {
-            painter.line_segment(
-                [Pos2::new(hp.x, plot.top()), Pos2::new(hp.x, plot.bottom())],
-                Stroke::new(0.6_f32, Color32::from_rgb(110, 120, 135)),
-            );
-            painter.line_segment(
-                [
+            let cross = Stroke::new(0.7_f32, Color32::from_rgb(120, 130, 148));
+            painter.extend(Shape::dashed_line(
+                &[
+                    Pos2::new(hp.x, plot.top()),
+                    Pos2::new(hp.x, plot.bottom()),
+                ],
+                cross,
+                4.0,
+                3.0,
+            ));
+            painter.extend(Shape::dashed_line(
+                &[
                     Pos2::new(plot.left(), hp.y),
                     Pos2::new(plot.left() + chart_w, hp.y),
                 ],
-                Stroke::new(0.6_f32, Color32::from_rgb(110, 120, 135)),
-            );
+                cross,
+                4.0,
+                3.0,
+            ));
             // 悬停价格
             painter.text(
                 Pos2::new(plot.left() + chart_w + 6.0, hp.y),
@@ -618,9 +625,5 @@ fn nice_step(range: f64, target: usize) -> f64 {
 }
 
 fn fmt_f64(v: f64, dp: usize) -> String {
-    if dp > 0 {
-        format!("{:.*}", dp, v)
-    } else {
-        format!("{:.0}", v)
-    }
+    widgets::fmt_thousands(v, dp)
 }

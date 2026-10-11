@@ -60,7 +60,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     let bid_total = cum;
     let max_cum = ask_total.max(bid_total).max(0.000001);
 
-    let row_h = 17.0;
+    let row_h = 18.0;
     let w = ui.available_width();
 
     // 卖盘（高→低）
@@ -115,7 +115,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             spread_pct
         )
     };
-    ui.allocate_ui(egui::vec2(w, 20.0), |ui| {
+    ui.allocate_ui(egui::vec2(w, 24.0), |ui| {
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(format!("{:.*}", dp, mid_f))

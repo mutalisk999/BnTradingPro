@@ -117,7 +117,7 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
         .column(Column::auto().at_least(70.0))
         .column(Column::auto().at_least(120.0))
         .column(Column::remainder())
-        .header(20.0, |mut h| {
+        .header(22.0, |mut h| {
             for t in ["资产", "可用", "冻结"] {
                 h.col(|ui| {
                     ui.label(theme::card_label(t));
@@ -126,7 +126,7 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
         })
         .body(|mut body| {
             for b in &nonzero {
-                body.row(20.0, |mut row| {
+                body.row(22.0, |mut row| {
                     row.col(|ui| {
                         ui.label(egui::RichText::new(&b.asset).strong().size(12.0));
                     });
@@ -173,7 +173,7 @@ fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui
         .column(Column::auto().at_least(105.0))
         .column(Column::auto().at_least(105.0))
         .column(Column::remainder())
-        .header(20.0, |mut h| {
+        .header(22.0, |mut h| {
             for t in ["资产", "钱包余额", "可用", "未实现盈亏"] {
                 h.col(|ui| {
                     ui.label(theme::card_label(t));
@@ -182,7 +182,7 @@ fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui
         })
         .body(|mut body| {
             for b in &assets {
-                body.row(20.0, |mut row| {
+                body.row(22.0, |mut row| {
                     row.col(|ui| {
                         ui.label(egui::RichText::new(&b.asset).strong().size(12.0));
                     });
@@ -246,7 +246,7 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::auto().at_least(95.0))
         .column(Column::auto().at_least(50.0))
         .column(Column::remainder())
-        .header(20.0, |mut h| {
+        .header(22.0, |mut h| {
             for t in [
                 "交易对",
                 "方向",
@@ -265,7 +265,7 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .body(|mut body| {
             for p in &positions {
-                body.row(21.0, |mut row| {
+                body.row(22.0, |mut row| {
                     let long = p.amt > Decimal::ZERO;
                     let f = |d: &Decimal| d.to_string().parse::<f64>().unwrap_or(0.0);
                     row.col(|ui| {

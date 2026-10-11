@@ -15,16 +15,22 @@ pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
         ConnState::Failed(e) => (theme::ERR, format!("错误: {e}")),
     };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-    ui.painter().circle_filled(rect.center(), 4.5, c);
+    let p = ui.painter();
+    p.circle_filled(rect.center(), 4.5, c);
+    // 已连接时加一圈微光晕
+    if *st == ConnState::Connected {
+        p.circle_stroke(rect.center(), 6.5, Stroke::new(1.0_f32, c.gamma_multiply(0.35)));
+    }
     ui.label(egui::RichText::new(label).size(11.5).color(theme::TEXT_DIM));
 }
 
-/// 数字输入框；返回当前合法解析值
+/// 数字输入框：等宽字体 + 提示；返回当前合法解析值
 pub fn num_field(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str) -> Option<Decimal> {
     egui::TextEdit::singleline(text)
         .id_salt(Id::new(id))
         .desired_width(120.0)
         .font(egui::TextStyle::Monospace)
+        .text_color(theme::TEXT)
         .hint_text(hint)
         .show(ui);
     parse_dec(text)
@@ -36,6 +42,44 @@ pub fn parse_dec(s: &str) -> Option<Decimal> {
         return None;
     }
     Decimal::from_str_exact(t).ok()
+}
+
+/// 千分位分组格式化（用于展示层；精确值仍走 Decimal）
+pub fn fmt_thousands(v: f64, dp: usize) -> String {
+    let s = format!("{:.*}", dp, v);
+    let (int_part, frac) = match s.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (s.as_str(), None),
+    };
+    let neg = int_part.starts_with('-');
+    let digits = int_part.trim_start_matches('-');
+    let bytes = digits.as_bytes();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(*b as char);
+    }
+    let sign = if neg { "-" } else { "" };
+    match frac {
+        Some(f) => format!("{sign}{grouped}.{f}"),
+        None => format!("{sign}{grouped}"),
+    }
+}
+
+/// 大数缩写（成交额）：1.2亿 / 34.5万
+pub fn fmt_compact(v: f64) -> String {
+    let a = v.abs();
+    if a >= 1e8 {
+        format!("{:.2}亿", v / 1e8)
+    } else if a >= 1e4 {
+        format!("{:.1}万", v / 1e4)
+    } else if a >= 1.0 {
+        format!("{v:.0}")
+    } else {
+        format!("{v:.4}")
+    }
 }
 
 /// 右下角 Toast 提示（未过期的持续显示，过期自动移除）
@@ -64,8 +108,9 @@ pub fn draw_toasts(ctx: &egui::Context, state: &SharedState) {
                     };
                     egui::Frame::default()
                         .fill(theme::PANEL2)
-                        .stroke(Stroke::new(1.0_f32, fg))
-                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                        .stroke(Stroke::new(1.0_f32, fg.gamma_multiply(0.8)))
+                        .rounding(6.0)
+                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                         .show(ui, |ui| {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(egui::RichText::new(icon).color(fg).strong());
@@ -105,4 +150,25 @@ pub fn placeholder(ui: &mut egui::Ui, rect: egui::Rect, text: &str) {
         FontId::proportional(15.0),
         theme::TEXT_DIM,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thousands_grouping() {
+        assert_eq!(fmt_thousands(96000.5, 2), "96,000.50");
+        assert_eq!(fmt_thousands(1234567.891, 2), "1,234,567.89");
+        assert_eq!(fmt_thousands(-1234.5, 1), "-1,234.5");
+        assert_eq!(fmt_thousands(42.0, 0), "42");
+        assert_eq!(fmt_thousands(0.15, 4), "0.1500");
+    }
+
+    #[test]
+    fn compact_formatting() {
+        assert_eq!(fmt_compact(123_456_789.0), "1.23亿");
+        assert_eq!(fmt_compact(34_500.0), "3.5万");
+        assert_eq!(fmt_compact(123.0), "123");
+    }
 }

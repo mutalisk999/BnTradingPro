@@ -106,14 +106,18 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         } else {
             "买入"
         })
-        .strong();
-        let buy = egui::Button::new(buy).fill(if app.form.side == Side::Buy {
-            theme::UP
-        } else {
-            theme::PANEL2
-        });
+        .strong()
+        .size(14.5)
+        .color(egui::Color32::WHITE);
+        let buy = egui::Button::new(buy)
+            .fill(if app.form.side == Side::Buy {
+                theme::UP
+            } else {
+                egui::Color32::from_rgb(30, 37, 48)
+            })
+            .rounding(5.0);
         if cols[0]
-            .add_sized([cols[0].available_width(), 30.0], buy)
+            .add_sized([cols[0].available_width(), 36.0], buy)
             .clicked()
         {
             app.form.side = Side::Buy;
@@ -123,38 +127,44 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         } else {
             "卖出"
         })
-        .strong();
-        let sell = egui::Button::new(sell).fill(if app.form.side == Side::Sell {
-            theme::DOWN
-        } else {
-            theme::PANEL2
-        });
+        .strong()
+        .size(14.5)
+        .color(egui::Color32::WHITE);
+        let sell = egui::Button::new(sell)
+            .fill(if app.form.side == Side::Sell {
+                theme::DOWN
+            } else {
+                egui::Color32::from_rgb(30, 37, 48)
+            })
+            .rounding(5.0);
         if cols[1]
-            .add_sized([cols[1].available_width(), 30.0], sell)
+            .add_sized([cols[1].available_width(), 36.0], sell)
             .clicked()
         {
             app.form.side = Side::Sell;
         }
     });
+    ui.add_space(2.0);
 
     // ---------- 订单类型 ----------
-    ui.horizontal(|ui| {
-        ui.label("类型");
-        let kinds = UiKind::available(market);
-        let cur = if kinds.contains(&app.form.kind) {
-            app.form.kind
-        } else {
-            kinds[0]
-        };
-        egui::ComboBox::from_id_salt("order_kind")
-            .selected_text(cur.label())
-            .width(110.0)
-            .show_ui(ui, |ui| {
-                for k in kinds {
-                    ui.selectable_value(&mut app.form.kind, k, k.label());
-                }
-            });
-    });
+    theme::card(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(theme::card_label("类型"));
+            let kinds = UiKind::available(market);
+            let cur = if kinds.contains(&app.form.kind) {
+                app.form.kind
+            } else {
+                kinds[0]
+            };
+            egui::ComboBox::from_id_salt("order_kind")
+                .selected_text(cur.label())
+                .width(110.0)
+                .show_ui(ui, |ui| {
+                    for k in kinds {
+                        ui.selectable_value(&mut app.form.kind, k, k.label());
+                    }
+                });
+        });
 
     // ---------- 合约持仓方向 / 只减仓 / 杠杆 ----------
     if market == Market::UmFutures {
@@ -168,7 +178,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 "开空 (SHORT)"
             };
             ui.horizontal(|ui| {
-                ui.label("持仓方向");
+                ui.label(theme::card_label("持仓方向"));
                 ui.label(egui::RichText::new(pos_txt).strong().color(theme::ACCENT));
             });
         }
@@ -177,7 +187,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         }
         // 杠杆
         ui.horizontal(|ui| {
-            ui.label("杠杆");
+            ui.label(theme::card_label("杠杆"));
             let lev = state
                 .acct
                 .lock()
@@ -208,11 +218,13 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             }
         });
     }
+    }); // 类型与合约参数卡片
 
     // ---------- 价格 / 触发价 / 数量 ----------
+    theme::card(ui, |ui| {
     if app.form.kind != UiKind::Market {
         ui.horizontal(|ui| {
-            ui.label("价格");
+            ui.label(theme::card_label("价格"));
             widgets::num_field(ui, "price_in", &mut app.form.price, "价格");
             if ui.button("市价").clicked() {
                 let last = state
@@ -234,7 +246,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             | UiKind::TakeProfitMarket
     ) {
         ui.horizontal(|ui| {
-            ui.label("触发价");
+            ui.label(theme::card_label("触发价"));
             widgets::num_field(ui, "trig_in", &mut app.form.trigger, "触发价");
         });
     }
@@ -252,7 +264,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 
     // ---------- 百分比快捷填充 ----------
     ui.horizontal(|ui| {
-        ui.label("比例");
+        ui.label(theme::card_label("比例"));
         for pct in [25.0, 50.0, 75.0, 100.0] {
             if ui
                 .button(format!("{}%", pct as i32))
@@ -263,6 +275,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             }
         }
     });
+    }); // 价格数量卡片
 
     // ---------- 汇总与量化预览 ----------
     let (qty_dec, price_dec) = (
@@ -366,10 +379,12 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let btn = egui::Button::new(
         egui::RichText::new(format!("{word} {symbol}"))
             .strong()
-            .size(15.0),
+            .size(15.5)
+            .color(egui::Color32::WHITE),
     )
     .fill(color)
-    .min_size(egui::vec2(ui.available_width(), 34.0));
+    .rounding(5.0)
+    .min_size(egui::vec2(ui.available_width(), 38.0));
     let resp = ui.add_enabled(!busy && state.has_creds(), btn);
     if busy {
         ui.label(
