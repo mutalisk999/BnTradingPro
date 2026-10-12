@@ -10,12 +10,12 @@ use std::sync::Arc;
 pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     let dp = state
-        .rule_of(app.market, &app.symbol)
-        .map(|r| r.price_dp() as usize)
+        .with_rule(app.market, &app.symbol, |r| {
+            r.map(|x| x.price_dp() as usize)
+        })
         .unwrap_or(2);
     let qdp = state
-        .rule_of(app.market, &app.symbol)
-        .map(|r| r.qty_dp() as usize)
+        .with_rule(app.market, &app.symbol, |r| r.map(|x| x.qty_dp() as usize))
         .unwrap_or(4);
 
     ui.add_space(4.0);
@@ -207,14 +207,17 @@ fn book_row(
     if resp.clicked() {
         app.form.set_price(price_s);
     }
+    // 明示"点价格即填单"这一核心交互，并给出悬停提示
+    resp.on_hover_text(crate::i18n::tr("点击填入下单价格"));
 }
 
 /// 逐笔成交
 pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     let dp = state
-        .rule_of(app.market, &app.symbol)
-        .map(|r| r.price_dp() as usize)
+        .with_rule(app.market, &app.symbol, |r| {
+            r.map(|x| x.price_dp() as usize)
+        })
         .unwrap_or(2);
 
     ui.add_space(4.0);

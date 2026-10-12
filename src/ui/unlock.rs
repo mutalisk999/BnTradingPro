@@ -138,6 +138,7 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
             .desired_width(f32::INFINITY)
             .font(egui::TextStyle::Monospace),
     );
+    pw_resp.request_focus(); // 解锁页只有这一个输入框，键盘用户免点一次鼠标
     if pw_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
         try_unlock(app);
     }
@@ -152,18 +153,45 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.add_space(2.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let dir = config::data_dir();
-        if ui
-            .small_button(
-                egui::RichText::new(crate::i18n::tr("重置凭据库"))
-                    .size(11.5)
-                    .color(theme::cur().warn),
-            )
-            .on_hover_text(crate::i18n::tr("删除本机加密凭据库，重新开始设置"))
-            .clicked()
-        {
-            let _ = std::fs::remove_file(dir.join(vault::VAULT_FILE));
-            app.phase = Phase::EnterKeys;
+        // 破坏性操作两步确认：误点一次不会直接销毁唯一的本地密钥副本
+        let armed = app.vault_delete_armed;
+        let reset_btn = ui.small_button(
+            egui::RichText::new(if armed {
+                crate::i18n::tr("确认删除凭据库？")
+            } else {
+                crate::i18n::tr("重置凭据库")
+            })
+            .size(11.5)
+            .color(if armed {
+                theme::cur().err
+            } else {
+                theme::cur().warn
+            }),
+        );
+        if reset_btn.clicked() {
+            if !armed {
+                app.vault_delete_armed = true;
+            } else {
+                app.vault_delete_armed = false;
+                let gone = match std::fs::remove_file(dir.join(vault::VAULT_FILE)) {
+                    Ok(()) => true,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                    Err(_) => false,
+                };
+                if gone {
+                    app.pw1.clear();
+                    app.pw2.clear();
+                    app.pw_err.clear();
+                    app.phase = Phase::EnterKeys;
+                } else {
+                    app.pw_err = crate::i18n::tr("删除凭据库失败").to_string();
+                }
+            }
+        } else if armed && ui.input(|i| i.pointer.any_click()) {
+            // 点击确认按钮以外的任意位置 → 退出待确认态
+            app.vault_delete_armed = false;
         }
+        reset_btn.on_hover_text(crate::i18n::tr("删除本机加密凭据库，重新开始设置"));
         if ui
             .small_button(
                 egui::RichText::new(crate::i18n::tr("仅看行情，暂不解锁"))
@@ -172,6 +200,7 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
             )
             .clicked()
         {
+            app.vault_delete_armed = false;
             app.phase = Phase::Main;
         }
     });

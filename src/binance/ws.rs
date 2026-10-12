@@ -11,8 +11,20 @@ use url::Url;
 pub type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-/// 建立到 ws(s):// 的连接（自动应用代理配置）
+/// 建立到 ws(s):// 的连接（自动应用代理配置；整体 15s 超时，防止半开连接卡死重连循环）
 pub async fn connect(ws_url: &str, proxy: &ProxyConfig) -> Result<WsStream, String> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        connect_inner(ws_url, proxy),
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(_) => Err("连接超时（15s）".into()),
+    }
+}
+
+async fn connect_inner(ws_url: &str, proxy: &ProxyConfig) -> Result<WsStream, String> {
     let url = Url::parse(ws_url).map_err(|e| format!("WS 地址无效: {e}"))?;
     let host = url.host_str().ok_or("WS 地址缺少主机")?.to_string();
     let port = url.port_or_known_default().ok_or("WS 地址缺少端口")?;

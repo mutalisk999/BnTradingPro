@@ -84,7 +84,7 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) -> Engine {
 
     // 初始订阅与全量刷新
     let init_cfg = state.cfg_snapshot();
-    let init_sym = init_cfg.default_symbol.clone();
+    let init_sym = init_cfg.default_symbol.trim().to_uppercase();
     let init_iv = Interval::from_str(&init_cfg.default_interval);
     let _ = tx.send(Command::Subscribe {
         market: Market::Spot,
@@ -114,26 +114,92 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) -> Engine {
                         });
                     }
                     let (sub_tx, sub_rx) = watch::channel::<Option<SubSpec>>(None);
-                    tokio::spawn(cmd_loop(
+                    let h_cmd = tokio::spawn(cmd_loop(
                         ctx.clone(),
                         state.clone(),
                         rx,
                         sub_tx.clone(),
                         tx.clone(),
                     ));
-                    tokio::spawn(market_ws_loop(ctx.clone(), state.clone(), sub_rx));
-                    tokio::spawn(user_ws_loop(
+                    let h_market =
+                        tokio::spawn(market_ws_loop(ctx.clone(), state.clone(), sub_rx.clone()));
+                    let h_user_spot = tokio::spawn(user_ws_loop(
                         ctx.clone(),
                         state.clone(),
                         Market::Spot,
                         tx.clone(),
                     ));
-                    tokio::spawn(user_ws_loop(
+                    let h_user_fut = tokio::spawn(user_ws_loop(
                         ctx.clone(),
                         state.clone(),
                         Market::UmFutures,
-                        tx,
+                        tx.clone(),
                     ));
+
+                    // 任务监督：这些循环本应永不返回，一旦退出（多为 panic）此前
+                    // 完全无感知——界面看起来正常但命令/行情静默停摆。这里保证
+                    // 崩溃可见（日志 + 错误 toast），WS 循环自动重启（最多 3 次）
+                    tokio::spawn(async move {
+                        let tasks: Vec<(&str, tokio::task::JoinHandle<()>)> = vec![
+                            ("cmd", h_cmd),
+                            ("market", h_market),
+                            ("user-spot", h_user_spot),
+                            ("user-futures", h_user_fut),
+                        ];
+                        for (name, h) in tasks {
+                            let result = h.await;
+                            tracing::error!("引擎后台任务退出({name}): {result:?}");
+                            state.push_toast(
+                                ToastKind::Err,
+                                format!("{}{name}", crate::i18n::tr("后台任务异常退出: ")),
+                            );
+                            repaint(&ctx);
+                            // 命令循环持有命令接收端，无法重建，只能提示重启
+                            if name == "cmd" {
+                                state.push_toast(
+                                    ToastKind::Err,
+                                    crate::i18n::tr("命令处理任务已停止，请重启应用").to_string(),
+                                );
+                                continue;
+                            }
+                            let mut restarts = 0;
+                            loop {
+                                let h2 = match name {
+                                    "market" => tokio::spawn(market_ws_loop(
+                                        ctx.clone(),
+                                        state.clone(),
+                                        sub_rx.clone(),
+                                    )),
+                                    "user-spot" => tokio::spawn(user_ws_loop(
+                                        ctx.clone(),
+                                        state.clone(),
+                                        Market::Spot,
+                                        tx.clone(),
+                                    )),
+                                    _ => tokio::spawn(user_ws_loop(
+                                        ctx.clone(),
+                                        state.clone(),
+                                        Market::UmFutures,
+                                        tx.clone(),
+                                    )),
+                                };
+                                let res = h2.await;
+                                tracing::error!("引擎后台任务重启后再次退出({name}): {res:?}");
+                                restarts += 1;
+                                if restarts >= 3 {
+                                    state.push_toast(
+                                        ToastKind::Err,
+                                        format!(
+                                            "{}{name} ×3",
+                                            crate::i18n::tr("任务反复退出，请重启应用: ")
+                                        ),
+                                    );
+                                    break;
+                                }
+                                tokio::time::sleep(Duration::from_secs(5)).await;
+                            }
+                        }
+                    });
                     // 常驻
                     loop {
                         tokio::time::sleep(Duration::from_secs(3600)).await;
@@ -179,7 +245,41 @@ async fn cmd_loop(
     };
     while let Some(cmd) = rx.recv().await {
         ensure_client(&mut c).await;
-        handle_cmd(&ctx, &mut c, cmd, &sub_tx, &engine_tx).await;
+        // 合并积压命令：成交风暴期间每个 WS 事件都会入队账户/挂单刷新，
+        // 逐条执行会刷爆请求权重（下单/撤单共用同一限速闸门被拖住）。
+        // 同一批内重复的刷新只保留一条，其余命令保持原有顺序。
+        let mut batch = vec![cmd];
+        for _ in 0..64 {
+            match rx.try_recv() {
+                Ok(more) => batch.push(more),
+                Err(_) => break,
+            }
+        }
+        let mut acct_seen = false;
+        let mut orders_seen = [false; 2];
+        batch.retain(|cmd| match cmd {
+            Command::RefreshAccount => {
+                if acct_seen {
+                    false
+                } else {
+                    acct_seen = true;
+                    true
+                }
+            }
+            Command::RefreshOpenOrders { market } => {
+                let i = *market as usize;
+                if orders_seen[i] {
+                    false
+                } else {
+                    orders_seen[i] = true;
+                    true
+                }
+            }
+            _ => true,
+        });
+        for cmd in batch {
+            handle_cmd(&ctx, &mut c, cmd, &sub_tx, &engine_tx).await;
+        }
     }
 }
 
@@ -196,7 +296,7 @@ async fn ensure_client(c: &mut CmdCtx) {
     ) {
         Ok(mut client) => {
             if let Some(creds) = c.state.creds.read().clone() {
-                client.set_creds(creds.api_key, creds.api_secret);
+                client.set_creds(creds.api_key.clone(), creds.api_secret.clone());
             }
             c.client = Some(client);
             c.built_for = (cfgv, credsv);
@@ -216,13 +316,18 @@ async fn handle_cmd(
 ) {
     let state = c.state.clone();
     let Some(client) = c.client.as_ref() else {
-        state.push_toast(ToastKind::Err, "REST 客户端初始化失败，请检查网络/代理设置");
+        state.push_toast(
+            ToastKind::Err,
+            crate::i18n::tr("REST 客户端初始化失败，请检查网络/代理设置"),
+        );
         return;
     };
     match cmd {
         Command::SyncTime | Command::ReloadAll => {
             let cfg = state.cfg_snapshot();
-            // 两个市场各校时一次（忽略失败）
+            // 两个市场各校时一次（忽略失败）；rest_ok 取所有市场的合取，
+            // 避免单一市场失败被另一市场成功覆盖
+            let mut all_ok = true;
             for m in Market::all() {
                 let rc = RestCtx {
                     market: m,
@@ -231,17 +336,16 @@ async fn handle_cmd(
                 };
                 if let Err(e) = client.sync_time(rc, &cfg).await {
                     tracing::warn!("校时失败({m}): {e}");
-                    state.rest_ok.store(false, Ordering::Relaxed);
+                    all_ok = false;
                     if let Command::ReloadAll = cmd {
                         state.push_toast(
                             ToastKind::Err,
-                            format!("连接 Binance 失败: {}", e.friendly()),
+                            format!("{}{}", crate::i18n::tr("连接 Binance 失败: "), e.friendly()),
                         );
                     }
-                } else {
-                    state.rest_ok.store(true, Ordering::Relaxed);
                 }
             }
+            state.rest_ok.store(all_ok, Ordering::Relaxed);
             // 交易规则
             for m in Market::all() {
                 let rc = RestCtx {
@@ -259,9 +363,14 @@ async fn handle_cmd(
                     Err(e) => {
                         tracing::warn!("exchangeInfo 失败({m}): {e}");
                         if let Command::ReloadAll = cmd {
+                            let key = if m == Market::Spot {
+                                "获取现货交易规则失败: "
+                            } else {
+                                "获取合约交易规则失败: "
+                            };
                             state.push_toast(
                                 ToastKind::Err,
-                                format!("获取{}交易规则失败: {}", m.label(), e.friendly()),
+                                format!("{}{}", crate::i18n::tr(key), e.friendly()),
                             );
                         }
                     }
@@ -331,7 +440,10 @@ async fn handle_cmd(
                     repaint(ctx);
                 }
                 Err(e) => {
-                    state.push_toast(ToastKind::Err, format!("加载K线失败: {}", e.friendly()));
+                    state.push_toast(
+                        ToastKind::Err,
+                        format!("{}{}", crate::i18n::tr("加载K线失败: "), e.friendly()),
+                    );
                 }
             }
             let tk = format!("{}/ticker/24hr", market.api_prefix());
@@ -410,7 +522,6 @@ async fn handle_cmd(
                         Ok(a) => {
                             let mut acct = state.acct.lock();
                             acct.spot = Some(a);
-                            acct.spot_loaded = true;
                             repaint(ctx);
                         }
                         Err(e) => tracing::warn!("解析现货账户失败: {e}"),
@@ -418,7 +529,10 @@ async fn handle_cmd(
                     Err(e) => {
                         state.set_user_ws(Market::Spot, ConnState::Disconnected);
                         if !matches!(e, BinanceError::NoCreds) {
-                            state.push_toast(ToastKind::Err, format!("现货账户: {}", e.friendly()));
+                            state.push_toast(
+                                ToastKind::Err,
+                                format!("{}{}", crate::i18n::tr("现货账户: "), e.friendly()),
+                            );
                         }
                     }
                 }
@@ -453,7 +567,6 @@ async fn handle_cmd(
                         Ok(acc) => {
                             let mut acct = state.acct.lock();
                             acct.fut = Some(acc);
-                            acct.fut_loaded = true;
                         }
                         Err(e) => {
                             tracing::warn!("解析合约账户失败: {e}");
@@ -463,7 +576,10 @@ async fn handle_cmd(
                     Err(e) => {
                         ok = false;
                         if !matches!(e, BinanceError::NoCreds) {
-                            state.push_toast(ToastKind::Err, format!("合约账户: {}", e.friendly()));
+                            state.push_toast(
+                                ToastKind::Err,
+                                format!("{}{}", crate::i18n::tr("合约账户: "), e.friendly()),
+                            );
                         }
                     }
                 }
@@ -509,7 +625,18 @@ async fn handle_cmd(
                 },
                 Err(e) => {
                     if !matches!(e, BinanceError::NoCreds) {
+                        // 挂单获取失败若静默，UI 会显示"暂无挂单"空态，
+                        // 让用户误以为没有在挂的保护单——必须提示
                         tracing::warn!("挂单获取失败({market}): {e}");
+                        state.push_toast(
+                            ToastKind::Err,
+                            format!(
+                                "{}{}: {}",
+                                crate::i18n::tr("挂单获取失败"),
+                                market.label(),
+                                e.friendly()
+                            ),
+                        );
                     }
                 }
             }
@@ -582,7 +709,12 @@ async fn handle_cmd(
             let Some(r) = rules.get(&req.symbol) else {
                 state.push_toast(
                     ToastKind::Err,
-                    format!("缺少 {} 交易规则（等待行情初始化）", req.symbol),
+                    format!(
+                        "{} {}{}",
+                        crate::i18n::tr("缺少"),
+                        req.symbol,
+                        crate::i18n::tr(" 交易规则（等待行情初始化）")
+                    ),
                 );
                 return;
             };
@@ -622,7 +754,10 @@ async fn handle_cmd(
                 return;
             }
             if req.kind.qty().is_zero() {
-                state.push_toast(ToastKind::Warn, format!("数量过小（步进 {}）", r.step));
+                state.push_toast(
+                    ToastKind::Warn,
+                    format!("{}: {}", crate::i18n::tr("数量过小"), r.step.normalize()),
+                );
                 return;
             }
             let params = build_order_params(market, &req);
@@ -646,12 +781,23 @@ async fn handle_cmd(
                     }
                     state.push_toast(
                         ToastKind::Ok,
-                        format!("{} {} 委托已提交 (#{id})", req.symbol, req.side.label()),
+                        format!(
+                            "{} {} {}{id})",
+                            req.symbol,
+                            req.side.label(),
+                            crate::i18n::tr("委托已提交 (#")
+                        ),
                     );
                     engine_tx.send(Command::RefreshOpenOrders { market }).ok();
                     engine_tx.send(Command::RefreshAccount).ok();
                 }
-                Err(e) => toast_err(&state, &e),
+                Err(e) => {
+                    toast_err(&state, &e);
+                    // 超时等场景下订单可能已被交易所接受：立即对账，
+                    // 避免用户看不到第一笔委托而重复下单
+                    engine_tx.send(Command::RefreshOpenOrders { market }).ok();
+                    engine_tx.send(Command::RefreshAccount).ok();
+                }
             }
             repaint(ctx);
         }
@@ -754,7 +900,10 @@ async fn handle_cmd(
                         .lock()
                         .fut_leverage
                         .insert(symbol.clone(), Decimal::from(leverage));
-                    state.push_toast(ToastKind::Ok, format!("{symbol} 杠杆已设为 {leverage}x"));
+                    state.push_toast(
+                        ToastKind::Ok,
+                        format!("{symbol} {} {leverage}x", crate::i18n::tr("杠杆已设为")),
+                    );
                     engine_tx.send(Command::RefreshAccount).ok();
                 }
                 Err(e) => toast_err(&state, &e),
@@ -850,7 +999,7 @@ async fn market_ws_loop(
             }
             Ok(ws) => {
                 tracing::info!("行情WS已连接: {}", spec.market);
-                backoff = Duration::from_secs(1);
+                let connected_at = std::time::Instant::now();
                 state.set_market_ws(spec.market, ConnState::Connected);
                 state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = ConnState::Connected);
                 repaint(&ctx);
@@ -886,6 +1035,12 @@ async fn market_ws_loop(
                             }
                         }
                         _ = rx_sub.changed() => break,
+                        // 空闲看门狗：行情流常有 100ms 深度推送，90s 无任何帧
+                        // （含协议 ping）基本可判定为半开连接，强制走重连
+                        _ = tokio::time::sleep(Duration::from_secs(90)) => {
+                            read_fail = Some(crate::i18n::tr("读超时（连接无数据）").to_string());
+                            break;
+                        }
                     }
                 }
                 if let Some(msg) = read_fail {
@@ -894,6 +1049,14 @@ async fn market_ws_loop(
                     state.with_symbol_md(spec.market, &spec.symbol, |md| {
                         md.ws = ConnState::Disconnected
                     });
+                }
+                // 连接未稳定（<2min）即断开 → 指数退避，防止对端抖动时重连风暴；
+                // 稳定运行过的连接则重置退避
+                if connected_at.elapsed() < Duration::from_secs(120) {
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(Duration::from_secs(30));
+                } else {
+                    backoff = Duration::from_secs(1);
                 }
             }
         }
@@ -942,33 +1105,41 @@ fn quantize_with_note(
     Some(q)
 }
 
+/// 组合流帧：`{"stream":"<名称>","data":{...}}`。
+/// data 用借用的 RawValue——整条消息只解析一次，按流名分发后对 data
+/// 做第二段定点解析，替代旧的 Value 全树解析 + 子树深克隆。
+#[derive(serde::Deserialize)]
+struct StreamFrame<'a> {
+    #[serde(borrow)]
+    stream: &'a str,
+    #[serde(borrow)]
+    data: &'a serde_json::value::RawValue,
+}
+
 fn handle_market_msg_text(state: &SharedState, spec: &SubSpec, text: &str) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
+    let Ok(frame) = serde_json::from_str::<StreamFrame>(text) else {
         return;
     };
-    let stream = v.get("stream").and_then(|s| s.as_str()).unwrap_or("");
-    let data = match v.get("data") {
-        Some(d) => d,
-        None => &v,
-    };
+    let stream = frame.stream;
+    let data = frame.data.get();
     if stream.ends_with("@ticker") {
-        if let Ok(t) = serde_json::from_value::<Ticker24>(data.clone()) {
+        if let Ok(t) = serde_json::from_str::<Ticker24>(data) {
             state.with_symbol_md(spec.market, &spec.symbol, |md| md.ticker = Some(t));
         }
     } else if stream.contains("@depth20") {
-        if let Ok(d) = serde_json::from_value::<Depth>(data.clone()) {
+        if let Ok(d) = serde_json::from_str::<Depth>(data) {
             state.with_symbol_md(spec.market, &spec.symbol, |md| md.depth = d);
         }
     } else if stream.ends_with("@aggTrade") {
-        if let Ok(t) = serde_json::from_value::<TradeTick>(data.clone()) {
+        if let Ok(t) = serde_json::from_str::<TradeTick>(data) {
             state.apply_trades(spec.market, &spec.symbol, t);
         }
     } else if stream.contains("@kline_") {
-        if let Ok(k) = serde_json::from_value::<WsKline>(data.clone()) {
+        if let Ok(k) = serde_json::from_str::<WsKline>(data) {
             state.apply_kline(spec.market, &spec.symbol, spec.interval, &k.k);
         }
     } else if stream.contains("@markPrice") {
-        if let Ok(m) = serde_json::from_value::<MarkPriceUpdate>(data.clone()) {
+        if let Ok(m) = serde_json::from_str::<MarkPriceUpdate>(data) {
             state.with_symbol_md(spec.market, &spec.symbol, |md| md.mark = Some(m));
         }
     }
@@ -1003,7 +1174,7 @@ async fn user_ws_loop(
         ) {
             Ok(mut c) => {
                 if let Some(creds) = state.creds.read().clone() {
-                    c.set_creds(creds.api_key, creds.api_secret);
+                    c.set_creds(creds.api_key.clone(), creds.api_secret.clone());
                 }
                 c
             }
@@ -1049,6 +1220,7 @@ async fn user_ws_loop(
             }
             Ok(ws) => {
                 tracing::info!("用户数据流已连接({market})");
+                let connected_at = std::time::Instant::now();
                 state.set_user_ws(market, ConnState::Connected);
                 repaint(&ctx);
                 // 重连后立即对账
@@ -1090,6 +1262,16 @@ async fn user_ws_loop(
                                 alive = false;
                             }
                         }
+                        // 空闲看门狗：用户流 5 分钟无任何帧（含协议 ping）视为半开连接；
+                        // 同时兜底检测配置/凭据版本变化（否则最长要等 25min 保活才会生效）
+                        _ = tokio::time::sleep(Duration::from_secs(300)) => {
+                            alive = false;
+                        }
+                        _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                            if last_version(&state) != last_seen {
+                                break;
+                            }
+                        }
                     }
                 }
                 // 尽力关闭 listenKey
@@ -1100,6 +1282,10 @@ async fn user_ws_loop(
                 let _ = client
                     .key_auth(reqwest::Method::DELETE, rc, &cfg, lk_path, &close_params)
                     .await;
+                // 连接未稳定（<2min）即断开 → 额外退避，避免重连风暴；正常 2s 即可
+                if connected_at.elapsed() < Duration::from_secs(120) {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
             }
         }
         state.set_user_ws(market, ConnState::Disconnected);
@@ -1159,9 +1345,16 @@ fn handle_user_event(
             let Ok(p) = serde_json::from_value::<OutboundAccountPosition>(v) else {
                 return;
             };
+            // 事件只携带"可能已变化"的资产子集，必须按 asset 合并而非整体替换，
+            // 否则一次事件会抹掉其余币种余额（比例填充/资产页随之显示为 0）
             let mut acct = state.acct.lock();
             if let Some(spot) = acct.spot.as_mut() {
-                spot.balances = p.balances;
+                for b in p.balances {
+                    match spot.balances.iter_mut().find(|x| x.asset == b.asset) {
+                        Some(x) => *x = b,
+                        None => spot.balances.push(b),
+                    }
+                }
             }
         }
         (Market::UmFutures, "ORDER_TRADE_UPDATE") => {
@@ -1209,7 +1402,7 @@ fn handle_user_event(
                         } else {
                             ToastKind::Warn
                         },
-                        format!("已实现盈亏: {rp}"),
+                        format!("{}{rp}", crate::i18n::tr("已实现盈亏: ")),
                     );
                 }
             }
@@ -1260,11 +1453,11 @@ fn fill_toast(
 ) {
     let px = price
         .map(|p| p.to_string())
-        .unwrap_or_else(|| "市价".into());
+        .unwrap_or_else(|| crate::i18n::tr("市价").to_string());
     let word = if status == "FILLED" {
-        "已成交"
+        crate::i18n::tr("已成交")
     } else {
-        "部分成交"
+        crate::i18n::tr("部分成交")
     };
     state.push_toast(
         if status == "FILLED" {
@@ -1274,4 +1467,54 @@ fn fill_toast(
         },
         format!("{word}: {symbol} {} {qty} @ {px}", side.label()),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn order(id: i64, symbol: &str, status: &str) -> OrderInfo {
+        OrderInfo {
+            symbol: symbol.into(),
+            order_id: id,
+            status: status.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn order_update_upsert_and_terminal_removal() {
+        let st = SharedState::default();
+        apply_order_update(&st, Market::Spot, order(1, "BTCUSDT", "NEW"));
+        apply_order_update(&st, Market::Spot, order(1, "BTCUSDT", "PARTIALLY_FILLED"));
+        apply_order_update(&st, Market::Spot, order(2, "BTCUSDT", "NEW"));
+        {
+            let o = st.orders.lock();
+            let list = &o.open[Market::Spot as usize];
+            assert_eq!(list.len(), 2);
+            // 更新后的单插到最前（最新优先展示）
+            assert_eq!(list[0].order_id, 2);
+        }
+        // 终态移除（订单号 + 交易对都匹配才移除）
+        apply_order_update(&st, Market::Spot, order(1, "BTCUSDT", "FILLED"));
+        {
+            let o = st.orders.lock();
+            let list = &o.open[Market::Spot as usize];
+            assert_eq!(list.len(), 1);
+            assert_eq!(list[0].order_id, 2);
+        }
+        // 同 id 不同交易对不受影响
+        apply_order_update(&st, Market::Spot, order(2, "ETHUSDT", "CANCELED"));
+        {
+            let o = st.orders.lock();
+            assert_eq!(o.open[Market::Spot as usize].len(), 1);
+        }
+        // 市场之间互相隔离
+        apply_order_update(&st, Market::UmFutures, order(2, "BTCUSDT", "FILLED"));
+        {
+            let o = st.orders.lock();
+            assert_eq!(o.open[Market::UmFutures as usize].len(), 0);
+            assert_eq!(o.open[Market::Spot as usize].len(), 1);
+        }
+    }
 }

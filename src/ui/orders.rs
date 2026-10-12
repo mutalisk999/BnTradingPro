@@ -2,7 +2,7 @@
 
 use crate::app::BnApp;
 use crate::binance::client::{OrderKind, OrderRequest};
-use crate::binance::model::{OrderInfo, PositionRisk};
+use crate::binance::model::PositionRisk;
 use crate::binance::{FutPosSide, Market, Side};
 use crate::engine::Command;
 use crate::ui::{theme, widgets};
@@ -71,15 +71,19 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
         if !list.is_empty() {
             let sym = app.symbol.clone();
             let sym_open = list.iter().filter(|o| o.symbol == sym).count();
-            if ui
-                .small_button(format!(
-                    "{} {}({sym_open})",
-                    crate::i18n::tr("撤销全部"),
-                    sym
-                ))
-                .clicked()
-                && sym_open > 0
-            {
+            // 当前交易对没有挂单时禁用，避免"点了没反应"的静默空操作
+            let cancel_all = ui
+                .add_enabled(
+                    sym_open > 0,
+                    egui::Button::new(egui::RichText::new(format!(
+                        "{} {}({sym_open})",
+                        crate::i18n::tr("撤销全部"),
+                        sym
+                    ))),
+                )
+                .on_disabled_hover_text(crate::i18n::tr("该交易对无挂单"))
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if cancel_all.clicked() {
                 state.send_cmd(Command::CancelAll {
                     market,
                     symbol: sym,
@@ -93,20 +97,19 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
         widgets::placeholder(
             ui,
             egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 40.0)),
-            "暂无挂单",
+            crate::i18n::tr("暂无挂单"),
         );
         return;
     }
+    // 只读借用规则取精度，避免每行深克隆整条 SymbolRules
     let dp_of = |sym: &str| {
         state
-            .rule_of(market, sym)
-            .map(|r| r.price_dp() as usize)
+            .with_rule(market, sym, |r| r.map(|x| x.price_dp() as usize))
             .unwrap_or(2)
     };
     let qdp_of = |sym: &str| {
         state
-            .rule_of(market, sym)
-            .map(|r| r.qty_dp() as usize)
+            .with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize))
             .unwrap_or(4)
     };
 
@@ -289,7 +292,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
         widgets::placeholder(
             ui,
             egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 40.0)),
-            "暂无持仓",
+            crate::i18n::tr("暂无持仓"),
         );
         return;
     }
@@ -412,16 +415,30 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
         if !state.has_creds() {
             return;
         }
+        let mark = state
+            .acct
+            .lock()
+            .fut_positions
+            .iter()
+            .find(|p| p.symbol == symbol)
+            .map(|p| p.mark_price)
+            .unwrap_or_default();
         let req = OrderRequest {
-            symbol,
+            symbol: symbol.clone(),
             side,
             kind: OrderKind::Market { qty },
             position_side: pos_side,
             reduce_only: !dual,
-            client_id: None,
+            client_id: Some(format!("btp-{}", chrono::Utc::now().timestamp_millis())),
         };
-        // 走确认弹窗，避免误触直接发真实市价单
-        let rows = crate::ui::trade::order_rows(&req);
+        // 走确认弹窗，避免误触直接发真实市价单；给出金额量级兜住输错数量的失误
+        let mut rows = crate::ui::trade::order_rows(&req);
+        if !mark.is_zero() {
+            rows.push((
+                crate::i18n::tr("预估金额").to_string(),
+                format!("≈ {}", (qty * mark).normalize().round_dp(8)),
+            ));
+        }
         app.confirm = Some(crate::app::ConfirmOrder {
             market: Market::UmFutures,
             side: req.side,
@@ -475,11 +492,10 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
         widgets::placeholder(
             ui,
             egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 40.0)),
-            "暂无订单历史",
+            crate::i18n::tr("暂无订单历史"),
         );
         return;
     }
-    let market = key.map(|(m, _)| m).unwrap_or(app.market);
     TableBuilder::new(ui)
         .striped(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -526,7 +542,12 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             theme::cur().down
                         };
-                        ui.label(egui::RichText::new(o.side_label()).color(c).size(11.5));
+                        let word = if o.side == "BUY" {
+                            crate::i18n::tr("买入")
+                        } else {
+                            crate::i18n::tr("卖出")
+                        };
+                        ui.label(egui::RichText::new(word).color(c).size(11.5));
                     });
                     row.col(|ui| {
                         ui.label(egui::RichText::new(type_cn(&o.order_type)).size(11.5));
@@ -573,7 +594,6 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 });
             }
         });
-    let _ = market;
 }
 
 /// 成交历史
@@ -611,7 +631,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
         widgets::placeholder(
             ui,
             egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 40.0)),
-            "暂无成交",
+            crate::i18n::tr("暂无成交"),
         );
         return;
     }
@@ -711,19 +731,4 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 });
             }
         });
-}
-
-// OrderInfo 辅助
-trait OrderInfoExt {
-    fn side_label(&self) -> &'static str;
-}
-
-impl OrderInfoExt for OrderInfo {
-    fn side_label(&self) -> &'static str {
-        if self.side == "BUY" {
-            "买入"
-        } else {
-            "卖出"
-        }
-    }
 }

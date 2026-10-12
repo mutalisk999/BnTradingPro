@@ -4,7 +4,6 @@ use crate::app::BnApp;
 use crate::i18n::tr;
 use crate::ui::theme;
 use eframe::egui;
-use std::sync::Arc;
 
 fn h(ui: &mut egui::Ui, text: &'static str) {
     ui.add_space(4.0);
@@ -128,8 +127,6 @@ pub fn show(_app: &mut BnApp, ui: &mut egui::Ui) {
 
     // ---------- 风险提示 ----------
     h(ui, "风险提示");
-    let state: Arc<crate::engine::state::SharedState> = _app.state.clone();
-    let _ = &state;
     para(
         ui,
         "本工具仅供个人交易辅助与研究学习，不构成任何投资建议。加密货币交易风险极高，使用实盘交易产生的一切后果由使用者自行承担。请务必先在测试网完整演练后再考虑实盘。",

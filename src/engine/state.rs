@@ -11,7 +11,6 @@ use rust_decimal::Decimal;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
-use tokio::sync::Notify;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ConnState {
@@ -89,8 +88,6 @@ pub struct AccountSnap {
     pub fut_positions: Vec<PositionRisk>,
     pub fut_dual_side: bool,
     pub fut_leverage: HashMap<String, Decimal>,
-    pub spot_loaded: bool,
-    pub fut_loaded: bool,
 }
 
 #[derive(Default)]
@@ -112,10 +109,9 @@ pub struct SharedState {
     pub cfg: RwLock<AppConfig>,
     pub creds: RwLock<Option<crate::security::vault::Creds>>,
 
-    /// 配置/凭据版本号，变更后各后台任务重连
+    /// 配置/凭据版本号，变更后各后台任务比对重连
     pub cfg_version: AtomicU64,
     pub creds_version: AtomicU64,
-    pub version_notify: Notify,
 
     pub rest_ok: AtomicBool,
 
@@ -137,7 +133,6 @@ impl Default for SharedState {
             creds: RwLock::new(None),
             cfg_version: AtomicU64::new(1),
             creds_version: AtomicU64::new(0),
-            version_notify: Notify::new(),
             rest_ok: AtomicBool::new(false),
             rules: RwLock::new([RuleBook::default(), RuleBook::default()]),
             md: Mutex::new(MarketMd::default()),
@@ -191,11 +186,21 @@ impl SharedState {
         self.rules.read()[market as usize].get(symbol).cloned()
     }
 
-    /// 更新配置并唤醒所有后台任务（重建连接）
+    /// 只读借用单条规则（不克隆）——UI 每帧多次读取精度等小字段时使用
+    pub fn with_rule<R>(
+        &self,
+        market: Market,
+        symbol: &str,
+        f: impl FnOnce(Option<&crate::binance::symbols::SymbolRules>) -> R,
+    ) -> R {
+        let rules = self.rules.read();
+        f(rules[market as usize].get(symbol))
+    }
+
+    /// 更新配置（后台任务通过版本号感知并重连）
     pub fn update_cfg(&self, cfg: AppConfig) {
         *self.cfg.write() = cfg;
         self.cfg_version.fetch_add(1, Ordering::Relaxed);
-        self.version_notify.notify_waiters();
         self.send_cmd(crate::engine::Command::ReloadAll);
     }
 
@@ -203,7 +208,6 @@ impl SharedState {
     pub fn set_creds(&self, creds: Option<crate::security::vault::Creds>) {
         *self.creds.write() = creds;
         self.creds_version.fetch_add(1, Ordering::Relaxed);
-        self.version_notify.notify_waiters();
         self.send_cmd(crate::engine::Command::ReloadAll);
     }
 
@@ -290,12 +294,14 @@ impl SharedState {
                 Some(last) if candle.t > last.t => {
                     last.closed = true;
                     md.klines.push(candle);
-                    if md.klines.len() > 1500 {
-                        let n = md.klines.len() - 1500;
-                        md.klines.drain(0..n);
-                    }
                 }
+                // 空缓冲（REST 快照失败/未加载时）也接受 WS 事件起步
+                None => md.klines.push(candle),
                 _ => {}
+            }
+            if md.klines.len() > 1500 {
+                let n = md.klines.len() - 1500;
+                md.klines.drain(0..n);
             }
         });
     }
@@ -307,5 +313,92 @@ impl SharedState {
                 md.trades.pop_front();
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kline(t: i64, interval: &str, closed: bool) -> WsKlineInner {
+        WsKlineInner {
+            start_time: t,
+            interval: interval.into(),
+            open: Decimal::ONE,
+            high: Decimal::ONE,
+            low: Decimal::ONE,
+            close: Decimal::ONE,
+            volume: Decimal::ONE,
+            closed,
+        }
+    }
+
+    #[test]
+    fn kline_merge_replace_append_ignore() {
+        let st = SharedState::default();
+        // 同一根 K 线重复推送 → 替换不追加，收盘标记生效
+        st.apply_kline(
+            Market::Spot,
+            "BTCUSDT",
+            Interval::M1,
+            &kline(100, "1m", false),
+        );
+        st.apply_kline(
+            Market::Spot,
+            "BTCUSDT",
+            Interval::M1,
+            &kline(100, "1m", true),
+        );
+        {
+            let md = st.md.lock();
+            let m = md.get(Market::Spot, "BTCUSDT").unwrap();
+            assert_eq!(m.klines.len(), 1);
+            assert!(m.klines[0].closed);
+        }
+        // 新 K 线 → 追加，且前一根标记为已收盘
+        st.apply_kline(
+            Market::Spot,
+            "BTCUSDT",
+            Interval::M1,
+            &kline(60_000, "1m", false),
+        );
+        {
+            let md = st.md.lock();
+            let m = md.get(Market::Spot, "BTCUSDT").unwrap();
+            assert_eq!(m.klines.len(), 2);
+            assert!(m.klines[0].closed);
+            assert!(!m.klines[1].closed);
+        }
+        // 乱序/过期事件 → 忽略
+        st.apply_kline(
+            Market::Spot,
+            "BTCUSDT",
+            Interval::M1,
+            &kline(50_000, "1m", false),
+        );
+        // 周期不匹配 → 忽略
+        st.apply_kline(
+            Market::Spot,
+            "BTCUSDT",
+            Interval::M1,
+            &kline(120_000, "5m", false),
+        );
+        {
+            let md = st.md.lock();
+            assert_eq!(md.get(Market::Spot, "BTCUSDT").unwrap().klines.len(), 2);
+        }
+        // 超过 1500 根时丢弃最旧
+        for i in 0..1600u64 {
+            st.apply_kline(
+                Market::Spot,
+                "ETHUSDT",
+                Interval::M1,
+                &kline((i * 60_000) as i64, "1m", false),
+            );
+        }
+        let md = st.md.lock();
+        let m = md.get(Market::Spot, "ETHUSDT").unwrap();
+        assert_eq!(m.klines.len(), 1500);
+        assert_eq!(m.klines[0].t, 100 * 60_000);
     }
 }

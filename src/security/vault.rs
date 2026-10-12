@@ -10,15 +10,29 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 pub const VAULT_FILE: &str = "vault.bin";
-const MAGIC: &[u8; 5] = b"BTPV1";
+/// V1：Argon2id m=19MiB/t=2（OWASP 基线，仅读取旧库）
+const MAGIC_V1: &[u8; 5] = b"BTPV1";
+/// V2：Argon2id m=64MiB/t=3（当前保存格式）
+const MAGIC_V2: &[u8; 5] = b"BTPV2";
 const NONCE_LEN: usize = 12;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// API 凭据。Debug 输出脱敏；Drop 时零化内存，避免密钥残留在已释放的堆上
+#[derive(Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct Creds {
     pub api_key: String,
     pub api_secret: String,
+}
+
+impl std::fmt::Debug for Creds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Creds")
+            .field("api_key", &"<redacted>")
+            .field("api_secret", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Error)]
@@ -40,26 +54,22 @@ pub fn save_creds(dir: &Path, password: &str, creds: &Creds) -> Result<(), Strin
         rand::thread_rng().fill_bytes(&mut s);
         s
     };
-    let key = kdf::derive_key(password, &salt)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
+    let key = kdf::derive_key(password, &salt, 2)?;
+    let cipher = Aes256Gcm::new_from_slice(&key[..]).map_err(|e| e.to_string())?;
     let nonce = {
         let mut n = [0u8; NONCE_LEN];
         rand::thread_rng().fill_bytes(&mut n);
         n
     };
-    let plaintext = serde_json::to_vec(creds).map_err(|e| e.to_string())?;
+    // 明文缓冲用 Zeroizing 包裹，加解密后即从内存抹除
+    let plaintext = Zeroizing::new(serde_json::to_vec(creds).map_err(|e| e.to_string())?);
+    let msg: &[u8] = &plaintext;
     let ct = cipher
-        .encrypt(
-            Nonce::from_slice(&nonce),
-            Payload {
-                msg: &plaintext,
-                aad: MAGIC,
-            },
-        )
+        .encrypt(Nonce::from_slice(&nonce), Payload { msg, aad: MAGIC_V2 })
         .map_err(|e| format!("加密失败: {e}"))?;
 
-    let mut buf = Vec::with_capacity(MAGIC.len() + SALT_LEN + NONCE_LEN + ct.len());
-    buf.extend_from_slice(MAGIC);
+    let mut buf = Vec::with_capacity(MAGIC_V2.len() + SALT_LEN + NONCE_LEN + ct.len());
+    buf.extend_from_slice(MAGIC_V2);
     buf.extend_from_slice(&salt);
     buf.extend_from_slice(&nonce);
     buf.extend_from_slice(&ct);
@@ -81,28 +91,39 @@ pub fn load_creds(dir: &Path, password: &str) -> Result<Creds, VaultError> {
         std::io::ErrorKind::NotFound => VaultError::NotFound,
         _ => VaultError::Io(e),
     })?;
-    if buf.len() < MAGIC.len() + SALT_LEN + NONCE_LEN || &buf[..MAGIC.len()] != MAGIC {
+    // 按魔数识别格式版本：V1 旧参数仅用于读取，保存时一律升级为 V2
+    let (version, magic): (u8, &[u8]) = if buf.starts_with(MAGIC_V2) {
+        (2, MAGIC_V2)
+    } else if buf.starts_with(MAGIC_V1) {
+        (1, MAGIC_V1)
+    } else {
+        return Err(VaultError::Corrupt);
+    };
+    if buf.len() < MAGIC_V2.len() + SALT_LEN + NONCE_LEN {
         return Err(VaultError::Corrupt);
     }
-    let mut off = MAGIC.len();
+    let mut off = MAGIC_V2.len();
     let salt = &buf[off..off + SALT_LEN];
     off += SALT_LEN;
     let nonce = &buf[off..off + NONCE_LEN];
     off += NONCE_LEN;
     let ct = &buf[off..];
 
-    let key = kdf::derive_key(password, salt).map_err(|_| VaultError::BadPassword)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| VaultError::Corrupt)?;
-    let pt = cipher
-        .decrypt(
-            Nonce::from_slice(nonce),
-            Payload {
-                msg: ct,
-                aad: MAGIC,
-            },
-        )
-        .map_err(|_| VaultError::BadPassword)?;
-    serde_json::from_slice(&pt).map_err(|_| VaultError::Corrupt)
+    let key = kdf::derive_key(password, salt, version).map_err(|_| VaultError::BadPassword)?;
+    let cipher = Aes256Gcm::new_from_slice(&key[..]).map_err(|_| VaultError::Corrupt)?;
+    let pt = Zeroizing::new(
+        cipher
+            .decrypt(
+                Nonce::from_slice(nonce),
+                Payload {
+                    msg: ct,
+                    aad: magic,
+                },
+            )
+            .map_err(|_| VaultError::BadPassword)?,
+    );
+    let plain: &[u8] = &pt;
+    serde_json::from_slice(plain).map_err(|_| VaultError::Corrupt)
 }
 
 pub fn vault_exists(dir: &Path) -> bool {
@@ -123,6 +144,40 @@ mod tests {
         ));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// 旧版 V1 凭据库（Argon2 v1 参数）必须仍能解锁
+    #[test]
+    fn v1_vault_still_loads() {
+        use aes_gcm::aead::{Aead, KeyInit, Payload};
+        let dir = tmp_dir("v1");
+        let creds = Creds {
+            api_key: "k1".into(),
+            api_secret: "s1".into(),
+        };
+        let salt = [7u8; SALT_LEN];
+        let key = kdf::derive_key("pw", &salt, 1).unwrap();
+        let cipher = Aes256Gcm::new_from_slice(&key[..]).unwrap();
+        let nonce = [3u8; NONCE_LEN];
+        let pt = serde_json::to_vec(&creds).unwrap();
+        let ct = cipher
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &pt,
+                    aad: MAGIC_V1,
+                },
+            )
+            .unwrap();
+        let mut buf = Vec::new();
+        buf.extend_from_slice(MAGIC_V1);
+        buf.extend_from_slice(&salt);
+        buf.extend_from_slice(&nonce);
+        buf.extend_from_slice(&ct);
+        std::fs::write(dir.join(VAULT_FILE), buf).unwrap();
+        let got = load_creds(&dir, "pw").unwrap();
+        assert_eq!(got.api_key, "k1");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

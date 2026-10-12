@@ -166,7 +166,21 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 
     // ---------- 端点覆盖 ----------
     ui.group(|ui| {
-        ui.label(egui::RichText::new(crate::i18n::tr("端点覆盖（留空使用内置默认）")).strong());
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(crate::i18n::tr("端点覆盖（留空使用内置默认）")).strong());
+            let overridden = [
+                &app.settings.override_spot_rest,
+                &app.settings.override_spot_ws,
+                &app.settings.override_fut_rest,
+                &app.settings.override_fut_ws,
+            ]
+            .iter()
+            .any(|s| !s.trim().is_empty());
+            if overridden {
+                // 自定义端点会把携带 API Key 的请求重定向到任意主机，必须显式可见
+                theme::badge(ui, crate::i18n::tr("自定义端点已启用"), theme::cur().warn);
+            }
+        });
         egui::Grid::new("ep_grid")
             .num_columns(2)
             .spacing([10.0, 4.0])
@@ -242,15 +256,46 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 app.api_secret.clear();
                 app.phase = Phase::EnterKeys;
             }
-            if vault::vault_exists(&dir) && ui.small_button(crate::i18n::tr("删除凭据库")).clicked()
-            {
-                let _ = std::fs::remove_file(dir.join(vault::VAULT_FILE));
-                state.set_creds(None);
-                state.push_toast(
-                    ToastKind::Info,
-                    crate::i18n::tr("已删除本机凭据库").to_string(),
+            if vault::vault_exists(&dir) {
+                // 破坏性操作两步确认：误点一次不会直接销毁唯一的本地密钥副本
+                let armed = app.vault_delete_armed;
+                let del = ui.small_button(
+                    egui::RichText::new(if armed {
+                        crate::i18n::tr("确认删除凭据库？")
+                    } else {
+                        crate::i18n::tr("删除凭据库")
+                    })
+                    .color(if armed {
+                        theme::cur().err
+                    } else {
+                        theme::cur().text_dim
+                    }),
                 );
-                app.phase = Phase::EnterKeys;
+                if del.clicked() {
+                    if !armed {
+                        app.vault_delete_armed = true;
+                    } else {
+                        app.vault_delete_armed = false;
+                        let gone = match std::fs::remove_file(dir.join(vault::VAULT_FILE)) {
+                            Ok(()) => true,
+                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                            Err(_) => false,
+                        };
+                        if gone {
+                            state.set_creds(None);
+                            state.push_toast(
+                                ToastKind::Info,
+                                crate::i18n::tr("已删除本机凭据库").to_string(),
+                            );
+                            app.phase = Phase::EnterKeys;
+                        } else {
+                            state.push_toast(
+                                ToastKind::Err,
+                                crate::i18n::tr("删除凭据库失败").to_string(),
+                            );
+                        }
+                    }
+                }
             }
         });
     });

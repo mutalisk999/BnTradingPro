@@ -82,17 +82,6 @@ pub struct Candle {
     pub closed: bool,
 }
 
-impl Candle {
-    pub fn f(&self) -> [f64; 4] {
-        [
-            self.o.to_string().parse().unwrap_or(0.0),
-            self.h.to_string().parse().unwrap_or(0.0),
-            self.l.to_string().parse().unwrap_or(0.0),
-            self.c.to_string().parse().unwrap_or(0.0),
-        ]
-    }
-}
-
 /// REST klines 返回的数组行解析：
 /// `[openTime, "open", "high", "low", "close", "volume", closeTime, ...]`
 pub fn parse_kline_row(row: &[serde_json::Value]) -> Option<Candle> {
@@ -182,21 +171,6 @@ pub struct FutBalance {
     pub available: Decimal,
 }
 
-/// 合约账户持仓（/fapi/v2/account positions[]）
-#[derive(Debug, Clone, Deserialize)]
-pub struct FutAccountPos {
-    #[serde(rename = "symbol")]
-    pub symbol: String,
-    #[serde(rename = "positionAmt", deserialize_with = "dec", default)]
-    pub amt: Decimal,
-    #[serde(rename = "entryPrice", deserialize_with = "dec", default)]
-    pub entry: Decimal,
-    #[serde(rename = "unrealizedProfit", deserialize_with = "dec", default)]
-    pub unrealized: Decimal,
-    #[serde(rename = "leverage", deserialize_with = "dec", default)]
-    pub leverage: Decimal,
-}
-
 /// 合约账户（GET /fapi/v2/account）
 #[derive(Debug, Clone, Deserialize)]
 pub struct FutAccount {
@@ -210,8 +184,6 @@ pub struct FutAccount {
     pub available: Decimal,
     #[serde(default)]
     pub assets: Vec<FutBalance>,
-    #[serde(default)]
-    pub positions: Vec<FutAccountPos>,
 }
 
 /// 持仓风险（GET /fapi/v2/positionRisk）
@@ -240,22 +212,6 @@ pub struct PositionRisk {
 pub struct DualSideMode {
     #[serde(rename = "dualSidePosition", default)]
     pub dual: bool,
-}
-
-/// 杠杆信息（GET /fapi/v1/leverage）
-#[derive(Debug, Clone, Deserialize)]
-pub struct LeverageInfo {
-    #[serde(rename = "symbol")]
-    pub symbol: String,
-    #[serde(rename = "leverage", deserialize_with = "dec", default)]
-    pub leverage: Decimal,
-}
-
-/// listenKey
-#[derive(Debug, Clone, Deserialize)]
-pub struct ListenKey {
-    #[serde(rename = "listenKey")]
-    pub key: String,
 }
 
 /// 订单（现货/合约 REST 通用，字段为 camelCase 全名）
@@ -411,45 +367,6 @@ pub struct FutExec {
     pub stop_price: Option<Decimal>,
 }
 
-/// 合约 ACCOUNT_UPDATE
-#[derive(Debug, Clone, Deserialize)]
-pub struct FutAccountUpdate {
-    #[serde(rename = "a")]
-    pub a: FutAccountUpdateInner,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct FutAccountUpdateInner {
-    #[serde(rename = "m", default)]
-    pub reason: String,
-    #[serde(rename = "B", default)]
-    pub balances: Vec<FutWsBalance>,
-    #[serde(rename = "P", default)]
-    pub positions: Vec<FutWsPosition>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct FutWsBalance {
-    #[serde(rename = "a")]
-    pub asset: String,
-    #[serde(rename = "wb", deserialize_with = "dec", default)]
-    pub wallet: Decimal,
-    #[serde(rename = "cw", deserialize_with = "dec", default)]
-    pub cross_wallet: Decimal,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct FutWsPosition {
-    #[serde(rename = "s")]
-    pub symbol: String,
-    #[serde(rename = "pa", deserialize_with = "dec", default)]
-    pub amt: Decimal,
-    #[serde(rename = "ep", deserialize_with = "dec", default)]
-    pub entry: Decimal,
-    #[serde(rename = "up", deserialize_with = "dec", default)]
-    pub unrealized: Decimal,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,16 +462,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_fut_account_update() {
-        let raw = r#"{"e":"ACCOUNT_UPDATE","E":1564797666,"T":1564797667,"a":{
-          "m":"ORDER","B":[{"a":"USDT","wb":"122624.12345678","cw":"100.12345678"}],
-          "P":[{"s":"BTCUSDT","pa":"1","ep":"90787.6","cr":"0.0","up":"0.0","mt":"cross","iw":"1.0","ps":"LONG","ma":"USDT"}]}}"#;
-        let u: FutAccountUpdate = serde_json::from_str(raw).unwrap();
-        assert_eq!(u.a.balances[0].asset, "USDT");
-        assert_eq!(u.a.positions[0].symbol, "BTCUSDT");
-    }
-
-    #[test]
     fn parse_position_risk_and_account() {
         let raw = r#"{"symbol":"BTCUSDT","positionAmt":0.010,"entryPrice":22185.2,"markPrice":21123.0,
             "unRealizedProfit":-0.1062210,"liquidationPrice":0,"leverage":10,"positionSide":"BOTH",
@@ -570,6 +477,5 @@ mod tests {
             "positions":[{"symbol":"BTCUSDT","initialMargin":"0","maintMargin":"0","positionInitialMargin":"0","openOrderInitialMargin":"0","leverage":"10","isolated":false,"entryPrice":"22185.2","maxNotional":"1000","positionSide":"BOTH","positionAmt":"0.010","notional":"-211.23","isolatedWallet":"0","unrealizedProfit":"-0.106","autoAddMargin":"0"}]}"#;
         let a: FutAccount = serde_json::from_str(raw).unwrap();
         assert_eq!(a.total_wallet.to_string(), "105.1");
-        assert_eq!(a.positions[0].symbol, "BTCUSDT");
     }
 }

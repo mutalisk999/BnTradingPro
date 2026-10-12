@@ -101,6 +101,12 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // ---------- 买/卖切换 ----------
     // 双向持仓模式下买卖即决定开多/开空，持仓方向随方向按钮联动（见 build_request）
     ui.columns(2, |cols| {
+        // 未选中侧用主题文字色：浅色主题下 btn_idle 底近白，白字对比度不足
+        let buy_txt_color = if app.form.side == Side::Buy {
+            egui::Color32::WHITE
+        } else {
+            theme::cur().text
+        };
         let buy = egui::RichText::new(if market == Market::UmFutures {
             crate::i18n::tr("买入 / 开多")
         } else {
@@ -108,7 +114,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .strong()
         .size(14.5)
-        .color(egui::Color32::WHITE);
+        .color(buy_txt_color);
         let buy = egui::Button::new(buy)
             .fill(if app.form.side == Side::Buy {
                 theme::cur().up
@@ -122,6 +128,11 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         {
             app.form.side = Side::Buy;
         }
+        let sell_txt_color = if app.form.side == Side::Sell {
+            egui::Color32::WHITE
+        } else {
+            theme::cur().text
+        };
         let sell = egui::RichText::new(if market == Market::UmFutures {
             crate::i18n::tr("卖出 / 开空")
         } else {
@@ -129,7 +140,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .strong()
         .size(14.5)
-        .color(egui::Color32::WHITE);
+        .color(sell_txt_color);
         let sell = egui::Button::new(sell)
             .fill(if app.form.side == Side::Sell {
                 theme::cur().down
@@ -209,7 +220,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                             .color(theme::cur().accent),
                     );
                 }
-                let _ = widgets::num_field(
+                widgets::num_field(
                     ui,
                     "lev_in",
                     &mut app.leverage_input,
@@ -434,7 +445,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     if resp.clicked() {
         match build_request(app) {
             Ok(req) => {
-                let rows = order_rows(&req);
+                let mut rows = order_rows(&req);
+                // 确认弹窗给出金额量级，兜住市价单输错数量的低级失误
+                if let Some(t) = total {
+                    rows.push((
+                        crate::i18n::tr("预估金额").to_string(),
+                        format!("≈ {}", t.normalize().round_dp(8)),
+                    ));
+                }
                 app.confirm = Some(ConfirmOrder {
                     market: app.market,
                     req,
@@ -502,12 +520,38 @@ pub fn build_request(app: &BnApp) -> Result<OrderRequest, String> {
         },
     };
     let dual = state.acct.lock().fut_dual_side;
-    // 双向持仓：持仓方向跟随买卖方向（买入=开多 LONG，卖出=开空 SHORT）
+    // 双向持仓：限价/市价跟随买卖方向开仓（买入=LONG，卖出=SHORT）；
+    // 止损/止盈则默认平掉现有持仓（SELL+LONG / BUY+SHORT），避免"保护单"
+    // 反向新开一仓、方向敞口翻倍的陷阱。确认弹窗会展示实际持仓方向。
     let position_side = if market == Market::UmFutures && dual {
-        if app.form.side == Side::Buy {
-            FutPosSide::Long
+        let protective = matches!(
+            app.form.kind,
+            UiKind::StopLossLimit
+                | UiKind::TakeProfitLimit
+                | UiKind::StopLossMarket
+                | UiKind::TakeProfitMarket
+        );
+        let existing = if protective {
+            state
+                .acct
+                .lock()
+                .fut_positions
+                .iter()
+                .find(|p| p.symbol == symbol && p.amt != Decimal::ZERO)
+                .map(|p| p.amt > Decimal::ZERO)
         } else {
-            FutPosSide::Short
+            None
+        };
+        match existing {
+            Some(true) => FutPosSide::Long,
+            Some(false) => FutPosSide::Short,
+            None => {
+                if app.form.side == Side::Buy {
+                    FutPosSide::Long
+                } else {
+                    FutPosSide::Short
+                }
+            }
         }
     } else {
         FutPosSide::Both
@@ -518,7 +562,8 @@ pub fn build_request(app: &BnApp) -> Result<OrderRequest, String> {
         kind,
         position_side,
         reduce_only: if dual { false } else { app.form.reduce_only },
-        client_id: None,
+        // 幂等标识：同一确认弹窗重发相同 newClientOrderId，方便对账与排查重复委托
+        client_id: Some(format!("btp-{}", chrono::Utc::now().timestamp_millis())),
     })
 }
 
@@ -539,49 +584,78 @@ fn fill_by_pct(app: &mut BnApp, pct: f64) {
             .and_then(|md| md.ticker.as_ref().map(|t| t.last_price))
     });
     let Some(ref_price) = ref_price else { return };
-    let price_f: f64 = ref_price.to_string().parse().unwrap_or(0.0);
+    let price_f = widgets::f64_decimal(&ref_price);
     if price_f <= 0.0 {
         return;
     }
+    // 余额缺失/为零时明确提示，而不是静默填入 "0"
+    let missing = |state: &crate::engine::state::SharedState| {
+        state.push_toast(
+            crate::engine::state::ToastKind::Warn,
+            crate::i18n::tr("账户数据加载中").to_string(),
+        );
+    };
 
     let qty: Decimal = match (market, app.form.side) {
         (Market::Spot, Side::Buy) => {
-            let free = state.acct.lock().spot.as_ref().and_then(|a| {
+            let f_opt = state.acct.lock().spot.as_ref().and_then(|a| {
                 a.balances
                     .iter()
                     .find(|b| b.asset == r.quote)
-                    .map(|b| b.free)
+                    .map(|b| widgets::f64_decimal(&b.free))
             });
-            let f: f64 = free
-                .unwrap_or(Decimal::ZERO)
-                .to_string()
-                .parse()
-                .unwrap_or(0.0);
-            Decimal::try_from(f * pct / price_f).unwrap_or(Decimal::ZERO)
+            let Some(f) = f_opt else {
+                missing(state);
+                return;
+            };
+            if f <= 0.0 {
+                state.push_toast(
+                    crate::engine::state::ToastKind::Warn,
+                    crate::i18n::tr("可用余额为 0").to_string(),
+                );
+                return;
+            }
+            // 预留 taker 手续费（约 0.1%），避免 100% 买入因余额不足被交易所拒绝
+            Decimal::try_from(f * pct * 0.999 / price_f).unwrap_or(Decimal::ZERO)
         }
         (Market::Spot, Side::Sell) => {
-            let free = state.acct.lock().spot.as_ref().and_then(|a| {
+            let f_opt = state.acct.lock().spot.as_ref().and_then(|a| {
                 a.balances
                     .iter()
                     .find(|b| b.asset == r.base)
-                    .map(|b| b.free)
+                    .map(|b| widgets::f64_decimal(&b.free))
             });
-            let f: f64 = free
-                .unwrap_or(Decimal::ZERO)
-                .to_string()
-                .parse()
-                .unwrap_or(0.0);
+            let Some(f) = f_opt else {
+                missing(state);
+                return;
+            };
+            if f <= 0.0 {
+                state.push_toast(
+                    crate::engine::state::ToastKind::Warn,
+                    crate::i18n::tr("可用余额为 0").to_string(),
+                );
+                return;
+            }
             Decimal::try_from(f * pct).unwrap_or(Decimal::ZERO)
         }
         (Market::UmFutures, _) => {
-            let avail = state
+            let f_opt = state
                 .acct
                 .lock()
                 .fut
                 .as_ref()
-                .map(|a| a.available)
-                .unwrap_or(Decimal::ZERO);
-            let f: f64 = avail.to_string().parse().unwrap_or(0.0);
+                .map(|a| widgets::f64_decimal(&a.available));
+            let Some(f) = f_opt else {
+                missing(state);
+                return;
+            };
+            if f <= 0.0 {
+                state.push_toast(
+                    crate::engine::state::ToastKind::Warn,
+                    crate::i18n::tr("可用余额为 0").to_string(),
+                );
+                return;
+            }
             let lev = state
                 .acct
                 .lock()
@@ -589,7 +663,7 @@ fn fill_by_pct(app: &mut BnApp, pct: f64) {
                 .get(&symbol)
                 .and_then(|d| d.to_string().parse::<f64>().ok())
                 .unwrap_or(1.0);
-            Decimal::try_from(f * lev * pct / price_f).unwrap_or(Decimal::ZERO)
+            Decimal::try_from(f * lev * pct * 0.999 / price_f).unwrap_or(Decimal::ZERO)
         }
     };
     // 量化失败（溢出）时不填充

@@ -31,24 +31,25 @@ pub enum BinanceError {
 impl BinanceError {
     /// UI 展示用友好信息
     pub fn friendly(&self) -> String {
+        let tr = crate::i18n::tr;
         match self {
-            BinanceError::NoCreds => "未配置 API 密钥，请在设置中配置".into(),
-            BinanceError::Timeout => "请求超时，请检查网络/代理".into(),
-            BinanceError::Network(e) => format!("网络错误: {e}"),
-            BinanceError::Decode(e) => format!("响应解析失败: {e}"),
+            BinanceError::NoCreds => tr("未配置 API 密钥，请在设置中配置").into(),
+            BinanceError::Timeout => tr("请求超时，请检查网络/代理").into(),
+            BinanceError::Network(e) => format!("{}{e}", tr("网络错误: ")),
+            BinanceError::Decode(e) => format!("{}{e}", tr("响应解析失败: ")),
             BinanceError::Api { code, msg } => match code {
-                -1021 => "本地时间与服务器偏差过大，正在自动校时，请重试".into(),
+                -1021 => tr("本地时间与服务器偏差过大，正在自动校时，请重试").into(),
                 -2015 => {
-                    "API Key 无效或权限不足（检查 Key、IP 白名单、是否用对测试网/实盘）".into()
+                    tr("API Key 无效或权限不足（检查 Key、IP 白名单、是否用对测试网/实盘）").into()
                 }
-                -2014 => "API Key 格式错误".into(),
-                -1022 => "签名错误（Secret 不匹配）".into(),
-                -1013 => "下单参数不满足过滤器（价格/数量/最小名义金额）".into(),
-                -2010 => format!("下单被拒绝: {msg}"),
-                -2019 => "保证金不足".into(),
-                -2021 => "订单会立即触发（止盈止损价过于贴近市价）".into(),
-                -2022 => "订单方向与持仓方向冲突（ReduceOnly）".into(),
-                -4061 => "持仓方向与订单冲突（检查双向/单向持仓模式）".into(),
+                -2014 => tr("API Key 格式错误").into(),
+                -1022 => tr("签名错误（Secret 不匹配）").into(),
+                -1013 => tr("下单参数不满足过滤器（价格/数量/最小名义金额）").into(),
+                -2010 => format!("{}{msg}", tr("下单被拒绝: ")),
+                -2019 => tr("保证金不足").into(),
+                -2021 => tr("订单会立即触发（止盈止损价过于贴近市价）").into(),
+                -2022 => tr("订单方向与持仓方向冲突（ReduceOnly）").into(),
+                -4061 => tr("持仓方向与订单冲突（检查双向/单向持仓模式）").into(),
                 _ => format!("Binance 错误[{code}]: {msg}"),
             },
         }
@@ -269,29 +270,20 @@ impl BinanceRest {
         ep: &crate::binance::Endpoints,
         ctx: RestCtx,
         path: &str,
-        mut params: Vec<(String, String)>,
+        params: Vec<(String, String)>,
     ) -> Result<Value, BinanceError> {
         if !self.has_creds() {
             return Err(BinanceError::NoCreds);
         }
         self.wait_for_weight().await?;
 
-        params.push(("timestamp".into(), self.signed_now_ms().to_string()));
-        if ctx.recv_window_ms > 0 {
-            params.push(("recvWindow".into(), ctx.recv_window_ms.to_string()));
-        }
-        let query: String = params
-            .iter()
-            .map(|(k, v)| format!("{k}={}", urlencode(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-
-        let secret = self.api_secret.as_ref().unwrap();
-        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
-        mac.update(query.as_bytes());
-        let sig = hex::encode(mac.finalize().into_bytes());
-
-        let url = format!("{}{}?{}&signature={}", ep.rest, path, query, sig);
+        let qs = build_signed_query(
+            &params,
+            self.signed_now_ms(),
+            ctx.recv_window_ms,
+            self.api_secret.as_ref().unwrap().as_str(),
+        );
+        let url = format!("{}{}?{}", ep.rest, path, qs);
         let key = self.api_key.as_ref().unwrap();
         let resp = self
             .http
@@ -305,7 +297,35 @@ impl BinanceRest {
     }
 }
 
+/// 组装待签查询串并附 HMAC-SHA256 签名（纯函数，便于测试）。
+/// 返回 `query&signature=...`；`recv_window_ms == 0` 时省略 recvWindow 参数。
+pub(crate) fn build_signed_query(
+    params: &[(String, String)],
+    timestamp_ms: i64,
+    recv_window_ms: u64,
+    secret: &str,
+) -> String {
+    let mut all: Vec<(String, String)> = params.to_vec();
+    all.push(("timestamp".into(), timestamp_ms.to_string()));
+    if recv_window_ms > 0 {
+        all.push(("recvWindow".into(), recv_window_ms.to_string()));
+    }
+    let query: String = all
+        .iter()
+        .map(|(k, v)| format!("{k}={}", urlencode(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+    mac.update(query.as_bytes());
+    let sig = hex::encode(mac.finalize().into_bytes());
+    format!("{query}&signature={sig}")
+}
+
 fn map_req_err(e: reqwest::Error) -> BinanceError {
+    // reqwest 的 Display 会附带完整 URL（含签名、listenKey 等敏感查询参数），
+    // 错误信息会进入日志文件，落盘前必须剥离
+    let e = e.without_url();
     if e.is_timeout() {
         BinanceError::Timeout
     } else {
@@ -578,5 +598,85 @@ mod tests {
         let p = build_order_params(Market::UmFutures, &req);
         assert!(p.contains(&("reduceOnly".into(), "true".into())));
         assert!(!p.iter().any(|(k, _)| k == "positionSide"));
+    }
+
+    #[test]
+    fn signed_query_omits_recv_window_when_zero() {
+        let qs = build_signed_query(&[("symbol".into(), "BTCUSDT".into())], 1, 0, "secret");
+        assert_eq!(
+            qs,
+            format!(
+                "symbol=BTCUSDT&timestamp=1&signature={}",
+                hmac_sha256("secret", "symbol=BTCUSDT&timestamp=1")
+            )
+        );
+    }
+
+    #[test]
+    fn signed_query_includes_recv_window() {
+        let qs = build_signed_query(&[], 42, 5000, "k");
+        assert!(qs.contains("timestamp=42"));
+        assert!(qs.contains("recvWindow=5000"));
+        let query_part = qs.split("&signature=").next().unwrap();
+        let sig = qs.split("&signature=").nth(1).unwrap();
+        assert_eq!(*sig, hmac_sha256("k", query_part));
+    }
+
+    #[tokio::test]
+    async fn parse_response_maps_binance_error() {
+        let resp = reqwest::Response::from(
+            http::Response::builder()
+                .status(400)
+                .body(r#"{"code":-2010,"msg":"order would immediately match"}"#)
+                .unwrap(),
+        );
+        match parse_response(resp).await {
+            Err(BinanceError::Api { code: -2010, msg }) => {
+                assert_eq!(msg, "order would immediately match")
+            }
+            other => panic!("期望 Api(-2010)，得到 {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn parse_response_code_200_success_is_ok() {
+        // positionSide/dual 等端点成功时返回 {"code":200,"msg":"success"}
+        let resp = reqwest::Response::from(
+            http::Response::builder()
+                .status(200)
+                .body(r#"{"code":200,"msg":"success"}"#)
+                .unwrap(),
+        );
+        assert!(parse_response(resp).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn parse_response_positive_code_is_error() {
+        let resp = reqwest::Response::from(
+            http::Response::builder()
+                .status(200)
+                .body(r#"{"code":1,"msg":"weird"}"#)
+                .unwrap(),
+        );
+        match parse_response(resp).await {
+            Err(BinanceError::Api { code: 1, .. }) => {}
+            other => panic!("期望 Api(1)，得到 {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn parse_response_empty_body_is_decode_error() {
+        // 空响应体常见于端点覆盖填错（打到了非 Binance 服务）
+        let resp = reqwest::Response::from(http::Response::builder().status(200).body("").unwrap());
+        match parse_response(resp).await {
+            Err(e) => assert!(e.to_string().contains("HTTP 200")),
+            Ok(v) => panic!("期望 Decode 错误，得到 {v}"),
+        }
+    }
+
+    #[test]
+    fn signed_query_urlencodes_values() {
+        let qs = build_signed_query(&[("k".into(), "a b&c=d".into())], 1, 0, "secret");
+        assert!(qs.starts_with("k=a+b%26c%3Dd&timestamp=1&signature="));
     }
 }

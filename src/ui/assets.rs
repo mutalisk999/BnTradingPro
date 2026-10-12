@@ -14,7 +14,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         widgets::placeholder(
             ui,
             ui.max_rect(),
-            "未配置 API 密钥，无法查看资产（可在设置页配置）",
+            crate::i18n::tr("未配置 API 密钥，无法查看资产（可在设置页配置）"),
         );
         return;
     }
@@ -22,7 +22,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // ---------- 合约账户概览卡片 ----------
     let fut = state.acct.lock().fut.clone();
     if let Some(a) = &fut {
-        let f = |d: &Decimal| d.to_string().parse::<f64>().unwrap_or(0.0);
+        let f = |d: &Decimal| widgets::f64_decimal(d);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             let cards: [(&str, f64, bool); 4] = [
@@ -59,15 +59,24 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             } else {
                 crate::i18n::tr("持仓模式：单向").to_string()
             }));
-            if ui.small_button("切换").clicked() {
+            if ui.small_button(crate::i18n::tr("切换")).clicked() {
                 state.send_cmd(Command::SetDualSide { dual: !dual });
             }
-            if ui.small_button("刷新账户").clicked() {
+            if ui.small_button(crate::i18n::tr("刷新账户")).clicked() {
                 state.send_cmd(Command::RefreshAccount);
             }
         });
     } else {
-        ui.label(egui::RichText::new("合约账户加载中…").color(theme::cur().text_dim));
+        // 加载失败（如代理/密钥问题）时不能死等：给出显式重试入口
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(crate::i18n::tr("合约账户加载中…"))
+                    .color(theme::cur().text_dim),
+            );
+            if ui.small_button(crate::i18n::tr("刷新账户")).clicked() {
+                state.send_cmd(Command::RefreshAccount);
+            }
+        });
     }
 
     ui.add_space(4.0);
@@ -75,24 +84,24 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // ---------- 现货资产 / 合约资产 双栏 ----------
     ui.columns(2, |cols| {
         cols[0].vertical(|ui| {
-            theme::section(ui, "现货资产");
+            theme::section(ui, crate::i18n::tr("现货资产"));
             show_spot(&state, ui);
         });
         cols[1].vertical(|ui| {
-            theme::section(ui, "合约资产");
+            theme::section(ui, crate::i18n::tr("合约资产"));
             show_fut_assets(&state, ui);
         });
     });
 
     ui.add_space(4.0);
-    theme::section(ui, "合约持仓");
+    theme::section(ui, crate::i18n::tr("合约持仓"));
     show_positions_table(app, ui);
 }
 
 fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) {
     let acct = state.acct.lock();
     let Some(a) = acct.spot.as_ref() else {
-        ui.label(egui::RichText::new("加载中…").color(theme::cur().text_dim));
+        ui.label(egui::RichText::new(crate::i18n::tr("加载中…")).color(theme::cur().text_dim));
         return;
     };
     let nonzero: Vec<_> = a
@@ -108,7 +117,7 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
         );
     }
     if nonzero.is_empty() {
-        ui.label(egui::RichText::new("暂无非零资产").color(theme::cur().text_dim));
+        ui.label(egui::RichText::new(crate::i18n::tr("暂无非零资产")).color(theme::cur().text_dim));
         return;
     }
     TableBuilder::new(ui)
@@ -153,7 +162,7 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
 fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) {
     let acct = state.acct.lock();
     let Some(a) = acct.fut.as_ref() else {
-        ui.label(egui::RichText::new("加载中…").color(theme::cur().text_dim));
+        ui.label(egui::RichText::new(crate::i18n::tr("加载中…")).color(theme::cur().text_dim));
         return;
     };
     let assets: Vec<_> = a
@@ -162,10 +171,10 @@ fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui
         .filter(|b| b.wallet != Decimal::ZERO)
         .collect();
     if assets.is_empty() {
-        ui.label(egui::RichText::new("暂无非零资产").color(theme::cur().text_dim));
+        ui.label(egui::RichText::new(crate::i18n::tr("暂无非零资产")).color(theme::cur().text_dim));
         return;
     }
-    let f = |d: &Decimal| d.to_string().parse::<f64>().unwrap_or(0.0);
+    let f = |d: &Decimal| widgets::f64_decimal(d);
     TableBuilder::new(ui)
         .striped(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -225,7 +234,7 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
         .cloned()
         .collect();
     if positions.is_empty() {
-        ui.label(egui::RichText::new("暂无持仓").color(theme::cur().text_dim));
+        ui.label(egui::RichText::new(crate::i18n::tr("暂无持仓")).color(theme::cur().text_dim));
         return;
     }
     let mut close_req: Option<(
@@ -267,7 +276,7 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
             for p in &positions {
                 body.row(22.0, |mut row| {
                     let long = p.amt > Decimal::ZERO;
-                    let f = |d: &Decimal| d.to_string().parse::<f64>().unwrap_or(0.0);
+                    let f = |d: &Decimal| widgets::f64_decimal(d);
                     row.col(|ui| {
                         ui.label(egui::RichText::new(&p.symbol).strong().size(12.0));
                     });
@@ -327,7 +336,7 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                         );
                     });
                     row.col(|ui| {
-                        if ui.small_button("平仓").clicked() {
+                        if ui.small_button(crate::i18n::tr("平仓")).clicked() {
                             let side = if long {
                                 crate::binance::Side::Sell
                             } else {
@@ -346,15 +355,29 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
         });
 
     if let Some((symbol, side, qty, pos_side)) = close_req {
+        let mark = state
+            .acct
+            .lock()
+            .fut_positions
+            .iter()
+            .find(|p| p.symbol == symbol)
+            .map(|p| p.mark_price)
+            .unwrap_or_default();
         let req = crate::binance::client::OrderRequest {
-            symbol,
+            symbol: symbol.clone(),
             side,
             kind: crate::binance::client::OrderKind::Market { qty },
             position_side: pos_side,
             reduce_only: !state.acct.lock().fut_dual_side,
-            client_id: None,
+            client_id: Some(format!("btp-{}", chrono::Utc::now().timestamp_millis())),
         };
-        let rows = crate::ui::trade::order_rows(&req);
+        let mut rows = crate::ui::trade::order_rows(&req);
+        if !mark.is_zero() {
+            rows.push((
+                crate::i18n::tr("预估金额").to_string(),
+                format!("≈ {}", (qty * mark).normalize().round_dp(8)),
+            ));
+        }
         app.confirm = Some(crate::app::ConfirmOrder {
             market: crate::binance::Market::UmFutures,
             side: req.side,

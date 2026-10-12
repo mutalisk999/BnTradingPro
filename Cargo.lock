@@ -589,6 +589,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hmac",
+ "http",
  "httparse",
  "native-tls",
  "parking_lot",

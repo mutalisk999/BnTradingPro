@@ -48,7 +48,6 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "获取行情中…" => "Loading market…",
         "错误: " => "Error: ",
         // ---- 页头 ----
-        "搜索交易对（如 BTC）…" => "Search symbols (e.g. BTC)…",
         "搜索交易对…" => "Search symbols…",
         "无匹配交易对" => "No matching symbols",
         "⭐ 自选" => "★ Favorites",
@@ -58,6 +57,23 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "（仅显示前 400 个，请用搜索过滤）" => "(Showing first 400 — type to filter)",
         "REST 接口正常" => "REST OK",
         "REST 接口异常" => "REST Error",
+        "REST 客户端初始化失败，请检查网络/代理设置" => "REST client init failed — check network/proxy settings",
+        "后台任务异常退出: " => "Background task exited: ",
+        "命令处理任务已停止，请重启应用" => "Command loop stopped — please restart the app",
+        "任务反复退出，请重启应用: " => "Task keeps exiting, please restart the app: ",
+        "挂单获取失败" => "Failed to load open orders",
+        "读超时（连接无数据）" => "Read timeout (no data)",
+        "点击填入下单价格" => "Click to fill the order price",
+        "确认" => "Confirm",
+        "确认删除凭据库？" => "Delete the vault?",
+        "删除凭据库失败" => "Failed to delete vault",
+        "自定义端点已启用" => "Custom endpoints active",
+        "账户数据加载中" => "Account data loading…",
+        "可用余额为 0" => "Available balance is 0",
+        "数量过小" => "Qty too small",
+        "主密码用于加密本机保存的 API Key/Secret（Argon2id + AES-256-GCM）。忘记将无法恢复。" => {
+            "The master password encrypts your API Key/Secret locally (Argon2id + AES-256-GCM). It cannot be recovered if lost."
+        }
         // ---- 盘口/成交 ----
         "盘口 20 档" => "Order Book (20)",
         "成交明细" => "Recent Trades",
@@ -106,6 +122,18 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "低于最小名义金额" => "Below min notional",
         "（限价单）" => " (limit order)",
         "提交中…" => "Submitting…",
+        "本地时间与服务器偏差过大，正在自动校时，请重试" => "Clock drift too large — auto resyncing, please retry",
+        "API Key 无效或权限不足（检查 Key、IP 白名单、是否用对测试网/实盘）" => {
+            "API key invalid or unauthorized (check the key, IP whitelist, testnet vs live)"
+        }
+        "API Key 格式错误" => "Malformed API key",
+        "签名错误（Secret 不匹配）" => "Signature error (wrong secret)",
+        "下单参数不满足过滤器（价格/数量/最小名义金额）" => "Order fails filters (price/qty/min notional)",
+        "下单被拒绝: " => "Order rejected: ",
+        "保证金不足" => "Insufficient margin",
+        "订单会立即触发（止盈止损价过于贴近市价）" => "Order would trigger immediately (stop too close to market)",
+        "订单方向与持仓方向冲突（ReduceOnly）" => "Side conflicts with position (ReduceOnly)",
+        "持仓方向与订单冲突（检查双向/单向持仓模式）" => "Position side conflict (check hedge/one-way mode)",
         "买入开多" => "Buy / Long",
         "卖出开空" => "Sell / Short",
         // ---- 订单表格 ----
@@ -143,7 +171,6 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "taker" => "taker",
         "市价平仓" => "Close",
         "平仓" => "Close",
-        "全杠杆" => "Max Lev",
         "多" => "Long",
         "空" => "Short",
         "标记价" => "Mark",
@@ -232,11 +259,6 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "解锁" => "Unlock",
         "设置主密码" => "Set Master Password",
         "配置 API 密钥" => "Configure API Key",
-        "第" => "Step",
-        "/2 步" => "/2",
-        "主密码用于加密本机保存的 API Key/Secret（Argon2id + AES-256-GCM）。忘记将无法恢复，需删除凭据库重新配置。" => {
-            "The master password encrypts your API Key/Secret locally (Argon2id + AES-256-GCM). It cannot be recovered if lost — you would need to reset the vault."
-        }
         "主密码（至少 8 位）" => "Master password (min 8 chars)",
         "再输一次" => "Confirm password",
         "继续" => "Continue",
@@ -289,16 +311,85 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "买" => "Buy",
         "卖" => "Sell",
         "滚轮缩放 · 拖动平移 · 双击回最新" => "Scroll to zoom · Drag to pan · Double-click to reset",
+        // ---- 使用说明页 ----
+        "快速开始" => "Quick Start",
+        "1. 在 testnet.binance.vision（现货）或 testnet.binancefuture.com（合约）用 GitHub 账号申请免费测试网 API Key" => {
+            "1. Get a free testnet API key with your GitHub account at testnet.binance.vision (spot) or testnet.binancefuture.com (futures)"
+        }
+        "2. 启动本程序，在配置页输入 API Key / Secret 并设置主密码（用于加密保存到本机）" => {
+            "2. Launch the app, enter your API Key / Secret on the setup screen and set a master password (encrypts them locally)"
+        }
+        "3. 默认即测试网模式（顶部金色 TESTNET 徽标），可查看行情、下单、撤单，放心演练" => {
+            "3. Testnet is the default (gold TESTNET badge on top) — browse markets, place and cancel orders freely"
+        }
+        "4. 切换实盘前请再三确认：实盘密钥来自 binance.com 的 API 管理，建议绑定 IP 白名单并只开启读取+交易权限" => {
+            "4. Before going live, double-check: live keys come from binance.com API Management; bind an IP whitelist and enable read + trade permissions only"
+        }
+        "页面导览" => "Pages",
+        "现货交易 / 期货交易" => "Spot / Futures",
+        "左右结构：左侧交易对列表（支持搜索与⭐自选置顶），中间 K 线与订单区，右侧盘口、成交明细与下单面板。两个市场各自记忆交易对、周期与表单。" => {
+            "Left to right: symbol list (search + star favorites pinned), chart and order tabs, then order book, recent trades and the order panel. Each market remembers its own symbol, interval and form."
+        }
+        "K 线图" => "Chart",
+        "滚轮缩放、按住拖动平移、双击回到最新。MA5/10/20/60 均线可在图上方开关；图上叠加当前挂单价、止损触发价与合约持仓开仓价。悬停显示十字光标与 OHLC 详情。" => {
+            "Scroll to zoom, drag to pan, double-click to snap to latest. Toggle MA5/10/20/60 above the chart; open orders, stop triggers and futures entry prices are overlaid. Hover for crosshair and OHLC details."
+        }
+        "下单面板" => "Order Panel",
+        "限价/市价/止损止盈；比例按钮按可用余额估算数量；提交前有确认弹窗（实盘红色警示）。价格与数量会按交易所过滤器自动量化。" => {
+            "Limit / market / stop-loss / take-profit; size buttons estimate from your available balance; every submit goes through a confirm dialog (red warning when live). Price and qty are auto-quantized to exchange filters."
+        }
+        "订单区" => "Orders",
+        "当前挂单可单笔撤销或一键撤销该交易对全部挂单；合约持仓支持一键市价平仓（走确认弹窗）。" => {
+            "Open orders can be canceled one by one or all at once per symbol; futures positions support one-click market close (with confirm dialog)."
+        }
+        "汇总现货资产、合约资金概况与当前持仓。" => "Aggregates spot balances, futures funds overview and current positions.",
+        "环境切换（测试网/实盘）、代理、端点覆盖、语言与主题、密钥管理。" => "Environment (testnet/live), proxy, endpoint overrides, language & theme, key management.",
+        "交易对与自选" => "Symbols & Favorites",
+        "左侧列表顶部搜索框实时过滤；输入 ⭐ 旁的星标可将交易对加入自选，自选排在列表最顶部" => {
+            "The search box filters the list live; click the star to add a symbol to favorites — favorites are pinned to the top"
+        }
+        "点击交易对名称旁的 ⓘ 按钮可查看其属性（精度、过滤器、支持的订单类型，合约还包含合约类型/保证金资产/上架时间等）" => {
+            "Click ⓘ next to a symbol to inspect its properties (precisions, filters, supported order types; futures also show contract type, margin asset, listing date, etc.)"
+        }
+        "自选按市场分别保存（现货与合约互不影响），持久化到本机配置" => {
+            "Favorites are saved per market (spot and futures independent) and persisted to the local config"
+        }
+        "网络与代理" => "Network & Proxy",
+        "程序直连 Binance；如需代理，在设置页启用并填写 http:// 或 socks5:// 地址（支持用户名密码），REST 与 WebSocket 全部生效" => {
+            "The app connects to Binance directly; enable a proxy in Settings with an http:// or socks5:// address (user:pass supported) — applies to both REST and WebSocket"
+        }
+        "有自建网关或反代时，可在设置页覆盖四个端点（现货/合约 × REST/WS）" => {
+            "With a self-hosted gateway or reverse proxy, override the four endpoints in Settings (spot/futures × REST/WS)"
+        }
+        "常见问题" => "Troubleshooting",
+        "提示 -2015 / 签名错误" => "Error -2015 / signature",
+        "检查 Key 是否用对环境（测试网与实盘互不通用）、是否绑定 IP 白名单、Secret 是否复制完整。" => {
+            "Check the key matches the environment (testnet and live keys are not interchangeable), the IP whitelist, and that the secret was copied in full."
+        }
+        "提示 -1021 时间戳偏差" => "Error -1021 timestamp",
+        "程序会自动与服务器校时并重试；若反复出现请检查系统时钟。" => {
+            "The app auto-syncs time with the server and retries; if it persists, check your system clock."
+        }
+        "行情显示未连接" => "Market shows disconnected",
+        "检查网络与代理设置；状态灯为红色时鼠标悬停可查看错误详情。" => {
+            "Check network and proxy settings; hover a red status dot for error details."
+        }
+        "忘了主密码" => "Forgot master password",
+        "在解锁页点「重置凭据库」删除本机加密文件后重新配置（密钥需重新输入）。" => {
+            "On the unlock screen click \"Reset Vault\" to delete the local encrypted file and start over (keys must be re-entered)."
+        }
+        "风险提示" => "Risk Disclosure",
+        "本工具仅供个人交易辅助与研究学习，不构成任何投资建议。加密货币交易风险极高，使用实盘交易产生的一切后果由使用者自行承担。请务必先在测试网完整演练后再考虑实盘。" => {
+            "This tool is for personal trading assistance and research only — not investment advice. Crypto trading is extremely risky; you bear all consequences of live trading. Fully rehearse on testnet before going live."
+        }
         // ---- 引擎 toast ----
         "请求超时，请检查网络/代理" => "Request timed out — check network/proxy",
         "未配置 API 密钥，请在设置中配置" => "No API key — configure one in Settings",
         "网络错误: " => "Network error: ",
         "响应解析失败: " => "Failed to parse response: ",
-        "触发限速保护，稍后自动恢复" => "Rate-limit protection engaged",
         "代理配置无效: " => "Invalid proxy config: ",
         "已撤销委托 #" => "Order canceled #",
         "已撤销 " => "Canceled all orders for ",
-        " 全部挂单" => "",
         "委托已提交 (#" => " order submitted (#",
         "已设为" => " set to ",
         "杠杆已设为" => "leverage set to ",
@@ -309,11 +400,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "现货账户: " => "Spot account: ",
         "合约账户: " => "Futures account: ",
         "加载K线失败: " => "Failed to load candles: ",
-        "下单被拒绝" => "Order rejected",
-        "价格已按最小变动量化" => "price quantized",
-        "数量已按步进量化" => "qty quantized",
         "价格/数量超出可表示范围，请检查输入" => "Price/qty out of representable range",
-        "数量过小（步进 " => "Qty too small (step ",
         "缺少 " => "Missing rules for ",
         " 交易规则（等待行情初始化）" => " (waiting for market init)",
         "已实现盈亏: " => "Realized PnL: ",

@@ -194,8 +194,10 @@ pub struct BnApp {
     /// 现货/期货页各自的持久状态
     pub spot: TradingPage,
     pub fut: TradingPage,
-    /// 已向引擎发送的订阅（market → (symbol, interval)），避免重复拉取 K 线
-    pub subscribed: [Option<(String, Interval)>; 2],
+    /// 引擎当前唯一的行情订阅（后订阅替换前订阅），用于去重
+    pub active_sub: Option<(Market, String, Interval)>,
+    /// 删除凭据库的两步确认（第一次点击进入待确认态）
+    pub vault_delete_armed: bool,
 }
 
 impl BnApp {
@@ -249,9 +251,10 @@ impl BnApp {
             confirm: None,
             settings: SettingsDraft::from_cfg(&cfg),
             spot: TradingPage::new(default_symbol.clone(), interval),
-            fut: TradingPage::new(default_symbol, interval),
+            fut: TradingPage::new(default_symbol.clone(), interval),
             // 引擎启动时已订阅现货默认交易对
-            subscribed: [Some((cfg.default_symbol.to_uppercase(), interval)), None],
+            active_sub: Some((Market::Spot, default_symbol, interval)),
+            vault_delete_armed: false,
         }
     }
 
@@ -312,11 +315,13 @@ impl BnApp {
         }
     }
 
-    /// 订阅行情（同交易对+周期不重复订阅）
+    /// 订阅行情（引擎只有一条行情流，后订阅替换前订阅，因此按"当前活跃订阅"去重；
+    /// 若按市场分别记录，切页返回时会误判为已订阅而漏发，行情将冻结）
     fn subscribe(&mut self, market: Market, symbol: String, interval: Interval) {
-        let same = self.subscribed[market as usize]
+        let same = self
+            .active_sub
             .as_ref()
-            .map(|(s, i)| *s == symbol && *i == interval)
+            .map(|(m, s, i)| *m == market && *s == symbol && *i == interval)
             .unwrap_or(false);
         if !same {
             self.state.send_cmd(Command::Subscribe {
@@ -324,7 +329,7 @@ impl BnApp {
                 symbol: symbol.clone(),
                 interval,
             });
-            self.subscribed[market as usize] = Some((symbol, interval));
+            self.active_sub = Some((market, symbol, interval));
         }
     }
 
@@ -529,9 +534,8 @@ impl BnApp {
                     .inner_margin(8.0),
             )
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| self.symbols_sidebar(ui));
+                // 列表自身用 show_rows 虚拟化滚动，外层不再包 ScrollArea
+                self.symbols_sidebar(ui);
             });
 
         egui::SidePanel::right("trade_panel")
@@ -661,16 +665,16 @@ impl BnApp {
         );
         ui.add_space(2.0);
 
-        let book = self.state.rules_of(self.market);
-        let favs = self.state.favorites(self.market);
         let filter = self.symbol_filter.trim().to_uppercase();
+        let favs_all = self.state.favorites(self.market);
         let mut switched: Option<String> = None;
         let mut toggled: Option<String> = None;
 
         // 自选区（置顶）
-        let favs: Vec<String> = favs
-            .into_iter()
+        let favs: Vec<String> = favs_all
+            .iter()
             .filter(|s| filter.is_empty() || s.contains(&filter))
+            .cloned()
             .collect();
         if !favs.is_empty() {
             theme::section(ui, crate::i18n::tr("⭐ 自选"));
@@ -680,28 +684,30 @@ impl BnApp {
             ui.add_space(2.0);
         }
 
-        // 全部交易对（过滤掉已展示的自选）
+        // 全部交易对：只借读规则簿、克隆过滤后的符号列表（字符串克隆成本远低于
+        // 整本规则簿深克隆）。列表用 show_rows 虚拟化——每帧只构造可见行的控件，
+        // 现货全量约 2600 个交易对也能流畅滚动，因此不再需要截断上限
+        let all_syms: Vec<String> = {
+            let rules = self.state.rules.read();
+            let book = &rules[self.market as usize];
+            book.symbols
+                .iter()
+                .filter(|s| filter.is_empty() || s.contains(&filter))
+                .filter(|s| !favs.contains(s))
+                .cloned()
+                .collect()
+        };
         theme::section(ui, crate::i18n::tr("全部"));
-        let mut count = 0;
-        for sym in &book.symbols {
-            if count >= 400 {
-                ui.label(
-                    egui::RichText::new(crate::i18n::tr("（仅显示前 400 个，请用搜索过滤）"))
-                        .size(10.5)
-                        .color(theme::cur().text_dim),
-                );
-                break;
-            }
-            if !filter.is_empty() && !sym.contains(&filter) {
-                continue;
-            }
-            if favs.contains(sym) {
-                continue;
-            }
-            count += 1;
-            symbol_row(ui, self, sym, false, &mut switched, &mut toggled);
-        }
-        if count == 0 && favs.is_empty() {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        const SYMBOL_ROW_H: f32 = 22.0;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show_rows(ui, SYMBOL_ROW_H, all_syms.len(), |ui, range| {
+                for i in range {
+                    symbol_row(ui, self, &all_syms[i], false, &mut switched, &mut toggled);
+                }
+            });
+        if all_syms.is_empty() && favs.is_empty() {
             ui.label(
                 egui::RichText::new(crate::i18n::tr("无匹配交易对"))
                     .size(12.0)
@@ -900,27 +906,32 @@ impl BnApp {
                     } else {
                         theme::cur().down
                     };
-                    let (word, testnet) = (
-                        if c.side == Side::Buy {
-                            "买入"
-                        } else {
-                            "卖出"
-                        },
-                        self.state.cfg.read().testnet,
-                    );
-                    ui.label(
-                        egui::RichText::new(if testnet {
-                            format!("【测试网】{word}确认")
-                        } else {
-                            format!("【实盘】{word}确认 · 真实资金！")
-                        })
-                        .strong()
-                        .color(if testnet {
-                            theme::cur().accent
-                        } else {
-                            theme::cur().err
-                        }),
-                    );
+                    let word = if c.side == Side::Buy {
+                        crate::i18n::tr("买入")
+                    } else {
+                        crate::i18n::tr("卖出")
+                    };
+                    let testnet = self.state.cfg.read().testnet;
+                    let header = if testnet {
+                        format!(
+                            "{}{}{}",
+                            crate::i18n::tr("【测试网】"),
+                            word,
+                            crate::i18n::tr("确认")
+                        )
+                    } else {
+                        format!(
+                            "{}{} · {}",
+                            crate::i18n::tr("【实盘】"),
+                            word,
+                            crate::i18n::tr("确认 · 真实资金！")
+                        )
+                    };
+                    ui.label(egui::RichText::new(header).strong().color(if testnet {
+                        theme::cur().accent
+                    } else {
+                        theme::cur().err
+                    }));
                     ui.separator();
                     egui::Grid::new("confirm_grid")
                         .num_columns(2)

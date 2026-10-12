@@ -9,10 +9,16 @@ use rust_decimal::Decimal;
 
 pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
     let (c, label) = match st {
-        ConnState::Connected => (theme::cur().up, "已连接".to_string()),
-        ConnState::Connecting => (theme::cur().accent, "连接中".to_string()),
-        ConnState::Disconnected => (Color32::from_rgb(90, 99, 112), "未连接".to_string()),
-        ConnState::Failed(e) => (theme::cur().err, format!("错误: {e}")),
+        ConnState::Connected => (theme::cur().up, crate::i18n::tr("已连接").to_string()),
+        ConnState::Connecting => (theme::cur().accent, crate::i18n::tr("连接中").to_string()),
+        ConnState::Disconnected => (
+            Color32::from_rgb(90, 99, 112),
+            crate::i18n::tr("未连接").to_string(),
+        ),
+        ConnState::Failed(e) => (
+            theme::cur().err,
+            format!("{}{e}", crate::i18n::tr("错误: ")),
+        ),
     };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
     let p = ui.painter();
@@ -32,8 +38,8 @@ pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
     );
 }
 
-/// 数字输入框：等宽字体 + 提示；返回当前合法解析值
-pub fn num_field(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str) -> Option<Decimal> {
+/// 数字输入框：等宽字体 + 提示
+pub fn num_field(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str) {
     egui::TextEdit::singleline(text)
         .id_salt(Id::new(id))
         .desired_width(120.0)
@@ -41,7 +47,6 @@ pub fn num_field(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str) -> 
         .text_color(theme::cur().text)
         .hint_text(hint)
         .show(ui);
-    parse_dec(text)
 }
 
 pub fn parse_dec(s: &str) -> Option<Decimal> {
@@ -112,7 +117,14 @@ pub fn fmt_compact(v: f64) -> String {
 pub fn draw_toasts(ctx: &egui::Context, state: &SharedState) {
     let toasts: Vec<Toast> = {
         let mut t = state.toasts.lock();
-        t.retain(|x| x.at.elapsed().as_secs_f64() < 5.0);
+        // 错误类保留更久：下单被拒/断线等提示 5 秒即消失极易错过
+        t.retain(|x| {
+            let ttl = match x.kind {
+                ToastKind::Err => 15.0,
+                _ => 5.0,
+            };
+            x.at.elapsed().as_secs_f64() < ttl
+        });
         t.clone()
     };
     if toasts.is_empty() {
@@ -196,5 +208,16 @@ mod tests {
         assert_eq!(fmt_compact(123_456_789.0), "1.23亿");
         assert_eq!(fmt_compact(34_500.0), "3.5万");
         assert_eq!(fmt_compact(123.0), "123");
+    }
+
+    #[test]
+    fn compact_formatting_english() {
+        // 保存并恢复语言：测试并行运行，compact_formatting 依赖默认 ZH
+        let saved = crate::i18n::lang();
+        crate::i18n::set_lang(crate::i18n::EN);
+        assert_eq!(fmt_compact(1_234_567_890.0), "1.23B");
+        assert_eq!(fmt_compact(34_500.0), "34.5K");
+        assert_eq!(fmt_compact(123.0), "123");
+        crate::i18n::set_lang(saved);
     }
 }

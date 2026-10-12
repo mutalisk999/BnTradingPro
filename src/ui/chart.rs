@@ -45,10 +45,9 @@ pub struct Overlay {
 
 pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = app.state.clone();
-    let dp = state
-        .rule_of(app.market, &app.symbol)
-        .map(|r| r.price_dp())
-        .unwrap_or(2);
+    let dp = state.with_rule(app.market, &app.symbol, |r| {
+        r.map(|x| x.price_dp()).unwrap_or(2)
+    });
 
     // 头部信息：24h 统计（合约附标记价/资金费率）
     let (tick, mark) = {
@@ -158,28 +157,25 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         }
     }
 
-    let md_guard = state.md.lock();
-    let Some(md) = md_guard.get(app.market, &app.symbol) else {
-        widgets_placeholder(ui, ui.max_rect(), "加载行情中…");
-        return;
+    // 短暂持锁克隆所需数据后立即释放：md 是全局行情锁（depth/ticker/kline 每条
+    // WS 消息都要写），不能在整段图表绘制期间持有，否则拖动/悬停重绘会饿死行情写入
+    let (klines, interval) = {
+        let md = state.md.lock();
+        let Some(md) = md.get(app.market, &app.symbol) else {
+            widgets::placeholder(ui, ui.max_rect(), crate::i18n::tr("加载行情中…"));
+            return;
+        };
+        (md.klines.clone(), md.interval)
     };
-    let interval = md.interval;
-    let klines = &md.klines;
     if klines.is_empty() {
-        widgets_placeholder(ui, ui.max_rect(), "暂无K线数据（等待加载或检查网络/代理）");
+        widgets::placeholder(
+            ui,
+            ui.max_rect(),
+            crate::i18n::tr("暂无K线数据（等待加载或检查网络/代理）"),
+        );
         return;
     }
-    draw(ui, app, klines, interval, dp, &overlays);
-}
-
-fn widgets_placeholder(ui: &mut egui::Ui, rect: Rect, text: &str) {
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        text,
-        FontId::proportional(15.0),
-        theme::cur().text_dim,
-    );
+    draw(ui, app, &klines, interval, dp, &overlays);
 }
 
 fn f64_of(d: &Decimal) -> f64 {
