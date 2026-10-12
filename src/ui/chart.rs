@@ -151,7 +151,9 @@ fn draw(
     dp: u32,
     overlays: &[Overlay],
 ) {
-    let rect = ui.max_rect();
+    // 取光标之后的剩余矩形：max_rect 会把全高控件分配在工具行之下，
+    // 响应矩形向下溢出面板、抢走下方订单区的点击/拖拽
+    let rect = ui.available_rect_before_wrap();
     let (resp, painter) = ui.allocate_painter(rect.size(), Sense::click_and_drag());
     let plot = resp.rect.shrink(4.0);
     let t = theme::cur();
@@ -535,10 +537,10 @@ fn draw(
         }
     }
 
-    // 底部操作提示
+    // 操作提示放右上角：底部是时间轴标签区，放左下会与时间刻度重叠
     painter.text(
-        Pos2::new(plot.left() + 8.0, plot.bottom() - 6.0),
-        Align2::LEFT_BOTTOM,
+        Pos2::new(plot.left() + chart_w - 8.0, plot.top() + 8.0),
+        Align2::RIGHT_TOP,
         crate::i18n::tr("滚轮缩放 · 拖动平移 · 双击回最新"),
         FontId::proportional(10.5),
         theme::cur().text_dim.gamma_multiply(0.8),

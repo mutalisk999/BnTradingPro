@@ -573,6 +573,20 @@ impl BnApp {
                 });
             });
 
+        // 底部订单区（顶层面板，横贯全宽）
+        egui::Panel::bottom("orders_panel")
+            .resizable(true)
+            .default_size(240.0)
+            .min_size(120.0)
+            .max_size(500.0)
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::cur().panel)
+                    .inner_margin(8.0),
+            )
+            .show(ui, |ui| self.sub_tabs(ui));
+
+        // 中央：页头 + 图表
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::default()
@@ -582,30 +596,10 @@ impl BnApp {
             .show(ui, |ui| {
                 self.page_header(ui);
                 ui.add_space(2.0);
-
-                egui::Panel::bottom("orders_panel")
-                    .resizable(true)
-                    .default_size(240.0)
-                    .min_size(120.0)
-                    .max_size(500.0)
-                    .frame(
-                        egui::Frame::default()
-                            .fill(theme::cur().panel)
-                            .inner_margin(8.0),
-                    )
-                    .show(ui, |ui| self.sub_tabs(ui));
-
-                egui::CentralPanel::default()
-                    .frame(
-                        egui::Frame::default()
-                            .fill(theme::cur().bg)
-                            .inner_margin(0.0),
-                    )
-                    .show(ui, |ui| chart::show(self, ui));
+                chart::show(self, ui);
             });
     }
 
-    /// 页头：交易对 / 属性ⓘ / 周期 / 最新价
     fn page_header(&mut self, ui: &mut egui::Ui) {
         let state = self.state.clone();
         let dp = state
@@ -620,7 +614,8 @@ impl BnApp {
             .unwrap_or((String::new(), String::new()));
 
         // 第一行：交易对 | 最新价/涨跌 | 周期直选按钮
-        ui.horizontal(|ui| {
+        // wrapped：窄窗口时周期按钮换行而不是被裁掉
+        ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new(self.symbol.clone()).strong().size(16.5));
             ui.separator();
             let tick = state
@@ -666,22 +661,26 @@ impl BnApp {
             }
         });
 
-        // 第二行：24h OHLC / 交易量 / 交易额 /（合约）资金费率
-        ui.horizontal(|ui| {
+        // 第二行：24h OHLC / 交易量 / 交易额 /（合约）资金费率（wrapped 防窄窗截断）
+        ui.horizontal_wrapped(|ui| {
             let tick = state
                 .md
                 .lock()
                 .get(self.market, &self.symbol)
                 .and_then(|md| md.ticker.clone());
             if let Some(t) = tick {
+                // Extend：值标签不在数字内部断行，horizontal_wrapped 会把整个标签挪到下一行
+                let ext = |rt: egui::RichText| {
+                    egui::Label::new(rt).wrap_mode(egui::TextWrapMode::Extend)
+                };
                 let stat = |ui: &mut egui::Ui, label: &str, value: String, color: egui::Color32| {
-                    ui.label(theme::card_label(label));
-                    ui.label(
+                    ui.add(ext(theme::card_label(label)));
+                    ui.add(ext(
                         egui::RichText::new(value)
                             .monospace()
                             .size(12.0)
                             .color(color),
-                    );
+                    ));
                     ui.add_space(4.0);
                 };
                 let o = widgets::fmt_thousands(t.open_price.to_string().parse().unwrap_or(0.0), dp);
@@ -740,13 +739,19 @@ impl BnApp {
                         theme::cur().text_dim
                     };
                     ui.separator();
-                    ui.label(theme::card_label(crate::i18n::tr("资金费率")));
-                    ui.label(
-                        egui::RichText::new(format!("{rf:+.4}%"))
-                            .monospace()
-                            .size(12.0)
-                            .strong()
-                            .color(color),
+                    ui.add(
+                        egui::Label::new(theme::card_label(crate::i18n::tr("资金费率")))
+                            .wrap_mode(egui::TextWrapMode::Extend),
+                    );
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(format!("{rf:+.4}%"))
+                                .monospace()
+                                .size(12.0)
+                                .strong()
+                                .color(color),
+                        )
+                        .wrap_mode(egui::TextWrapMode::Extend),
                     );
                 }
             }
@@ -1065,6 +1070,13 @@ impl eframe::App for BnApp {
                 });
                 self.applied_lang = cfg.lang.clone();
             }
+        }
+        // 开发辅助：BTP_DEMO=1 跳过解锁直接进主界面，便于无凭据调试/截图（仅 debug 构建编译）
+        #[cfg(debug_assertions)]
+        if self.phase != Phase::Main
+            && std::env::var("BTP_DEMO").ok().as_deref() == Some("1")
+        {
+            self.phase = Phase::Main;
         }
         match self.phase {
             Phase::Main => self.main_ui(ui),

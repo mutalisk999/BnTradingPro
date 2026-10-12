@@ -67,7 +67,8 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     let max_cum = ask_total.max(bid_total).max(0.000001);
 
     let row_h = 18.0;
-    let w = ui.available_width();
+    // egui 的滚动条悬浮在内容上层，行宽要主动让出滚动条宽度，否则数量列被压住
+    let w = ui.available_width() - 10.0;
 
     // 卖盘（高→低）
     for (i, a) in ask_show.iter().enumerate() {
