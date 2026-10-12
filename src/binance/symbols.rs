@@ -4,7 +4,9 @@ use rust_decimal::Decimal;
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// 字段集合刻意完整（含当前 UI 未展示的合约属性），供 ⓘ 弹层与后续功能使用
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SymbolRules {
     pub symbol: String,
     pub base: String,

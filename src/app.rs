@@ -7,7 +7,6 @@ use crate::engine::state::SharedState;
 use crate::engine::{Command, Engine};
 use crate::security::vault;
 use crate::ui::{chart, orders, settings, theme, trade, unlock, widgets};
-use chrono::TimeZone;
 use eframe::egui;
 use std::sync::Arc;
 use std::time::Duration;
@@ -183,7 +182,6 @@ pub struct BnApp {
     pub symbol: String,
     pub interval: Interval,
     pub symbol_filter: String,
-    pub symbol_info_open: bool,
     pub form: trade::OrderForm,
     pub chart: chart::ChartState,
     pub leverage_input: String,
@@ -245,7 +243,6 @@ impl BnApp {
             symbol: default_symbol.clone(),
             interval,
             symbol_filter: String::new(),
-            symbol_info_open: false,
             form: trade::OrderForm::default(),
             chart: chart::ChartState::default(),
             leverage_input: String::new(),
@@ -267,7 +264,6 @@ impl BnApp {
         if self.tab == tab {
             return;
         }
-        self.symbol_info_open = false;
         self.save_active_page();
         self.tab = tab;
         self.load_active_page();
@@ -611,40 +607,33 @@ impl BnApp {
 
     /// 页头：交易对 / 属性ⓘ / 周期 / 最新价
     fn page_header(&mut self, ui: &mut egui::Ui) {
+        let state = self.state.clone();
+        let dp = state
+            .with_rule(self.market, &self.symbol, |r| {
+                r.map(|x| x.price_dp() as usize)
+            })
+            .unwrap_or(2);
+        let (base, quote) = state
+            .with_rule(self.market, &self.symbol, |r| {
+                r.map(|x| (x.base.clone(), x.quote.clone()))
+            })
+            .unwrap_or((String::new(), String::new()));
+
+        // 第一行：交易对 | 最新价/涨跌 | 周期直选按钮
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(self.symbol.clone()).strong().size(16.5));
-            self.symbol_info(ui);
-            ui.add_space(4.0);
-
-            // 周期
-            egui::ComboBox::from_id_salt("interval_cb")
-                .selected_text(egui::RichText::new(self.interval.label()).strong())
-                .width(64.0)
-                .show_ui(ui, |ui| {
-                    for iv in Interval::all() {
-                        if ui
-                            .selectable_label(self.interval == iv, iv.label())
-                            .clicked()
-                        {
-                            self.switch_interval(iv);
-                        }
-                    }
-                });
-
             ui.separator();
-            // 最新价
-            let tick = self
-                .state
+            let tick = state
                 .md
                 .lock()
                 .get(self.market, &self.symbol)
                 .and_then(|md| md.ticker.clone());
-            if let Some(t) = tick {
+            if let Some(t) = &tick {
                 let chg: f64 = t.price_change_percent.to_string().parse().unwrap_or(0.0);
                 let c = theme::signed_color(chg);
                 let px: f64 = t.last_price.to_string().parse().unwrap_or(0.0);
                 ui.label(
-                    egui::RichText::new(widgets::fmt_thousands(px, 2))
+                    egui::RichText::new(widgets::fmt_thousands(px, dp))
                         .monospace()
                         .strong()
                         .size(21.0)
@@ -656,16 +645,115 @@ impl BnApp {
                         .size(13.5)
                         .color(c),
                 );
-            } else {
-                ui.label(
-                    egui::RichText::new(crate::i18n::tr("获取行情中…"))
-                        .color(theme::cur().text_dim),
-                );
+            }
+            ui.separator();
+            // 周期直选（无需下拉）
+            for iv in Interval::all() {
+                let active = self.interval == iv;
+                let txt = if active {
+                    egui::RichText::new(iv.label())
+                        .size(12.5)
+                        .strong()
+                        .color(theme::cur().accent)
+                } else {
+                    egui::RichText::new(iv.label())
+                        .size(12.0)
+                        .color(theme::cur().text_dim)
+                };
+                if ui.selectable_label(active, txt).clicked() {
+                    self.switch_interval(iv);
+                }
             }
         });
+
+        // 第二行：24h OHLC / 交易量 / 交易额 /（合约）资金费率
+        ui.horizontal(|ui| {
+            let tick = state
+                .md
+                .lock()
+                .get(self.market, &self.symbol)
+                .and_then(|md| md.ticker.clone());
+            if let Some(t) = tick {
+                let stat = |ui: &mut egui::Ui, label: &str, value: String, color: egui::Color32| {
+                    ui.label(theme::card_label(label));
+                    ui.label(
+                        egui::RichText::new(value)
+                            .monospace()
+                            .size(12.0)
+                            .color(color),
+                    );
+                    ui.add_space(4.0);
+                };
+                let o = widgets::fmt_thousands(t.open_price.to_string().parse().unwrap_or(0.0), dp);
+                let h = widgets::fmt_thousands(t.high_price.to_string().parse().unwrap_or(0.0), dp);
+                let l = widgets::fmt_thousands(t.low_price.to_string().parse().unwrap_or(0.0), dp);
+                let c = widgets::fmt_thousands(t.last_price.to_string().parse().unwrap_or(0.0), dp);
+                stat(ui, crate::i18n::tr("24h 开"), o, theme::cur().text);
+                stat(ui, crate::i18n::tr("24h 高"), h, theme::cur().up);
+                stat(ui, crate::i18n::tr("24h 低"), l, theme::cur().down);
+                stat(ui, crate::i18n::tr("24h 收"), c, theme::cur().text);
+                ui.separator();
+                let base_txt = if base.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {base}")
+                };
+                let quote_txt = if quote.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {quote}")
+                };
+                stat(
+                    ui,
+                    crate::i18n::tr("24h 量"),
+                    format!(
+                        "{}{base_txt}",
+                        widgets::fmt_compact(t.volume.to_string().parse().unwrap_or(0.0))
+                    ),
+                    theme::cur().text,
+                );
+                stat(
+                    ui,
+                    crate::i18n::tr("24h 额"),
+                    format!(
+                        "{}{quote_txt}",
+                        widgets::fmt_compact(t.quote_volume.to_string().parse().unwrap_or(0.0))
+                    ),
+                    theme::cur().text,
+                );
+            }
+            // 合约：资金费率（正/负着色 + 显式符号）
+            if self.market == crate::binance::Market::UmFutures {
+                let funding = state
+                    .md
+                    .lock()
+                    .get(self.market, &self.symbol)
+                    .and_then(|md| md.mark.clone())
+                    .and_then(|m| m.funding_rate);
+                if let Some(r) = funding {
+                    let rf = r.to_string().parse::<f64>().unwrap_or(0.0);
+                    let color = if rf > 0.0 {
+                        theme::cur().up
+                    } else if rf < 0.0 {
+                        theme::cur().down
+                    } else {
+                        theme::cur().text_dim
+                    };
+                    ui.separator();
+                    ui.label(theme::card_label(crate::i18n::tr("资金费率")));
+                    ui.label(
+                        egui::RichText::new(format!("{rf:+.4}%"))
+                            .monospace()
+                            .size(12.0)
+                            .strong()
+                            .color(color),
+                    );
+                }
+            }
+        });
+        ui.separator();
     }
 
-    /// 左侧边栏：搜索 + 自选置顶 + 全部交易对
     fn symbols_sidebar(&mut self, ui: &mut egui::Ui) {
         ui.add(
             egui::TextEdit::singleline(&mut self.symbol_filter)
@@ -746,133 +834,6 @@ impl BnApp {
         }
         if let Some(sym) = switched {
             self.switch_symbol(sym);
-        }
-    }
-
-    /// 交易对属性弹层（ⓘ）
-    fn symbol_info(&mut self, ui: &mut egui::Ui) {
-        let btn = ui
-            .small_button(egui::RichText::new("ⓘ").size(12.0))
-            .on_hover_text(crate::i18n::tr("交易对属性"));
-        if btn.clicked() {
-            self.symbol_info_open = !self.symbol_info_open;
-        }
-        if !self.symbol_info_open {
-            return;
-        }
-        let Some(r) = self.state.rule_of(self.market, &self.symbol) else {
-            self.symbol_info_open = false;
-            return;
-        };
-        let mut popup_rect = egui::Rect::NOTHING;
-        let pos = egui::Pos2::new(btn.rect.left(), btn.rect.bottom() + 4.0);
-        egui::Area::new(egui::Id::new("symbol_info_popup"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(pos)
-            .show(ui.ctx(), |ui| {
-                egui::Frame::default()
-                    .fill(theme::cur().panel2)
-                    .stroke(egui::Stroke::new(1.0_f32, theme::cur().border))
-                    .corner_radius(6)
-                    .inner_margin(egui::Margin::same(10))
-                    .show(ui, |ui| {
-                        ui.set_min_width(300.0);
-                        ui.label(
-                            egui::RichText::new(crate::i18n::tr("交易对属性"))
-                                .strong()
-                                .size(13.5),
-                        );
-                        ui.separator();
-                        egui::Grid::new("symbol_info_grid")
-                            .num_columns(2)
-                            .spacing([14.0, 3.0])
-                            .show(ui, |ui| {
-                                let row = |ui: &mut egui::Ui, k: &str, v: String| {
-                                    ui.label(theme::card_label(k));
-                                    ui.label(egui::RichText::new(v).monospace().size(12.0));
-                                    ui.end_row();
-                                };
-                                row(ui, crate::i18n::tr("状态"), r.status.clone());
-                                row(ui, crate::i18n::tr("基础资产"), r.base.clone());
-                                row(ui, crate::i18n::tr("计价资产"), r.quote.clone());
-                                if self.market == crate::binance::Market::UmFutures {
-                                    row(ui, crate::i18n::tr("合约类型"), r.contract_type.clone());
-                                    row(ui, crate::i18n::tr("保证金资产"), r.margin_asset.clone());
-                                    row(ui, crate::i18n::tr("标的类型"), {
-                                        let subs = r.underlying_sub_types.join("/");
-                                        if r.underlying_type.is_empty() {
-                                            subs
-                                        } else if subs.is_empty() {
-                                            r.underlying_type.clone()
-                                        } else {
-                                            format!("{} · {}", r.underlying_type, subs)
-                                        }
-                                    });
-                                    row(ui, crate::i18n::tr("上架时间"), {
-                                        if r.onboard_date > 0 {
-                                            chrono::Local
-                                                .timestamp_millis_opt(r.onboard_date)
-                                                .single()
-                                                .map(|t| t.format("%Y-%m-%d").to_string())
-                                                .unwrap_or_default()
-                                        } else {
-                                            "—".into()
-                                        }
-                                    });
-                                }
-                                row(
-                                    ui,
-                                    crate::i18n::tr("价格精度"),
-                                    r.price_precision.to_string(),
-                                );
-                                row(ui, crate::i18n::tr("数量精度"), r.qty_precision.to_string());
-                                row(
-                                    ui,
-                                    crate::i18n::tr("最小变动"),
-                                    r.tick.normalize().to_string(),
-                                );
-                                row(
-                                    ui,
-                                    crate::i18n::tr("最小数量"),
-                                    r.min_qty.normalize().to_string(),
-                                );
-                                if r.max_qty > rust_decimal::Decimal::ZERO {
-                                    row(
-                                        ui,
-                                        crate::i18n::tr("最大数量"),
-                                        r.max_qty.normalize().to_string(),
-                                    );
-                                }
-                                row(
-                                    ui,
-                                    crate::i18n::tr("最小名义金额"),
-                                    r.min_notional.normalize().to_string(),
-                                );
-                                if !r.order_types.is_empty() {
-                                    row(
-                                        ui,
-                                        crate::i18n::tr("支持订单类型"),
-                                        r.order_types.join(", "),
-                                    );
-                                }
-                                if !r.permissions.is_empty() {
-                                    row(ui, crate::i18n::tr("权限"), r.permissions.join(", "));
-                                }
-                            });
-                    });
-                popup_rect = ui.min_rect();
-            });
-        // 点击弹层外关闭
-        if let Some(click_pos) = ui.ctx().input(|i| {
-            if i.pointer.any_click() {
-                i.pointer.interact_pos()
-            } else {
-                None
-            }
-        }) {
-            if !popup_rect.contains(click_pos) && !btn.rect.contains(click_pos) {
-                self.symbol_info_open = false;
-            }
         }
     }
 

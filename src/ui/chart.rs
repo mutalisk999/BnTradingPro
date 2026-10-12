@@ -49,17 +49,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         r.map(|x| x.price_dp()).unwrap_or(2)
     });
 
-    // 头部信息：24h 统计（合约附标记价/资金费率）
-    let (tick, mark) = {
-        let md = state.md.lock();
-        let t = md
-            .get(app.market, &app.symbol)
-            .and_then(|m| m.ticker.clone());
-        let m = md.get(app.market, &app.symbol).and_then(|m| m.mark.clone());
-        (t, m)
-    };
-
-    // ---------- 头部工具行：MA 开关 + 24h 统计 ----------
+    // ---------- 头部工具行：MA 开关（24h 统计已移至页头） ----------
     ui.horizontal(|ui| {
         for (i, &period) in MA_PERIODS.iter().enumerate() {
             let label = egui::RichText::new(format!("MA{period}"))
@@ -74,39 +64,6 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 app.chart.ma[i] = !app.chart.ma[i];
             }
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if let Some(t) = &tick {
-                let vol_txt = widgets::fmt_compact(f64_of(&t.quote_volume));
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} {} · {} {} · {} {}",
-                        crate::i18n::tr("24h 高"),
-                        widgets::fmt_dec(&t.high_price),
-                        crate::i18n::tr("24h 低"),
-                        widgets::fmt_dec(&t.low_price),
-                        crate::i18n::tr("· 额"),
-                        vol_txt
-                    ))
-                    .size(11.0)
-                    .color(theme::cur().text_dim),
-                );
-            }
-            if app.market == crate::binance::Market::UmFutures {
-                if let Some(m) = &mark {
-                    if let Some(r) = &m.funding_rate {
-                        let rf = f64_of(r);
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} {rf:+.4}%",
-                                crate::i18n::tr("资金费率")
-                            ))
-                            .size(11.0)
-                            .color(theme::cur().accent),
-                        );
-                    }
-                }
-            }
-        });
     });
     ui.separator();
 

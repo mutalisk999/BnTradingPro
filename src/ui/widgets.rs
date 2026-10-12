@@ -160,11 +160,6 @@ pub fn draw_toasts(ctx: &egui::Context, state: &SharedState) {
         });
 }
 
-/// 去除多余的十进制尾零后展示
-pub fn fmt_dec(d: &Decimal) -> String {
-    d.normalize().to_string()
-}
-
 pub fn fmt_time(ms: i64) -> String {
     match Local.timestamp_millis_opt(ms).single() {
         Some(t) => t.format("%m-%d %H:%M:%S").to_string(),

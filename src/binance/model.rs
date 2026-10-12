@@ -24,6 +24,9 @@ pub struct Ticker24 {
     pub price_change_percent: Decimal,
     #[serde(rename = "quoteVolume", alias = "q", deserialize_with = "dec")]
     pub quote_volume: Decimal,
+    /// 24h 基础资产成交量（REST "volume" / WS "v"）
+    #[serde(rename = "volume", alias = "v", deserialize_with = "dec")]
+    pub volume: Decimal,
 }
 
 /// 盘口档位
@@ -390,6 +393,7 @@ mod tests {
         assert_eq!(t.last_price.to_string(), "96000.50");
         assert_eq!(t.price_change_percent.to_string(), "0.10");
         assert_eq!(t.quote_volume.to_string(), "123.45");
+        assert_eq!(t.volume.to_string(), "1");
     }
 
     #[test]
