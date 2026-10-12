@@ -121,7 +121,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             } else {
                 theme::cur().btn_idle
             })
-            .rounding(5.0);
+            .corner_radius(5);
         if cols[0]
             .add_sized([cols[0].available_width(), 36.0], buy)
             .clicked()
@@ -147,7 +147,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             } else {
                 theme::cur().btn_idle
             })
-            .rounding(5.0);
+            .corner_radius(5);
         if cols[1]
             .add_sized([cols[1].available_width(), 36.0], sell)
             .clicked()
@@ -432,7 +432,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             .color(egui::Color32::WHITE),
     )
     .fill(color)
-    .rounding(5.0)
+    .corner_radius(5)
     .min_size(egui::vec2(ui.available_width(), 38.0));
     let resp = ui.add_enabled(!busy && state.has_creds(), btn);
     if busy {

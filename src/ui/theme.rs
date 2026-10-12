@@ -123,8 +123,8 @@ pub fn badge(ui: &mut egui::Ui, text: &str, fg: Color32) {
     egui::Frame::default()
         .fill(fg.gamma_multiply(0.22))
         .stroke(Stroke::new(1.0_f32, fg.gamma_multiply(0.85)))
-        .rounding(3.0)
-        .inner_margin(egui::Margin::symmetric(7.0, 2.0))
+        .corner_radius(3)
+        .inner_margin(egui::Margin::symmetric(7, 2))
         .show(ui, |ui| {
             ui.label(txt.color(fg));
         });
@@ -138,9 +138,10 @@ fn load_font(fonts: &mut FontDefinitions, key: &str, candidates: &[&str]) -> boo
         let path = std::path::PathBuf::from("C:\\Windows\\Fonts").join(name);
         if let Ok(bytes) = std::fs::read(&path) {
             tracing::info!("load font {}: {}", key, path.display());
-            fonts
-                .font_data
-                .insert(key.to_owned(), FontData::from_owned(bytes));
+            fonts.font_data.insert(
+                key.to_owned(),
+                std::sync::Arc::new(FontData::from_owned(bytes)),
+            );
             return true;
         }
     }
@@ -208,8 +209,8 @@ pub fn apply(ctx: &egui::Context) {
     } else {
         Color32::from_rgb(24, 30, 40)
     };
-    v.window_rounding = 6.0.into();
-    v.menu_rounding = 4.0.into();
+    v.window_corner_radius = 6.into();
+    v.menu_corner_radius = 4.into();
     v.window_stroke = Stroke::new(1.0_f32, t.border);
     v.window_shadow = egui::Shadow::NONE;
     v.popup_shadow = egui::Shadow::NONE;
@@ -238,24 +239,24 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.noninteractive.bg_fill = t.panel2;
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, t.border);
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, t.text);
-    v.widgets.noninteractive.rounding = 4.0.into();
+    v.widgets.noninteractive.corner_radius = 4.into();
 
     v.widgets.inactive.bg_fill = widget_bg;
     v.widgets.inactive.weak_bg_fill = widget_bg;
     v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, t.border);
     v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, t.text_dim);
-    v.widgets.inactive.rounding = 4.0.into();
+    v.widgets.inactive.corner_radius = 4.into();
 
     v.widgets.hovered.bg_fill = hover_bg;
     v.widgets.hovered.weak_bg_fill = hover_bg;
     v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, hover_border);
     v.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, t.text);
-    v.widgets.hovered.rounding = 4.0.into();
+    v.widgets.hovered.corner_radius = 4.into();
 
     v.widgets.active.bg_fill = active_bg;
     v.widgets.active.weak_bg_fill = active_bg;
     v.widgets.active.fg_stroke = Stroke::new(1.0_f32, t.text);
-    v.widgets.active.rounding = 4.0.into();
+    v.widgets.active.corner_radius = 4.into();
 
     v.selection.bg_fill = if is_light() {
         Color32::from_rgb(191, 214, 241)
@@ -267,7 +268,7 @@ pub fn apply(ctx: &egui::Context) {
 
     style.spacing.item_spacing = egui::vec2(8.0, 7.0);
     style.spacing.button_padding = egui::vec2(12.0, 5.0);
-    style.spacing.menu_margin = egui::Margin::symmetric(6.0, 4.0);
+    style.spacing.menu_margin = egui::Margin::symmetric(6, 4);
     style.spacing.combo_width = 90.0;
     style.text_styles = [
         (egui::TextStyle::Heading, egui::FontId::proportional(19.0)),
@@ -277,7 +278,10 @@ pub fn apply(ctx: &egui::Context) {
         (egui::TextStyle::Monospace, egui::FontId::monospace(13.5)),
     ]
     .into();
-    ctx.set_style(style);
+    // 0.35+ 按主题分别持有 Style；本应用自带明暗配色（theme::cur()），两个主题统一用同一份
+    let (dark, light) = (style.clone(), style);
+    ctx.set_style_of(egui::Theme::Dark, dark);
+    ctx.set_style_of(egui::Theme::Light, light);
 }
 
 // ---------- 组件辅助 ----------
@@ -290,9 +294,9 @@ pub fn card<R>(
     egui::Frame::default()
         .fill(cur().card)
         .stroke(Stroke::new(1.0_f32, cur().border))
-        .rounding(6.0)
-        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-        .outer_margin(egui::Margin::symmetric(0.0, 4.0))
+        .corner_radius(6)
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .outer_margin(egui::Margin::symmetric(0, 4))
         .show(ui, add_contents)
 }
 
@@ -313,7 +317,7 @@ pub fn nav_tab(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
         } else {
             Stroke::NONE
         })
-        .rounding(3.0)
+        .corner_radius(3)
         .min_size(egui::vec2(0.0, 28.0));
     ui.add(btn).clicked()
 }

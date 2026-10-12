@@ -10,11 +10,12 @@ use crate::ui::theme;
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Stroke};
 
-pub fn show(app: &mut BnApp, ctx: &egui::Context) {
-    // ---------- 背景：深色 + 品牌光晕 ----------
+pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone(); // Context 克隆廉价（Arc）；后面还要可变借用 ui
+                                // ---------- 背景：深色 + 品牌光晕 ----------
     egui::CentralPanel::default()
         .frame(egui::Frame::default().fill(theme::cur().bg))
-        .show(ctx, |ui| {
+        .show(ui, |ui| {
             let rect = ui.max_rect();
             let p = ui.painter();
             p.circle_filled(
@@ -54,12 +55,12 @@ pub fn show(app: &mut BnApp, ctx: &egui::Context) {
     // ---------- 居中认证卡片 ----------
     egui::Area::new(egui::Id::new("auth_card"))
         .anchor(Align2::CENTER_CENTER, [0.0, 26.0])
-        .show(ctx, |ui| {
+        .show(&ctx, |ui| {
             egui::Frame::default()
                 .fill(theme::cur().card)
                 .stroke(Stroke::new(1.0_f32, theme::cur().border))
-                .rounding(8.0)
-                .inner_margin(egui::Margin::same(26.0))
+                .corner_radius(8)
+                .inner_margin(egui::Margin::same(26))
                 .show(ui, |ui| {
                     // 宽度必须 min/max 一致地固定：锚定居中的 Area 有 sizing pass，
                     // 内容宽度不定（无限宽输入框/不换行长标签）会让两趟算出的
@@ -78,7 +79,7 @@ pub fn show(app: &mut BnApp, ctx: &egui::Context) {
                     }
                 });
         });
-    draw_env_hint(ctx, app);
+    draw_env_hint(&ctx, app);
 }
 
 fn card_header(ui: &mut egui::Ui, title: &str) {
@@ -121,7 +122,7 @@ fn primary_btn(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
             .color(Color32::from_rgb(28, 22, 2)),
     )
     .fill(theme::cur().accent)
-    .rounding(5.0)
+    .corner_radius(5)
     .min_size(egui::vec2(ui.available_width(), 34.0));
     ui.add_enabled(enabled, btn).clicked()
 }

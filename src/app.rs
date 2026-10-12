@@ -370,37 +370,37 @@ impl BnApp {
 
     // ---------- 布局 ----------
 
-    fn main_ui(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("top_bar")
+    fn main_ui(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("top_bar")
             .frame(
                 egui::Frame::default()
                     .fill(theme::cur().panel)
                     .stroke(egui::Stroke::new(1.0_f32, theme::cur().border))
-                    .inner_margin(egui::Margin::symmetric(14.0, 6.0)),
+                    .inner_margin(egui::Margin::symmetric(14, 6)),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 ui.set_min_height(40.0);
                 self.topbar(ui);
             });
 
         match self.tab {
-            Tab::Spot | Tab::Futures => self.trading_ui(ctx),
+            Tab::Spot | Tab::Futures => self.trading_ui(ui),
             Tab::Portfolio => {
-                egui::CentralPanel::default().show(ctx, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| crate::ui::assets::show(self, ui));
                 });
             }
             Tab::Settings => {
-                egui::CentralPanel::default().show(ctx, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| settings::show(self, ui));
                 });
             }
             Tab::Help => {
-                egui::CentralPanel::default().show(ctx, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| crate::ui::help::show(self, ui));
@@ -408,7 +408,7 @@ impl BnApp {
             }
         }
 
-        self.confirm_dialog(ctx);
+        self.confirm_dialog(ui.ctx());
     }
 
     /// 顶部导航：品牌 + 四大页签 + 连接状态
@@ -523,44 +523,47 @@ impl BnApp {
     }
 
     /// 交易页：左侧交易对列表 + 页头 + 图表 | 盘口+成交 | 下单面板 + 底部订单区
-    fn trading_ui(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("symbols_panel")
+    fn trading_ui(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::left("symbols_panel")
             .resizable(true)
-            .default_width(185.0)
-            .width_range(140.0..=320.0)
+            .default_size(185.0)
+            .min_size(140.0)
+            .max_size(320.0)
             .frame(
                 egui::Frame::default()
                     .fill(theme::cur().panel)
-                    .inner_margin(8.0),
+                    .inner_margin(8),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 // 列表自身用 show_rows 虚拟化滚动，外层不再包 ScrollArea
                 self.symbols_sidebar(ui);
             });
 
-        egui::SidePanel::right("trade_panel")
+        egui::Panel::right("trade_panel")
             .resizable(true)
-            .default_width(300.0)
-            .width_range(250.0..=420.0)
+            .default_size(300.0)
+            .min_size(250.0)
+            .max_size(420.0)
             .frame(
                 egui::Frame::default()
                     .fill(theme::cur().panel)
-                    .inner_margin(8.0),
+                    .inner_margin(8),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| trade::show(self, ui));
             });
 
-        egui::SidePanel::right("book_panel")
+        egui::Panel::right("book_panel")
             .resizable(true)
-            .default_width(230.0)
-            .width_range(180.0..=340.0)
+            .default_size(230.0)
+            .min_size(180.0)
+            .max_size(340.0)
             .frame(
                 egui::Frame::default()
                     .fill(theme::cur().panel)
-                    .inner_margin(8.0),
+                    .inner_margin(8),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     crate::ui::market::show_book(self, ui);
                     ui.add_space(8.0);
@@ -574,20 +577,21 @@ impl BnApp {
                     .fill(theme::cur().bg)
                     .inner_margin(8.0),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 self.page_header(ui);
                 ui.add_space(2.0);
 
-                egui::TopBottomPanel::bottom("orders_panel")
+                egui::Panel::bottom("orders_panel")
                     .resizable(true)
-                    .default_height(240.0)
-                    .height_range(120.0..=500.0)
+                    .default_size(240.0)
+                    .min_size(120.0)
+                    .max_size(500.0)
                     .frame(
                         egui::Frame::default()
                             .fill(theme::cur().panel)
                             .inner_margin(8.0),
                     )
-                    .show_inside(ui, |ui| self.sub_tabs(ui));
+                    .show(ui, |ui| self.sub_tabs(ui));
 
                 egui::CentralPanel::default()
                     .frame(
@@ -595,7 +599,7 @@ impl BnApp {
                             .fill(theme::cur().bg)
                             .inner_margin(0.0),
                     )
-                    .show_inside(ui, |ui| chart::show(self, ui));
+                    .show(ui, |ui| chart::show(self, ui));
             });
     }
 
@@ -711,7 +715,7 @@ impl BnApp {
                 for i in range {
                     let y0 = top + (i - start) as f32 * SYMBOL_ROW_H;
                     let rect = egui::Rect::from_x_y_ranges(x_range, y0..=(y0 + SYMBOL_ROW_H));
-                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |row_ui| {
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |row_ui| {
                         symbol_row(
                             row_ui,
                             self,
@@ -763,8 +767,8 @@ impl BnApp {
                 egui::Frame::default()
                     .fill(theme::cur().panel2)
                     .stroke(egui::Stroke::new(1.0_f32, theme::cur().border))
-                    .rounding(6.0)
-                    .inner_margin(egui::Margin::same(10.0))
+                    .corner_radius(6)
+                    .inner_margin(egui::Margin::same(10))
                     .show(ui, |ui| {
                         ui.set_min_width(300.0);
                         ui.label(
@@ -1025,7 +1029,7 @@ fn symbol_row(
                 egui::Color32::TRANSPARENT
             })
             .stroke(egui::Stroke::NONE)
-            .rounding(3.0)
+            .corner_radius(3)
             .min_size(egui::vec2(ui.available_width() - 26.0, 20.0));
         if ui
             .add(name_btn)
@@ -1044,7 +1048,7 @@ fn symbol_row(
             .add(
                 egui::Button::new(star_txt)
                     .fill(egui::Color32::TRANSPARENT)
-                    .rounding(3.0),
+                    .corner_radius(3),
             )
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(if is_fav {
@@ -1076,13 +1080,14 @@ fn status_dot_bare(ui: &mut egui::Ui, ok: bool) {
 }
 
 impl eframe::App for BnApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 主题/语言跟随配置（设置页或顶栏修改后即时生效）
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone(); // Context 内部是 Arc，克隆廉价；避免与 ui 的可变借用冲突
+                                    // 主题/语言跟随配置（设置页或顶栏修改后即时生效）
         {
             let cfg = self.state.cfg.read();
             if self.applied_theme != cfg.theme_mode {
                 theme::set_mode_str(&cfg.theme_mode);
-                theme::apply(ctx);
+                theme::apply(&ctx);
                 self.applied_theme = cfg.theme_mode.clone();
             }
             if self.applied_lang != cfg.lang {
@@ -1095,10 +1100,10 @@ impl eframe::App for BnApp {
             }
         }
         match self.phase {
-            Phase::Main => self.main_ui(ctx),
-            _ => unlock::show(self, ctx),
+            Phase::Main => self.main_ui(ui),
+            _ => unlock::show(self, ui),
         }
-        widgets::draw_toasts(ctx, &self.state);
+        widgets::draw_toasts(&ctx, &self.state);
         ctx.request_repaint_after(Duration::from_millis(400));
     }
 }

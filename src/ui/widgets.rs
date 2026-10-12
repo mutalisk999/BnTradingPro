@@ -147,8 +147,8 @@ pub fn draw_toasts(ctx: &egui::Context, state: &SharedState) {
                     egui::Frame::default()
                         .fill(theme::cur().panel2)
                         .stroke(Stroke::new(1.0_f32, fg.gamma_multiply(0.8)))
-                        .rounding(6.0)
-                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
+                        .corner_radius(6)
+                        .inner_margin(egui::Margin::symmetric(12, 9))
                         .show(ui, |ui| {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(egui::RichText::new(icon).color(fg).strong());

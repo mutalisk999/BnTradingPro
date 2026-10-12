@@ -5,9 +5,16 @@ edition = "2021"
 description = "Binance 现货/U本位合约专业交易终端（Rust + egui）"
 
 [dependencies]
-# GUI
-eframe = "0.29"
-egui_extras = "0.29"
+# GUI（显式选 glow 渲染器：0.36 默认 wgpu，纯 2D 无需且 wgpu-hal/dx12 在部分 Windows 工具链编不过）
+eframe = { version = "0.36", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "links",
+    "wayland",
+    "x11",
+] }
+egui_extras = { version = "0.36", default-features = false }
 
 # 异步运行时
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }

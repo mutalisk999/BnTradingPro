@@ -201,7 +201,7 @@ fn draw(
 
     // ---------- 交互 ----------
     if resp.hovered() {
-        let scroll = ui.input(|i| i.raw_scroll_delta).y;
+        let scroll = ui.input(|i| i.smooth_scroll_delta).y;
         if scroll.abs() > 0.5 {
             let f = (1.0 + scroll * 0.0015).clamp(0.6, 1.6);
             app.chart.bars_visible = (app.chart.bars_visible * f).clamp(20.0, 480.0);
@@ -548,6 +548,7 @@ fn draw(
                 Rect::from_min_size(pos, sz),
                 3.0,
                 Stroke::new(1.0_f32, theme::cur().border),
+                egui::StrokeKind::Inside,
             );
             painter.text(
                 pos + Vec2::new(8.0, 6.0),
