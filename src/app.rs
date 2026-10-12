@@ -36,7 +36,7 @@ impl Tab {
         match self {
             Tab::Spot => crate::i18n::tr("现货交易"),
             Tab::Futures => crate::i18n::tr("期货交易"),
-            Tab::Portfolio => crate::i18n::tr("Portfolio"),
+            Tab::Portfolio => crate::i18n::tr("资产总览"),
             Tab::Settings => crate::i18n::tr("设置"),
             Tab::Help => crate::i18n::tr("使用说明"),
         }
@@ -439,10 +439,13 @@ impl BnApp {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // 主题 / 语言快捷切换
-                let (theme_txt, lang_txt) = if theme::is_light() {
-                    ("🌙", "EN")
+                // 语言按钮显示"目标语言"，只随语言状态变，与主题无关
+                // （此前两个文字捆在同一个主题分支里，切主题时中/EN 会跟着翻转）
+                let theme_txt = if theme::is_light() { "🌙" } else { "☀" };
+                let lang_txt = if self.state.cfg.read().lang == "en" {
+                    "中"
                 } else {
-                    ("☀", "中")
+                    "EN"
                 };
                 if ui
                     .small_button(theme_txt)

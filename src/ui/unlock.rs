@@ -71,33 +71,19 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     egui::vec2(card_w, (avail.bottom() - card_top).max(60.0)),
                 )),
                 |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("auth_card_scroll")
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            let frame = egui::Frame::default()
-                                .fill(theme::cur().card)
-                                .stroke(Stroke::new(1.0_f32, theme::cur().border))
-                                .corner_radius(8)
-                                .inner_margin(egui::Margin::same(26))
-                                .show(ui, |ui| {
-                                    ui.set_width(card_w - 52.0);
-                                    match app.phase {
-                                        Phase::Unlock => card_header(ui, crate::i18n::tr("解锁")),
-                                        Phase::EnterKeys => {
-                                            card_header(ui, crate::i18n::tr("配置 API 密钥"))
-                                        }
-                                        Phase::Main => {}
-                                    }
-                                    ui.add_space(6.0);
-                                    match app.phase {
-                                        Phase::Unlock => unlock(app, ui),
-                                        Phase::EnterKeys => enter_keys(app, ui),
-                                        Phase::Main => {}
-                                    }
-                                });
-                            card_h_measured = frame.response.rect.height();
-                        });
+                    // 仅当上一帧实测高度在当前区域放不下时才启用内部滚动（滚轮才生效）：
+                    // 0.36 的 ScrollArea 带平滑惯性，常态下误滚滚轮会把表单滑出视野
+                    // （用户报告的"滚动效果"）；放得下时对滚轮完全无反应。
+                    let frame_h = if app.auth_card_h > ui.available_height() - 8.0 {
+                        egui::ScrollArea::vertical()
+                            .id_salt("auth_card_scroll")
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| card_frame(app, ui, card_w))
+                            .inner
+                    } else {
+                        card_frame(app, ui, card_w)
+                    };
+                    card_h_measured = frame_h;
                 },
             );
         });
@@ -110,6 +96,32 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 fn card_header(ui: &mut egui::Ui, title: &str) {
     ui.label(egui::RichText::new(title).heading());
     ui.separator();
+}
+
+/// 认证卡片（Frame 包裹的标题+表单），返回外框实际高度供下一帧定位用
+fn card_frame(app: &mut BnApp, ui: &mut egui::Ui, card_w: f32) -> f32 {
+    egui::Frame::default()
+        .fill(theme::cur().card)
+        .stroke(Stroke::new(1.0_f32, theme::cur().border))
+        .corner_radius(8)
+        .inner_margin(egui::Margin::same(26))
+        .show(ui, |ui| {
+            ui.set_width(card_w - 52.0);
+            match app.phase {
+                Phase::Unlock => card_header(ui, crate::i18n::tr("解锁")),
+                Phase::EnterKeys => card_header(ui, crate::i18n::tr("配置 API 密钥")),
+                Phase::Main => {}
+            }
+            ui.add_space(6.0);
+            match app.phase {
+                Phase::Unlock => unlock(app, ui),
+                Phase::EnterKeys => enter_keys(app, ui),
+                Phase::Main => {}
+            }
+        })
+        .response
+        .rect
+        .height()
 }
 
 fn draw_env_hint(ctx: &egui::Context, app: &BnApp) {

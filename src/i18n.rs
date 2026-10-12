@@ -31,7 +31,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         // ---- 顶层导航 ----
         "现货交易" => "Spot",
         "期货交易" => "Futures",
-        "Portfolio" => "Portfolio",
+        "资产总览" => "Portfolio",
         "设置" => "Settings",
         "使用说明" => "Help",
         // ---- 顶栏/状态 ----
