@@ -85,7 +85,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             w,
             ask_cums[i] / max_cum,
             theme::cur().down.gamma_multiply(0.28),
-            &widgets::f64_decimal(price),
+            price,
             dp,
             &widgets::f64_decimal(qty),
             qdp,
@@ -144,7 +144,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             w,
             bid_cums[i] / max_cum,
             theme::cur().up.gamma_multiply(0.28),
-            &widgets::f64_decimal(price),
+            price,
             dp,
             &widgets::f64_decimal(qty),
             qdp,
@@ -161,12 +161,15 @@ fn book_row(
     w: f32,
     ratio: f64,
     bar_color: egui::Color32,
-    price_f: &f64,
+    price: &Decimal,
     dp: usize,
     qty_f: &f64,
     qdp: usize,
     price_color: egui::Color32,
 ) {
+    // 显示用 f64；点击填单必须用 Decimal 原文——dp 回退（规则未加载时=2）
+    // 会把 0.00001234 这类价格四舍五入成 "0.00"
+    let price_f = widgets::f64_decimal(price);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click());
     let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     if resp.hovered() {
@@ -201,8 +204,8 @@ fn book_row(
         theme::cur().text,
     );
     if resp.clicked() {
-        // 点击填单要用交易所精度原文，不能用 UI 四舍五入后的值
-        app.page.form.set_price(&format!("{price_f:.*}", dp));
+        // 点击填单用交易所精度原文（Decimal），不能用 UI 四舍五入后的值
+        app.page.form.set_price(&price.to_string());
     }
     // 明示"点价格即填单"这一核心交互，并给出悬停提示
     resp.on_hover_text(crate::i18n::tr("点击填入下单价格"));

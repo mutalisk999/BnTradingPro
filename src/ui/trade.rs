@@ -438,11 +438,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         format!("≈ {}", t.normalize().round_dp(8)),
                     ));
                 }
+                // 弹窗头部的买卖方向必须与实际请求一致：
+                // 对冲保护单会把 side 翻转为平仓方向（如 LONG→SELL+LONG）
+                let side = req.side;
                 app.confirm = Some(ConfirmOrder {
                     market: app.market,
                     req,
                     rows,
-                    side: app.page.form.side,
+                    side,
                 });
             }
             Err(e) => {
@@ -504,31 +507,33 @@ pub fn build_request(app: &BnApp) -> Result<OrderRequest, String> {
         },
     };
     let dual = state.acct.lock().fut_dual_side;
+    // 止损/止盈为保护单（两个持仓模式同理）：已有持仓时它的语义是"保护"，
+    // 而不是触发后开新仓
+    let protective = matches!(
+        app.page.form.kind,
+        UiKind::StopLossLimit
+            | UiKind::TakeProfitLimit
+            | UiKind::StopLossMarket
+            | UiKind::TakeProfitMarket
+    );
+    let existing = if market == Market::UmFutures && protective {
+        state
+            .acct
+            .lock()
+            .fut_positions
+            .iter()
+            .find(|p| p.symbol == symbol && p.amt != Decimal::ZERO)
+            .map(|p| p.amt > Decimal::ZERO)
+    } else {
+        None
+    };
     // 双向持仓：限价/市价跟随买卖方向开仓（买入=LONG，卖出=SHORT）。
-    // 止损/止盈为保护单：已有持仓时一律平掉现有持仓——持仓方向取持仓侧，
-    // 同时订单方向必须取平仓方向（多平=SELL+LONG，空平=BUY+SHORT）；
-    // 只改持仓方向不改订单方向会发出"SELL+LONG 之外"的反向开仓或加仓单。
-    // 无持仓时退回跟随方向按钮。确认弹窗展示实际方向与持仓方向。
+    // 保护单在已有持仓时一律平掉现有持仓——持仓方向取持仓侧，同时订单方向
+    // 必须取平仓方向（多平=SELL+LONG，空平=BUY+SHORT）；只改持仓方向不改
+    // 订单方向会发出反向开仓或加仓单。无持仓时退回跟随方向按钮。
+    // 确认弹窗展示实际方向与持仓方向。
     let mut side = app.page.form.side;
     let position_side = if market == Market::UmFutures && dual {
-        let protective = matches!(
-            app.page.form.kind,
-            UiKind::StopLossLimit
-                | UiKind::TakeProfitLimit
-                | UiKind::StopLossMarket
-                | UiKind::TakeProfitMarket
-        );
-        let existing = if protective {
-            state
-                .acct
-                .lock()
-                .fut_positions
-                .iter()
-                .find(|p| p.symbol == symbol && p.amt != Decimal::ZERO)
-                .map(|p| p.amt > Decimal::ZERO)
-        } else {
-            None
-        };
         match existing {
             Some(is_long) => {
                 side = if is_long { Side::Sell } else { Side::Buy };
@@ -549,12 +554,19 @@ pub fn build_request(app: &BnApp) -> Result<OrderRequest, String> {
     } else {
         FutPosSide::Both
     };
+    // 单向模式：保护单在已有持仓时强制只减仓——不带 reduceOnly 的止损
+    // 触发后会加仓/反向开仓，与"保护"语义相反（确认弹窗可见该行）
+    let reduce_only = if dual {
+        false
+    } else {
+        app.page.form.reduce_only || (market == Market::UmFutures && protective && existing.is_some())
+    };
     Ok(OrderRequest {
         symbol,
         side,
         kind,
         position_side,
-        reduce_only: if dual { false } else { app.page.form.reduce_only },
+        reduce_only,
         // 幂等标识：同一确认弹窗重发相同 newClientOrderId，方便对账与排查重复委托
         client_id: Some(format!("btp-{}", chrono::Utc::now().timestamp_millis())),
     })

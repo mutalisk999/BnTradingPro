@@ -132,6 +132,8 @@ pub struct SharedState {
     pub rest_ok: AtomicBool,
 
     pub rules: RwLock<[RuleBook; 2]>,
+    /// 规则簿代次：ReloadAll 重写后递增（UI 侧符号列表缓存据此失效）
+    pub rules_version: AtomicU64,
     pub md: Mutex<MarketMd>,
     pub acct: Mutex<AccountSnap>,
     pub orders: Mutex<OrdersSnap>,
@@ -151,6 +153,7 @@ impl Default for SharedState {
             creds_version: AtomicU64::new(0),
             rest_ok: AtomicBool::new(false),
             rules: RwLock::new([RuleBook::default(), RuleBook::default()]),
+            rules_version: AtomicU64::new(0),
             md: Mutex::new(MarketMd::default()),
             acct: Mutex::new(AccountSnap::default()),
             orders: Mutex::new(OrdersSnap::default()),

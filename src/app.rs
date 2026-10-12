@@ -191,8 +191,8 @@ pub struct BnApp {
     /// 现货/期货页各自的持久状态
     pub spot: TradingPage,
     pub fut: TradingPage,
-    /// 侧栏符号列表缓存（市场，过滤词大写，结果）：每帧重建 2600 个字符串克隆太浪费
-    pub symbols_cache: Option<(Market, String, std::sync::Arc<Vec<String>>)>,
+    /// 侧栏符号列表缓存（市场，过滤词大写，规则代次，结果）
+    pub symbols_cache: Option<(Market, String, u64, std::sync::Arc<Vec<String>>)>,
     /// 进入主界面后的首帧账户数据加载标记（历史），解锁/存钥后重新触发
     pub initial_load_done: bool,
     /// 引擎当前唯一的行情订阅（后订阅替换前订阅），用于去重
@@ -257,56 +257,41 @@ impl BnApp {
         }
     }
 
-    // ---------- 页签切换（镜像保存/恢复） ----------
+    // ---------- 页签切换（活动页整体换入换出） ----------
 
     pub fn set_tab(&mut self, tab: Tab) {
         if self.tab == tab {
             return;
         }
-        self.save_active_page();
+        // 离开交易页签：活动页整体存回所属市场槽位
+        match self.tab {
+            Tab::Spot => std::mem::swap(&mut self.spot, &mut self.page),
+            Tab::Futures => std::mem::swap(&mut self.fut, &mut self.page),
+            _ => {}
+        }
         self.tab = tab;
-        self.load_active_page();
+        // 进入交易页签：整体换出目标市场页状态。
+        // 整体 swap 而非逐字段复制：新增字段只改 TradingPage，不存在漏同步
+        if let Some(m) = tab.market() {
+            match tab {
+                Tab::Spot => std::mem::swap(&mut self.spot, &mut self.page),
+                Tab::Futures => std::mem::swap(&mut self.fut, &mut self.page),
+                _ => {}
+            }
+            self.market = m;
+            self.refresh_account_data(m);
+        }
     }
 
-    /// 把活动镜像保存回当前页
-    fn save_active_page(&mut self) {
-        let page = match self.tab {
-            Tab::Spot => &mut self.spot,
-            Tab::Futures => &mut self.fut,
-            _ => return,
-        };
-        page.symbol = self.page.symbol.clone();
-        page.interval = self.page.interval;
-        page.symbol_filter = self.page.symbol_filter.clone();
-        page.form = self.page.form.clone();
-        page.chart = self.page.chart.clone();
-        page.sub_tab = self.page.sub_tab;
-        page.leverage_input = self.page.leverage_input.clone();
-    }
-
-    /// 从目标页恢复镜像（仅交易页）
-    fn load_active_page(&mut self) {
-        let Some(m) = self.tab.market() else {
-            return;
-        };
-        let page = match self.tab {
-            Tab::Spot => self.spot.clone(),
-            Tab::Futures => self.fut.clone(),
-            _ => return,
-        };
-        self.market = m;
-        self.page.symbol = page.symbol;
-        self.page.interval = page.interval;
-        self.page.symbol_filter = page.symbol_filter;
-        self.page.form = page.form;
-        self.page.chart = page.chart;
-        self.page.sub_tab = page.sub_tab;
-        self.page.leverage_input = page.leverage_input;
-
+    /// 切到某交易市场后刷新其私有数据（挂单 + 历史；合约再拉账户）
+    fn refresh_account_data(&mut self, m: Market) {
         self.subscribe(m, self.page.symbol.clone(), self.page.interval);
         if self.state.has_creds() {
-            self.state
-                .send_cmd(Command::RefreshOpenOrders { market: m });
+            self.state.send_cmd(Command::RefreshOpenOrders { market: m });
+            self.state.send_cmd(Command::RefreshHistory {
+                market: m,
+                symbol: self.page.symbol.clone(),
+            });
             if m == Market::UmFutures {
                 self.state.send_cmd(Command::RefreshAccount);
             }

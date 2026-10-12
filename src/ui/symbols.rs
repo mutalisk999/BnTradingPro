@@ -46,17 +46,27 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 .size(12.0)
                 .color(theme::cur().text_dim),
         );
+        // 自选行的点击不能因早退而丢失
+        if let Some(sym) = toggled {
+            app.state.toggle_favorite(app.market, &sym);
+        }
+        if let Some(sym) = switched {
+            app.switch_symbol(sym);
+        }
         return;
     }
 
     // 全部交易对：过滤结果按 (市场, 过滤词) 缓存，避免每帧从规则簿克隆
     // ~2600 个符号字符串；favs 排除是少量 contains 检查，逐帧做成本低。
     // 列表用 show_rows 虚拟化——每帧只构造可见行的控件
-    let cached = app.symbols_cache.as_ref().filter(|(m, f, _)| {
-        *m == app.market && *f == filter
-    });
+    // 缓存键带规则版本：ReloadAll 重拉 exchangeInfo 后旧列表必须失效
+    let rules_ver = app.state.rules_version.load(std::sync::atomic::Ordering::Relaxed);
+    let cached = app
+        .symbols_cache
+        .as_ref()
+        .filter(|(m, f, v, _)| *m == app.market && *f == filter && *v == rules_ver);
     let all_filtered = match cached {
-        Some((_, _, list)) => std::sync::Arc::clone(list),
+        Some((_, _, _, list)) => std::sync::Arc::clone(list),
         None => {
             let list: std::sync::Arc<Vec<String>> = std::sync::Arc::new({
                 let rules = app.state.rules.read();
@@ -67,7 +77,12 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     .cloned()
                     .collect()
             });
-            app.symbols_cache = Some((app.market, filter.clone(), std::sync::Arc::clone(&list)));
+            app.symbols_cache = Some((
+                app.market,
+                filter.clone(),
+                rules_ver,
+                std::sync::Arc::clone(&list),
+            ));
             list
         }
     };

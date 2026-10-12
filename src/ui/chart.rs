@@ -303,12 +303,16 @@ fn draw(
     // ---------- 网格与价格轴 ----------
     let step = nice_step(span as f64, 6);
     let grid_font = FontId::monospace(11.0);
-    // 从 >= lo 的第一个网格点起步：若从 step 起步，迭代次数为 hi/step——
-    // 全平坦窗口（span 钳到 0.0001）下高价币会达到数十亿次迭代、页面冻结
-    let mut gp = ((lo as f64 / step).floor() * step) as f32;
-    while gp <= hi {
-        if gp >= lo {
-            let y = y_of(gp);
+    // f64 累加 + 迭代硬上限，两点防护：
+    // 1. 从 >= lo 的首个网格点起步，否则平坦窗口（span 钳到 0.0001）下
+    //    迭代次数为 hi/step，高价币会达到数十亿次
+    // 2. f32 累加在大价格尺度下 step<ULP 会使 += 原地打转（死循环）
+    let mut gp = ((lo as f64 / step).floor() * step).max(f64::MIN);
+    let (hi_f, lo_f) = (hi as f64, lo as f64);
+    let mut iter = 0usize;
+    while gp <= hi_f {
+        if gp >= lo_f {
+            let y = y_of(gp as f32);
             painter.line_segment(
                 [
                     Pos2::new(plot.left(), y),
@@ -319,12 +323,17 @@ fn draw(
             painter.text(
                 Pos2::new(plot.left() + chart_w + 6.0, y),
                 Align2::LEFT_CENTER,
-                widgets::fmt_thousands(gp as f64, dp as usize),
+                widgets::fmt_thousands(gp, dp as usize),
                 grid_font.clone(),
                 theme::cur().text_dim,
             );
         }
-        gp += step as f32;
+        gp += step;
+        iter += 1;
+        if iter > 100_000 {
+            // 数值异常兜底，绝不冻结 UI
+            break;
+        }
     }
 
     // ---------- 时间轴 ----------

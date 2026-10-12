@@ -340,9 +340,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         let cfg: AppConfig = std::mem::take(&mut app.settings).into_cfg();
         // 保留草稿（into_cfg 消耗了草稿），保证继续编辑不丢字段
         app.settings = SettingsDraft::from_cfg(&cfg);
-        // 落盘走引擎命令（update_cfg 只更新内存并触发重连）
-        state.send_cmd(crate::engine::Command::PersistConfig);
+        // 先更新内存再发落盘命令：引擎在另一线程出队时快照的是 state.cfg，
+        // 顺序反了会把旧配置写回 config.toml（正是本轮要修的回滚类问题）
         state.update_cfg(cfg);
+        state.send_cmd(crate::engine::Command::PersistConfig);
         state.push_toast(
             ToastKind::Ok,
             crate::i18n::tr("设置已保存，正在重连…").to_string(),

@@ -322,10 +322,16 @@ async fn handle_cmd(
             ToastKind::Err,
             crate::i18n::tr("REST 客户端初始化失败，请检查网络/代理设置"),
         );
-        // busy 在命令入队时由 UI 置位，未执行的命令也必须释放，
-        // 否则提交/撤销按钮会永久禁用
-        state.set_busy("place", false);
-        state.set_busy("cancel", false);
+        // busy 在命令入队时由 UI 置位，未执行的命令也必须释放；
+        // 但只释放携带 busy 的命令——其他命令在此提前释放会把仍在
+        // 排队的下单/撤单的忙标志清掉
+        match cmd {
+            Command::PlaceOrder { .. } => state.set_busy("place", false),
+            Command::CancelOrder { .. } | Command::CancelAll { .. } => {
+                state.set_busy("cancel", false);
+            }
+            _ => {}
+        }
         return;
     };
     match cmd {
@@ -365,6 +371,7 @@ async fn handle_cmd(
                         let book = RuleBook::from_rules(parse_exchange_info(&v));
                         tracing::info!("{}: {} 个交易对", m.label(), book.symbols.len());
                         state.rules.write()[m as usize] = book;
+                        state.rules_version.fetch_add(1, Ordering::Relaxed);
                     }
                     Err(e) => {
                         tracing::warn!("exchangeInfo 失败({m}): {e}");

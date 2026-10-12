@@ -416,6 +416,8 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "做空" => "Short",
         "缺少" => "Missing",
         "加载失败: " => "Failed to load: ",
+        "错误" => "Error",
+        "交易规则加载中，请检查网络与代理" => "Loading trading rules — check network/proxy",
         _ => return_en_fallback(zh),
     }
 }

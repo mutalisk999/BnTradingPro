@@ -88,7 +88,15 @@ fn non_empty(s: &str, default: &str) -> String {
     // 覆盖端点必须加密：http/ws 会把 X-MBX-APIKEY 头、签名 query 与 listenKey
     // 全部明文暴露给链路上的观察者，一律拒绝并回退内置默认
     if !t.starts_with("https://") && !t.starts_with("wss://") {
-        tracing::warn!("忽略不安全的端点覆盖（须为 https:// 或 wss://）：{t}");
+        // 拒绝的 URL 可能内嵌 user:pass@，落盘日志前必须脱敏
+        let redacted = match t.split_once("://") {
+            Some((scheme, rest)) => {
+                let host = rest.rsplit('@').next().unwrap_or("");
+                format!("{scheme}//***@{host}")
+            }
+            None => "***".to_string(),
+        };
+        tracing::warn!("忽略不安全的端点覆盖（须为 https:// 或 wss://）：{redacted}");
         return default.to_string();
     }
     t.to_string()
