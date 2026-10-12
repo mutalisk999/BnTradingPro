@@ -198,6 +198,8 @@ pub struct BnApp {
     pub active_sub: Option<(Market, String, Interval)>,
     /// 删除凭据库的两步确认（第一次点击进入待确认态）
     pub vault_delete_armed: bool,
+    /// 认证卡片上一帧实测高度（矮窗口下卡片居中/顶置的布局依据，滞后一帧收敛）
+    pub auth_card_h: f32,
 }
 
 impl BnApp {
@@ -255,6 +257,7 @@ impl BnApp {
             // 引擎启动时已订阅现货默认交易对
             active_sub: Some((Market::Spot, default_symbol, interval)),
             vault_delete_armed: false,
+            auth_card_h: 420.0,
         }
     }
 

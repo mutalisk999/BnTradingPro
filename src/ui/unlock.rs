@@ -11,8 +11,11 @@ use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Stroke};
 
 pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
-    let ctx = ui.ctx().clone(); // Context 克隆廉价（Arc）；后面还要可变借用 ui
-                                // ---------- 背景：深色 + 品牌光晕 ----------
+    let mut card_h_measured = 0.0_f32;
+    // ---------- 背景 + 居中卡片同在一个 CentralPanel 内 ----------
+    // 旧实现把卡片放在独立 Area 里用锚定居中：Area 有 sizing pass，两趟算出的
+    // 卡片高度不一致，每帧锚点位置都在跳，视觉上像在"滚动"。
+    // 改为在同一面板内直接布局：位置由单趟布局确定，无二次猜测。
     egui::CentralPanel::default()
         .frame(egui::Frame::default().fill(theme::cur().bg))
         .show(ui, |ui| {
@@ -34,52 +37,74 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 rect.height() * 0.38,
                 Color32::from_rgba_unmultiplied(46, 203, 129, 8),
             );
-            let cx = rect.center().x;
-            let cy = rect.center().y;
+
+            let avail = ui.max_rect();
+            let card_w = 440.0;
+
+            // 品牌标题固定在窗口上部：窗口再矮也不会被卡片遮挡或推出屏幕
+            let title_y = avail.top() + 26.0;
             p.text(
-                Pos2::new(cx, cy - 196.0),
+                Pos2::new(avail.center().x, title_y),
                 Align2::CENTER_CENTER,
                 "BnTradingPro",
                 FontId::proportional(34.0),
                 theme::cur().accent,
             );
             p.text(
-                Pos2::new(cx, cy - 164.0),
+                Pos2::new(avail.center().x, title_y + 36.0),
                 Align2::CENTER_CENTER,
                 crate::i18n::tr("Binance 现货 / U本位合约 交易终端"),
                 FontId::proportional(13.5),
                 theme::cur().text_dim,
             );
-        });
 
-    // ---------- 居中认证卡片 ----------
-    egui::Area::new(egui::Id::new("auth_card"))
-        .anchor(Align2::CENTER_CENTER, [0.0, 26.0])
-        .show(&ctx, |ui| {
-            egui::Frame::default()
-                .fill(theme::cur().card)
-                .stroke(Stroke::new(1.0_f32, theme::cur().border))
-                .corner_radius(8)
-                .inner_margin(egui::Margin::same(26))
-                .show(ui, |ui| {
-                    // 宽度必须 min/max 一致地固定：锚定居中的 Area 有 sizing pass，
-                    // 内容宽度不定（无限宽输入框/不换行长标签）会让两趟算出的
-                    // 卡片高度不同，整页随锚定居中每帧上下跳动
-                    ui.set_width(440.0);
-                    match app.phase {
-                        Phase::Unlock => card_header(ui, crate::i18n::tr("解锁")),
-                        Phase::EnterKeys => card_header(ui, crate::i18n::tr("配置 API 密钥")),
-                        Phase::Main => {}
-                    }
-                    ui.add_space(6.0);
-                    match app.phase {
-                        Phase::Unlock => unlock(app, ui),
-                        Phase::EnterKeys => enter_keys(app, ui),
-                        Phase::Main => {}
-                    }
-                });
+            // 卡片垂直位置：以上一帧实测高度在标题以下区域居中；空间不足时
+            // 顶到标题下方，底边永不越过窗口下边缘，超高部分由内部 ScrollArea
+            // 滚动兜底。高度取上一帧测量值（滞后一帧收敛），静止后完全稳定。
+            let region_top = title_y + 58.0;
+            let card_top = (avail.center().y - app.auth_card_h * 0.5)
+                .max(region_top)
+                .min((avail.bottom() - 60.0).max(region_top));
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
+                    Pos2::new(avail.center().x - card_w / 2.0, card_top),
+                    egui::vec2(card_w, (avail.bottom() - card_top).max(60.0)),
+                )),
+                |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("auth_card_scroll")
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            let frame = egui::Frame::default()
+                                .fill(theme::cur().card)
+                                .stroke(Stroke::new(1.0_f32, theme::cur().border))
+                                .corner_radius(8)
+                                .inner_margin(egui::Margin::same(26))
+                                .show(ui, |ui| {
+                                    ui.set_width(card_w - 52.0);
+                                    match app.phase {
+                                        Phase::Unlock => card_header(ui, crate::i18n::tr("解锁")),
+                                        Phase::EnterKeys => {
+                                            card_header(ui, crate::i18n::tr("配置 API 密钥"))
+                                        }
+                                        Phase::Main => {}
+                                    }
+                                    ui.add_space(6.0);
+                                    match app.phase {
+                                        Phase::Unlock => unlock(app, ui),
+                                        Phase::EnterKeys => enter_keys(app, ui),
+                                        Phase::Main => {}
+                                    }
+                                });
+                            card_h_measured = frame.response.rect.height();
+                        });
+                },
+            );
         });
-    draw_env_hint(&ctx, app);
+    if card_h_measured > 0.0 {
+        app.auth_card_h = card_h_measured;
+    }
+    draw_env_hint(ui.ctx(), app);
 }
 
 fn card_header(ui: &mut egui::Ui, title: &str) {
