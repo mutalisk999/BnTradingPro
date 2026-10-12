@@ -253,7 +253,9 @@ impl BnApp {
             // 引擎启动时已订阅现货默认交易对
             active_sub: Some((Market::Spot, default_symbol, interval)),
             vault_delete_armed: false,
-            auth_card_h: 420.0,
+            // 首帧定位用：收紧内边距后 EnterKeys 表单实测约 340，Unlock 约 240。
+            // 首帧用两页的中间值，第二帧起由实测值收敛，避免开场跳一下
+            auth_card_h: 300.0,
         }
     }
 

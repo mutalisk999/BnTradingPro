@@ -108,15 +108,16 @@ fn card_frame(app: &mut BnApp, ui: &mut egui::Ui, card_w: f32) -> f32 {
         .fill(theme::cur().card)
         .stroke(Stroke::new(1.0_f32, theme::cur().border))
         .corner_radius(8)
-        .inner_margin(egui::Margin::same(26))
+        // 内边距收紧：原 26 四边留白过大，卡片显高、底部空洞
+        .inner_margin(egui::Margin::symmetric(22, 16))
         .show(ui, |ui| {
-            ui.set_width(card_w - 52.0);
+            ui.set_width(card_w - 44.0);
             match app.phase {
                 Phase::Unlock => card_header(ui, crate::i18n::tr("解锁")),
                 Phase::EnterKeys => card_header(ui, crate::i18n::tr("配置 API 密钥")),
                 Phase::Main => {}
             }
-            ui.add_space(6.0);
+            ui.add_space(4.0);
             match app.phase {
                 Phase::Unlock => unlock(app, ui),
                 Phase::EnterKeys => enter_keys(app, ui),
@@ -178,7 +179,7 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
         )
         .wrap_mode(egui::TextWrapMode::Wrap),
     );
-    ui.add_space(10.0);
+    ui.add_space(6.0);
     ui.label(theme::card_label(crate::i18n::tr("主密码")));
     let pw_resp = ui.add(
         egui::TextEdit::singleline(&mut *app.pw1)
@@ -197,7 +198,7 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         error_text(ui, &app.pw_err);
     }
-    ui.add_space(12.0);
+    ui.add_space(8.0);
     if primary_btn(ui, crate::i18n::tr("解锁"), true) {
         try_unlock(app);
     }
@@ -295,7 +296,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         )
         .wrap_mode(egui::TextWrapMode::Wrap),
     );
-    ui.add_space(10.0);
+    ui.add_space(6.0);
 
     // 主密码：一体设置（无库）或验证（有库）
     let need_master = vault_exists || app.master.is_none();
@@ -313,7 +314,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             if ui.ctx().memory(|m| m.focused().is_none()) {
                 pw_resp.request_focus();
             }
-            ui.add_space(6.0);
+            ui.add_space(4.0);
         } else {
             ui.add(
                 egui::Label::new(
@@ -323,7 +324,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
                 )
                 .wrap_mode(egui::TextWrapMode::Wrap),
             );
-            ui.add_space(4.0);
+            ui.add_space(3.0);
             ui.label(theme::card_label(crate::i18n::tr("主密码（至少 8 位）")));
             ui.add(
                 egui::TextEdit::singleline(&mut *app.pw1)
@@ -331,7 +332,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
                     .desired_width(f32::INFINITY)
                     .font(egui::TextStyle::Monospace),
             );
-            ui.add_space(4.0);
+            ui.add_space(3.0);
             ui.label(theme::card_label(crate::i18n::tr("再输一次")));
             ui.add(
                 egui::TextEdit::singleline(&mut *app.pw2)
@@ -339,7 +340,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
                     .desired_width(f32::INFINITY)
                     .font(egui::TextStyle::Monospace),
             );
-            ui.add_space(6.0);
+            ui.add_space(4.0);
         }
     }
 
@@ -353,7 +354,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             .font(egui::TextStyle::Monospace)
             .text_color(theme::cur().text),
     );
-    ui.add_space(6.0);
+    ui.add_space(4.0);
     ui.label(theme::card_label("API Secret"));
     ui.add(
         egui::TextEdit::singleline(&mut *app.api_secret)
@@ -366,7 +367,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         error_text(ui, &app.keys_err);
     }
-    ui.add_space(12.0);
+    ui.add_space(8.0);
 
     let can_save = !app.api_key.trim().is_empty()
         && !app.api_secret.trim().is_empty()
