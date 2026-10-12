@@ -61,7 +61,10 @@ pub fn show(app: &mut BnApp, ctx: &egui::Context) {
                 .rounding(8.0)
                 .inner_margin(egui::Margin::same(26.0))
                 .show(ui, |ui| {
-                    ui.set_min_width(400.0);
+                    // 宽度必须 min/max 一致地固定：锚定居中的 Area 有 sizing pass，
+                    // 内容宽度不定（无限宽输入框/不换行长标签）会让两趟算出的
+                    // 卡片高度不同，整页随锚定居中每帧上下跳动
+                    ui.set_width(440.0);
                     match app.phase {
                         Phase::Unlock => card_header(ui, crate::i18n::tr("解锁")),
                         Phase::EnterKeys => card_header(ui, crate::i18n::tr("配置 API 密钥")),
@@ -125,10 +128,13 @@ fn primary_btn(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
 
 /// 解锁已有凭据库
 fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
-    ui.label(
-        egui::RichText::new(crate::i18n::tr("输入主密码以解密本机保存的 API 密钥"))
-            .size(12.0)
-            .color(theme::cur().text_dim),
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(crate::i18n::tr("输入主密码以解密本机保存的 API 密钥"))
+                .size(12.0)
+                .color(theme::cur().text_dim),
+        )
+        .wrap_mode(egui::TextWrapMode::Wrap),
     );
     ui.add_space(10.0);
     ui.label(theme::card_label(crate::i18n::tr("主密码")));
@@ -138,7 +144,10 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
             .desired_width(f32::INFINITY)
             .font(egui::TextStyle::Monospace),
     );
-    pw_resp.request_focus(); // 解锁页只有这一个输入框，键盘用户免点一次鼠标
+    // 仅在当前没有任何焦点控件时请求一次：每帧强制抢占会让用户点不进其他输入框
+    if ui.ctx().memory(|m| m.focused().is_none()) {
+        pw_resp.request_focus();
+    }
     if pw_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
         try_unlock(app);
     }
@@ -232,14 +241,17 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
     let dir = config::data_dir();
     let vault_exists = vault::vault_exists(&dir);
     let testnet = app.state.cfg.read().testnet;
-    ui.label(
-        egui::RichText::new(if testnet {
-            crate::i18n::tr("当前环境：测试网（testnet.binance.vision / testnet.binancefuture.com 申请）")
-        } else {
-            crate::i18n::tr("当前环境：实盘（binance.com → API 管理，建议绑定 IP 白名单并只开启现货/合约交易权限）")
-        })
-        .size(12.0)
-        .color(if testnet { theme::cur().accent } else { theme::cur().err }),
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(if testnet {
+                crate::i18n::tr("当前环境：测试网（testnet.binance.vision / testnet.binancefuture.com 申请）")
+            } else {
+                crate::i18n::tr("当前环境：实盘（binance.com → API 管理，建议绑定 IP 白名单并只开启现货/合约交易权限）")
+            })
+            .size(12.0)
+            .color(if testnet { theme::cur().accent } else { theme::cur().err }),
+        )
+        .wrap_mode(egui::TextWrapMode::Wrap),
     );
     ui.add_space(10.0);
 
@@ -249,10 +261,13 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         if vault_exists {
             ui.label(theme::card_label(crate::i18n::tr("主密码（用于加密保存）")));
         } else {
-            ui.label(
-                egui::RichText::new(crate::i18n::tr("主密码用于加密本机保存的 API Key/Secret（Argon2id + AES-256-GCM）。忘记将无法恢复。"))
-                    .size(12.0)
-                    .color(theme::cur().text_dim),
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(crate::i18n::tr("主密码用于加密本机保存的 API Key/Secret（Argon2id + AES-256-GCM）。忘记将无法恢复。"))
+                        .size(12.0)
+                        .color(theme::cur().text_dim),
+                )
+                .wrap_mode(egui::TextWrapMode::Wrap),
             );
             ui.add_space(4.0);
             ui.label(theme::card_label(crate::i18n::tr("主密码（至少 8 位）")));
@@ -374,12 +389,15 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
                 app.phase = Phase::Main;
             }
         });
-        ui.label(
-            egui::RichText::new(crate::i18n::tr(
-                "跳过后仍可查看实时行情与 K 线，随时可在设置页配置密钥",
-            ))
-            .size(11.0)
-            .color(theme::cur().text_dim.gamma_multiply(0.85)),
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(crate::i18n::tr(
+                    "跳过后仍可查看实时行情与 K 线，随时可在设置页配置密钥",
+                ))
+                .size(11.0)
+                .color(theme::cur().text_dim.gamma_multiply(0.85)),
+            )
+            .wrap_mode(egui::TextWrapMode::Wrap),
         );
     }
 }

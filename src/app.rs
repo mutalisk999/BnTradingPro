@@ -698,13 +698,29 @@ impl BnApp {
                 .collect()
         };
         theme::section(ui, crate::i18n::tr("全部"));
-        ui.spacing_mut().item_spacing.y = 4.0;
-        const SYMBOL_ROW_H: f32 = 22.0;
+        // 槽位高度 ≥ 行内控件自然高度（星标按钮约 24px），避免行间点击区重叠
+        const SYMBOL_ROW_H: f32 = 24.0;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show_rows(ui, SYMBOL_ROW_H, all_syms.len(), |ui, range| {
+                // 每行放进精确槽位：不依赖控件自然高度（声明行距与实际行距
+                // 不一致时，内容会随滚动深度漂移、与滚动条错位）
+                let x_range = ui.max_rect().x_range();
+                let top = ui.max_rect().top();
+                let start = range.start;
                 for i in range {
-                    symbol_row(ui, self, &all_syms[i], false, &mut switched, &mut toggled);
+                    let y0 = top + (i - start) as f32 * SYMBOL_ROW_H;
+                    let rect = egui::Rect::from_x_y_ranges(x_range, y0..=(y0 + SYMBOL_ROW_H));
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |row_ui| {
+                        symbol_row(
+                            row_ui,
+                            self,
+                            &all_syms[i],
+                            false,
+                            &mut switched,
+                            &mut toggled,
+                        );
+                    });
                 }
             });
         if all_syms.is_empty() && favs.is_empty() {
