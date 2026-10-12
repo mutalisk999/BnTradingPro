@@ -45,18 +45,22 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     let ask_show: Vec<&crate::binance::model::Level> = asks.iter().take(n).rev().collect();
     let bid_show: Vec<&crate::binance::model::Level> = bids.iter().take(n).collect();
 
-    // 累计量用于深度条
+    // 累计量用于深度条：两侧统一「从中间价向外累积」，
+    // 即某档的柱高 = 该档及其更贴近中间价所有档位的量之和（对称漏斗形）
+    let parse_qty = |d: &Decimal| d.to_string().parse::<f64>().unwrap_or(0.0);
     let mut cum = 0.0f64;
-    let mut ask_cums = Vec::with_capacity(ask_show.len());
-    for a in &ask_show {
-        cum += a.qty.to_string().parse::<f64>().unwrap_or(0.0);
-        ask_cums.push(cum);
+    let mut ask_cums_asc = Vec::with_capacity(asks.len().min(n));
+    for a in asks.iter().take(n) {
+        cum += parse_qty(&a.qty);
+        ask_cums_asc.push(cum);
     }
     let ask_total = cum;
+    // 显示顺序是升序档位反转（高价在上），显示行 i 对应升序累积的第 (len-1-i) 项
+    let ask_cums: Vec<f64> = ask_cums_asc.iter().rev().copied().collect();
     cum = 0.0;
-    let mut bid_cums = Vec::with_capacity(bid_show.len());
-    for b in &bid_show {
-        cum += b.qty.to_string().parse::<f64>().unwrap_or(0.0);
+    let mut bid_cums = Vec::with_capacity(bids.len().min(n));
+    for b in bids.iter().take(n) {
+        cum += parse_qty(&b.qty);
         bid_cums.push(cum);
     }
     let bid_total = cum;
