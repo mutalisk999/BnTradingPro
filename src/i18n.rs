@@ -45,7 +45,6 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "连接中" => "Connecting",
         "未连接" => "Disconnected",
         "未配置密钥" => "No API Key",
-        "获取行情中…" => "Loading market…",
         "错误: " => "Error: ",
         // ---- 页头 ----
         "搜索交易对…" => "Search symbols…",
@@ -54,7 +53,6 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "全部" => "All",
         "加入自选" => "Add to favorites",
         "取消自选" => "Remove from favorites",
-        "（仅显示前 400 个，请用搜索过滤）" => "(Showing first 400 — type to filter)",
         "REST 接口正常" => "REST OK",
         "REST 接口异常" => "REST Error",
         "REST 客户端初始化失败，请检查网络/代理设置" => "REST client init failed — check network/proxy settings",
@@ -75,7 +73,6 @@ fn en_lookup(zh: &'static str) -> &'static str {
             "The master password encrypts your API Key/Secret locally (Argon2id + AES-256-GCM). It cannot be recovered if lost."
         }
         // ---- 盘口/成交 ----
-        "盘口 20 档" => "Order Book (20)",
         "成交明细" => "Recent Trades",
         "加载中…" => "Loading…",
         "等待深度数据…" => "Waiting for depth…",
@@ -151,6 +148,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "撤销" => "Cancel",
         "撤销全部" => "Cancel All",
         "U本位合约" => "USDT-M Futures",
+        "现货" => "Spot",
         "个持仓" => " positions",
         "切换单向持仓" => "Switch to One-way",
         "切换双向持仓" => "Switch to Hedge",
@@ -257,13 +255,10 @@ fn en_lookup(zh: &'static str) -> &'static str {
         // ---- 登录页 ----
         "Binance 现货 / U本位合约 交易终端" => "Binance Spot / USDT-M Futures Trading Terminal",
         "解锁" => "Unlock",
-        "设置主密码" => "Set Master Password",
         "配置 API 密钥" => "Configure API Key",
         "主密码（至少 8 位）" => "Master password (min 8 chars)",
         "再输一次" => "Confirm password",
-        "继续" => "Continue",
         "主密码" => "Master password",
-        "主密码（用于加密保存）" => "Master password (for encryption)",
         "输入主密码以解密本机保存的 API 密钥" => "Enter the master password to decrypt stored API keys",
         "重置凭据库" => "Reset Vault",
         "删除本机加密凭据库，重新开始设置" => "Delete the local vault and start over",
@@ -302,12 +297,11 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "加载行情中…" => "Loading market data…",
         "暂无K线数据（等待加载或检查网络/代理）" => "No candles yet (waiting or check network/proxy)",
         "24h 高" => "24h High",
-        "24h 开" => "Open",
-        "24h 收" => "Close",
+        "24h 开" => "24h Open",
+        "24h 收" => "24h Close",
         "24h 量" => "Vol",
         "24h 额" => "Turnover",
         "24h 低" => "24h Low",
-        "· 额" => " · Vol",
         "资金费率" => "Funding",
         "挂单 " => "Order ",
         "触发 " => "Trigger ",
@@ -352,9 +346,6 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "左侧列表顶部搜索框实时过滤；输入 ⭐ 旁的星标可将交易对加入自选，自选排在列表最顶部" => {
             "The search box filters the list live; click the star to add a symbol to favorites — favorites are pinned to the top"
         }
-        "点击交易对名称旁的 ⓘ 按钮可查看其属性（精度、过滤器、支持的订单类型，合约还包含合约类型/保证金资产/上架时间等）" => {
-            "Click ⓘ next to a symbol to inspect its properties (precisions, filters, supported order types; futures also show contract type, margin asset, listing date, etc.)"
-        }
         "自选按市场分别保存（现货与合约互不影响），持久化到本机配置" => {
             "Favorites are saved per market (spot and futures independent) and persisted to the local config"
         }
@@ -395,7 +386,6 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "已撤销委托 #" => "Order canceled #",
         "已撤销 " => "Canceled all orders for ",
         "委托已提交 (#" => " order submitted (#",
-        "已设为" => " set to ",
         "杠杆已设为" => "leverage set to ",
         "持仓模式已切换" => "Position mode switched",
         "连接 Binance 失败: " => "Binance connection failed: ",
@@ -405,25 +395,27 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "合约账户: " => "Futures account: ",
         "加载K线失败: " => "Failed to load candles: ",
         "价格/数量超出可表示范围，请检查输入" => "Price/qty out of representable range",
-        "缺少 " => "Missing rules for ",
         " 交易规则（等待行情初始化）" => " (waiting for market init)",
         "已实现盈亏: " => "Realized PnL: ",
-        // ---- 交易对属性 ----
-        "交易对属性" => "Symbol Info",
-        "基础资产" => "Base Asset",
-        "计价资产" => "Quote Asset",
-        "合约类型" => "Contract Type",
-        "保证金资产" => "Margin Asset",
-        "价格精度" => "Price Precision",
-        "数量精度" => "Qty Precision",
-        "最小变动" => "Tick Size",
-        "最小数量" => "Min Qty",
-        "最大数量" => "Max Qty",
-        "最小名义金额" => "Min Notional",
-        "支持订单类型" => "Order Types",
-        "权限" => "Permissions",
-        "上架时间" => "Listed",
-        "标的类型" => "Underlying",
+        // ---- 补充（评审缺口）----
+        "盘口 10 档" => "Order Book (10)",
+        "切换主题" => "Toggle theme",
+        "切换语言" => "Toggle language",
+        "实盘环境 · 真实资金" => "LIVE · Real Funds",
+        "保存失败: " => "Failed to save: ",
+        "该交易对无挂单" => "No open orders for this symbol",
+        "请先在交易页选择交易对" => "Select a symbol on the trading page first",
+        "主密码（验证现有主密码）" => "Master password (verify current)",
+        "开" => "Open",
+        "高" => "High",
+        "低" => "Low",
+        "收" => "Close",
+        "量" => "Vol",
+        "单向" => "One-way",
+        "做多" => "Long",
+        "做空" => "Short",
+        "缺少" => "Missing",
+        "加载失败: " => "Failed to load: ",
         _ => return_en_fallback(zh),
     }
 }

@@ -4,23 +4,34 @@ use crate::engine::state::{ConnState, SharedState, Toast, ToastKind};
 use crate::ui::theme;
 use chrono::{Local, TimeZone};
 use eframe::egui;
-use egui::{Align2, Color32, FontId, Id, Stroke};
+use egui::{Align2, FontId, Id, Stroke};
 use rust_decimal::Decimal;
 
 pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
-    let (c, label) = match st {
-        ConnState::Connected => (theme::cur().up, crate::i18n::tr("已连接").to_string()),
-        ConnState::Connecting => (theme::cur().accent, crate::i18n::tr("连接中").to_string()),
+    // 失败态只显示短标签，完整错误放悬停提示：长错误串会撑爆顶栏布局
+    let (c, label, hover) = match st {
+        ConnState::Connected => (
+            theme::cur().up,
+            crate::i18n::tr("已连接").to_string(),
+            None,
+        ),
+        ConnState::Connecting => (
+            theme::cur().accent,
+            crate::i18n::tr("连接中").to_string(),
+            None,
+        ),
         ConnState::Disconnected => (
-            Color32::from_rgb(90, 99, 112),
+            theme::cur().text_dim,
             crate::i18n::tr("未连接").to_string(),
+            None,
         ),
         ConnState::Failed(e) => (
             theme::cur().err,
-            format!("{}{e}", crate::i18n::tr("错误: ")),
+            crate::i18n::tr("错误").to_string(),
+            Some(format!("{}{e}", crate::i18n::tr("错误: "))),
         ),
     };
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
     let p = ui.painter();
     p.circle_filled(rect.center(), 4.5, c);
     // 已连接时加一圈微光晕
@@ -30,6 +41,9 @@ pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
             6.5,
             Stroke::new(1.0_f32, c.gamma_multiply(0.35)),
         );
+    }
+    if let Some(h) = hover {
+        resp.on_hover_text(h);
     }
     ui.label(
         egui::RichText::new(label)
@@ -41,7 +55,7 @@ pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
 /// 数字输入框：等宽字体 + 提示
 pub fn num_field(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str) {
     egui::TextEdit::singleline(text)
-        .id_salt(Id::new(id))
+        .id_salt(id)
         .desired_width(120.0)
         .font(egui::TextStyle::Monospace)
         .text_color(theme::cur().text)

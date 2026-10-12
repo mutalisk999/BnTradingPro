@@ -8,6 +8,29 @@ use egui_extras::{Column, TableBuilder};
 use rust_decimal::Decimal;
 use std::sync::Arc;
 
+/// 账户列加载失败的显式错误行 + 重试入口（避免无限"加载中…"）
+fn load_failed_row(
+    state: &Arc<crate::engine::state::SharedState>,
+    ui: &mut egui::Ui,
+    err: Option<String>,
+) {
+    match err {
+        Some(e) => {
+            ui.label(
+                egui::RichText::new(format!("{}{e}", crate::i18n::tr("加载失败: ")))
+                    .size(11.5)
+                    .color(theme::cur().err),
+            );
+            if ui.small_button(crate::i18n::tr("刷新账户")).clicked() {
+                state.send_cmd(Command::RefreshAccount);
+            }
+        }
+        None => {
+            ui.label(egui::RichText::new(crate::i18n::tr("加载中…")).color(theme::cur().text_dim));
+        }
+    }
+}
+
 pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     if !state.has_creds() {
@@ -35,7 +58,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 theme::card(ui, |ui| {
                     ui.set_min_width(ui.available_width() / 4.2);
                     ui.vertical(|ui| {
-                        ui.label(theme::card_label(name));
+                        ui.label(theme::card_label(crate::i18n::tr(name)));
                         let c = if colored {
                             theme::signed_color(v)
                         } else {
@@ -99,19 +122,27 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 }
 
 fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) {
-    let acct = state.acct.lock();
-    let Some(a) = acct.spot.as_ref() else {
-        ui.label(egui::RichText::new(crate::i18n::tr("加载中…")).color(theme::cur().text_dim));
-        return;
+    // 短锁拷贝后绘制：acct 是引擎写热点（WS 推送/REST 刷新），
+    // 不能在整个表格构建期间持有锁（与 chart.rs 的 clone-and-release 纪律一致）
+    let (nonzero, can_trade) = {
+        let acct = state.acct.lock();
+        let Some(a) = acct.spot.as_ref() else {
+            let err = acct.spot_err.clone();
+            drop(acct);
+            load_failed_row(state, ui, err);
+            return;
+        };
+        let rows: Vec<_> = a
+            .balances
+            .iter()
+            .filter(|b| b.free != Decimal::ZERO || b.locked != Decimal::ZERO)
+            .cloned()
+            .collect();
+        (rows, a.can_trade)
     };
-    let nonzero: Vec<_> = a
-        .balances
-        .iter()
-        .filter(|b| b.free != Decimal::ZERO || b.locked != Decimal::ZERO)
-        .collect();
-    if !a.can_trade {
+    if !can_trade {
         ui.label(
-            egui::RichText::new("（该 Key 无交易权限）")
+            egui::RichText::new(crate::i18n::tr("（该 Key 无交易权限）"))
                 .size(11.5)
                 .color(theme::cur().warn),
         );
@@ -160,16 +191,21 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
 }
 
 fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) {
-    let acct = state.acct.lock();
-    let Some(a) = acct.fut.as_ref() else {
-        ui.label(egui::RichText::new(crate::i18n::tr("加载中…")).color(theme::cur().text_dim));
-        return;
+    // 短锁拷贝后绘制（同 show_spot）
+    let assets: Vec<crate::binance::model::FutBalance> = {
+        let acct = state.acct.lock();
+        let Some(a) = acct.fut.as_ref() else {
+            let err = acct.fut_err.clone();
+            drop(acct);
+            load_failed_row(state, ui, err);
+            return;
+        };
+        a.assets
+            .iter()
+            .filter(|b| b.wallet != Decimal::ZERO)
+            .cloned()
+            .collect()
     };
-    let assets: Vec<_> = a
-        .assets
-        .iter()
-        .filter(|b| b.wallet != Decimal::ZERO)
-        .collect();
     if assets.is_empty() {
         ui.label(egui::RichText::new(crate::i18n::tr("暂无非零资产")).color(theme::cur().text_dim));
         return;
@@ -276,15 +312,16 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
             for p in &positions {
                 body.row(22.0, |mut row| {
                     let long = p.amt > Decimal::ZERO;
-                    let f = |d: &Decimal| widgets::f64_decimal(d);
+                    // 价格/盈亏用 normalize 全精度展示：固定 {:.4} 会把
+                    // 低价币（<0.0001）的开仓价、盈亏、强平价全部显示成 0
                     row.col(|ui| {
                         ui.label(egui::RichText::new(&p.symbol).strong().size(12.0));
                     });
                     row.col(|ui| {
                         let (txt, c) = if long {
-                            ("多", theme::cur().up)
+                            (crate::i18n::tr("多"), theme::cur().up)
                         } else {
-                            ("空", theme::cur().down)
+                            (crate::i18n::tr("空"), theme::cur().down)
                         };
                         ui.label(egui::RichText::new(txt).color(c).strong().size(12.0));
                     });
@@ -297,34 +334,34 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         ui.label(
-                            egui::RichText::new(format!("{:.4}", f(&p.entry_price)))
+                            egui::RichText::new(p.entry_price.normalize().to_string())
                                 .monospace()
                                 .size(12.0),
                         );
                     });
                     row.col(|ui| {
                         ui.label(
-                            egui::RichText::new(format!("{:.4}", f(&p.mark_price)))
+                            egui::RichText::new(p.mark_price.normalize().to_string())
                                 .monospace()
                                 .size(12.0),
                         );
                     });
                     row.col(|ui| {
-                        let up = f(&p.unrealized);
                         ui.label(
-                            egui::RichText::new(format!("{up:+.4}"))
+                            egui::RichText::new(format!("{:+}", p.unrealized.normalize()))
                                 .monospace()
                                 .size(12.0)
-                                .color(theme::signed_color(up)),
+                                .color(theme::signed_color(widgets::f64_decimal(
+                                    &p.unrealized,
+                                ))),
                         );
                     });
                     row.col(|ui| {
-                        let liq = f(&p.liquidation_price);
                         ui.label(
-                            egui::RichText::new(if liq > 0.0 {
-                                format!("{liq:.2}")
-                            } else {
+                            egui::RichText::new(if p.liquidation_price.is_zero() {
                                 "—".into()
+                            } else {
+                                p.liquidation_price.normalize().to_string()
                             })
                             .monospace()
                             .size(12.0),
@@ -332,7 +369,11 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         ui.label(
-                            egui::RichText::new(format!("{}x", f(&p.leverage) as i64)).size(12.0),
+                            egui::RichText::new(format!(
+                                "{}x",
+                                widgets::f64_decimal(&p.leverage) as i64
+                            ))
+                            .size(12.0),
                         );
                     });
                     row.col(|ui| {
@@ -355,34 +396,6 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
         });
 
     if let Some((symbol, side, qty, pos_side)) = close_req {
-        let mark = state
-            .acct
-            .lock()
-            .fut_positions
-            .iter()
-            .find(|p| p.symbol == symbol)
-            .map(|p| p.mark_price)
-            .unwrap_or_default();
-        let req = crate::binance::client::OrderRequest {
-            symbol: symbol.clone(),
-            side,
-            kind: crate::binance::client::OrderKind::Market { qty },
-            position_side: pos_side,
-            reduce_only: !state.acct.lock().fut_dual_side,
-            client_id: Some(format!("btp-{}", chrono::Utc::now().timestamp_millis())),
-        };
-        let mut rows = crate::ui::trade::order_rows(&req);
-        if !mark.is_zero() {
-            rows.push((
-                crate::i18n::tr("预估金额").to_string(),
-                format!("≈ {}", (qty * mark).normalize().round_dp(8)),
-            ));
-        }
-        app.confirm = Some(crate::app::ConfirmOrder {
-            market: crate::binance::Market::UmFutures,
-            side: req.side,
-            req,
-            rows,
-        });
+        crate::ui::trade::confirm_market_close(app, symbol, side, qty, pos_side);
     }
 }

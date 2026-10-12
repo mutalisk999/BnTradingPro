@@ -15,7 +15,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let dir = config::data_dir();
     let mut apply = false;
 
-    ui.heading(egui::RichText::new(crate::i18n::tr("设置")).size(14.0));
+    ui.heading(egui::RichText::new(crate::i18n::tr("设置")).strong().size(16.5));
     ui.separator();
 
     // ---------- 环境 ----------
@@ -62,6 +62,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.label(crate::i18n::tr("地址"));
             ui.add(
                 egui::TextEdit::singleline(&mut app.settings.proxy_url)
+                    .text_color(theme::cur().text)
                     .desired_width(320.0)
                     .hint_text(
                         "http://127.0.0.1:7890 或 socks5://127.0.0.1:7890（支持 user:pass@）",
@@ -145,6 +146,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.label(crate::i18n::tr("默认交易对"));
             ui.add(
                 egui::TextEdit::singleline(&mut app.settings.default_symbol)
+                    .text_color(theme::cur().text)
                     .desired_width(110.0)
                     .hint_text("BTCUSDT"),
             );
@@ -188,6 +190,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 ui.label(crate::i18n::tr("现货 REST"));
                 ui.add(
                     egui::TextEdit::singleline(&mut app.settings.override_spot_rest)
+                        .text_color(theme::cur().text)
                         .desired_width(360.0)
                         .hint_text("https://api.binance.com"),
                 );
@@ -195,6 +198,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 ui.label(crate::i18n::tr("现货 WS"));
                 ui.add(
                     egui::TextEdit::singleline(&mut app.settings.override_spot_ws)
+                        .text_color(theme::cur().text)
                         .desired_width(360.0)
                         .hint_text("wss://stream.binance.com:9443"),
                 );
@@ -202,6 +206,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 ui.label(crate::i18n::tr("合约 REST"));
                 ui.add(
                     egui::TextEdit::singleline(&mut app.settings.override_fut_rest)
+                        .text_color(theme::cur().text)
                         .desired_width(360.0)
                         .hint_text("https://fapi.binance.com"),
                 );
@@ -209,6 +214,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 ui.label(crate::i18n::tr("合约 WS"));
                 ui.add(
                     egui::TextEdit::singleline(&mut app.settings.override_fut_ws)
+                        .text_color(theme::cur().text)
                         .desired_width(360.0)
                         .hint_text("wss://fstream.binance.com"),
                 );
@@ -323,10 +329,19 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     });
 
     if apply {
+        // 自选列表不在设置页编辑（由侧栏星标实时修改 state.cfg），必须以 live
+        // 值覆盖草稿，否则保存设置会把用户启动后添加的自选静默回滚到旧快照。
+        // 语言/主题设置页可编辑，以草稿为准（顶栏快捷切换会同步进草稿）。
+        {
+            let live = state.cfg.read();
+            app.settings.favorites_spot = live.favorites_spot.clone();
+            app.settings.favorites_futures = live.favorites_futures.clone();
+        }
         let cfg: AppConfig = std::mem::take(&mut app.settings).into_cfg();
         // 保留草稿（into_cfg 消耗了草稿），保证继续编辑不丢字段
         app.settings = SettingsDraft::from_cfg(&cfg);
-        cfg.save(&dir);
+        // 落盘走引擎命令（update_cfg 只更新内存并触发重连）
+        state.send_cmd(crate::engine::Command::PersistConfig);
         state.update_cfg(cfg);
         state.push_toast(
             ToastKind::Ok,

@@ -21,13 +21,16 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             let rect = ui.max_rect();
             let p = ui.painter();
+            // 光晕颜色随主题派生（accent/up），避免主题调整后此处残留旧色值
+            let acc = theme::cur().accent;
+            let up = theme::cur().up;
             p.circle_filled(
                 Pos2::new(
                     rect.left() + rect.width() * 0.18,
                     rect.top() + rect.height() * 0.12,
                 ),
                 rect.height() * 0.42,
-                Color32::from_rgba_unmultiplied(240, 185, 11, 10),
+                Color32::from_rgba_unmultiplied(acc.r(), acc.g(), acc.b(), 10),
             );
             p.circle_filled(
                 Pos2::new(
@@ -35,7 +38,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     rect.bottom() - rect.height() * 0.08,
                 ),
                 rect.height() * 0.38,
-                Color32::from_rgba_unmultiplied(46, 203, 129, 8),
+                Color32::from_rgba_unmultiplied(up.r(), up.g(), up.b(), 8),
             );
 
             let avail = ui.max_rect();
@@ -94,7 +97,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 }
 
 fn card_header(ui: &mut egui::Ui, title: &str) {
-    ui.label(egui::RichText::new(title).heading());
+    // 页面标题统一 16.5（egui heading 默认 19px 与其他页不一致）
+    ui.label(egui::RichText::new(title).strong().size(16.5));
     ui.separator();
 }
 
@@ -156,7 +160,7 @@ fn primary_btn(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
         egui::RichText::new(text)
             .strong()
             .size(14.5)
-            .color(Color32::from_rgb(28, 22, 2)),
+            .color(theme::cur().on_accent),
     )
     .fill(theme::cur().accent)
     .corner_radius(5)
@@ -177,7 +181,7 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.add_space(10.0);
     ui.label(theme::card_label(crate::i18n::tr("主密码")));
     let pw_resp = ui.add(
-        egui::TextEdit::singleline(&mut app.pw1)
+        egui::TextEdit::singleline(&mut *app.pw1)
             .password(true)
             .desired_width(f32::INFINITY)
             .font(egui::TextStyle::Monospace),
@@ -297,7 +301,19 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
     let need_master = vault_exists || app.master.is_none();
     if need_master {
         if vault_exists {
-            ui.label(theme::card_label(crate::i18n::tr("主密码（用于加密保存）")));
+            // 已有凭据库时也必须能输入主密码（用于验证），否则 can_save 永远为
+            // false，"更换密钥"流程会困死在本页
+            ui.label(theme::card_label(crate::i18n::tr("主密码（验证现有主密码）")));
+            let pw_resp = ui.add(
+                egui::TextEdit::singleline(&mut *app.pw1)
+                    .password(true)
+                    .desired_width(f32::INFINITY)
+                    .font(egui::TextStyle::Monospace),
+            );
+            if ui.ctx().memory(|m| m.focused().is_none()) {
+                pw_resp.request_focus();
+            }
+            ui.add_space(6.0);
         } else {
             ui.add(
                 egui::Label::new(
@@ -310,7 +326,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.add_space(4.0);
             ui.label(theme::card_label(crate::i18n::tr("主密码（至少 8 位）")));
             ui.add(
-                egui::TextEdit::singleline(&mut app.pw1)
+                egui::TextEdit::singleline(&mut *app.pw1)
                     .password(true)
                     .desired_width(f32::INFINITY)
                     .font(egui::TextStyle::Monospace),
@@ -318,7 +334,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.add_space(4.0);
             ui.label(theme::card_label(crate::i18n::tr("再输一次")));
             ui.add(
-                egui::TextEdit::singleline(&mut app.pw2)
+                egui::TextEdit::singleline(&mut *app.pw2)
                     .password(true)
                     .desired_width(f32::INFINITY)
                     .font(egui::TextStyle::Monospace),
@@ -328,8 +344,11 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
     }
 
     ui.label(theme::card_label("API Key"));
+    // API Key 同样遮蔽：仅凭 Key 即可创建 listenKey 读取成交/余额推送，
+    // 不能在录屏/共享屏幕时明文暴露
     ui.add(
-        egui::TextEdit::singleline(&mut app.api_key)
+        egui::TextEdit::singleline(&mut *app.api_key)
+            .password(true)
             .desired_width(f32::INFINITY)
             .font(egui::TextStyle::Monospace)
             .text_color(theme::cur().text),
@@ -337,7 +356,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.add_space(6.0);
     ui.label(theme::card_label("API Secret"));
     ui.add(
-        egui::TextEdit::singleline(&mut app.api_secret)
+        egui::TextEdit::singleline(&mut *app.api_secret)
             .password(true)
             .desired_width(f32::INFINITY)
             .font(egui::TextStyle::Monospace)
@@ -410,32 +429,32 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         }
     }
     ui.add_space(2.0);
-    if !vault_exists {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .small_button(
-                    egui::RichText::new(crate::i18n::tr("跳过，仅看行情"))
-                        .size(11.5)
-                        .color(theme::cur().text_dim),
-                )
-                .clicked()
-            {
-                app.api_key.clear();
-                app.api_secret.clear();
-                app.pw1.clear();
-                app.pw2.clear();
-                app.phase = Phase::Main;
-            }
-        });
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(crate::i18n::tr(
-                    "跳过后仍可查看实时行情与 K 线，随时可在设置页配置密钥",
-                ))
-                .size(11.0)
-                .color(theme::cur().text_dim.gamma_multiply(0.85)),
+    // 跳过入口两种分支都要有：换钥流程（已有库）也需要能随时退出本页，
+    // 否则用户点开"更换密钥"后无路可退
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if ui
+            .small_button(
+                egui::RichText::new(crate::i18n::tr("跳过，仅看行情"))
+                    .size(11.5)
+                    .color(theme::cur().text_dim),
             )
-            .wrap_mode(egui::TextWrapMode::Wrap),
-        );
-    }
+            .clicked()
+        {
+            app.api_key.clear();
+            app.api_secret.clear();
+            app.pw1.clear();
+            app.pw2.clear();
+            app.phase = Phase::Main;
+        }
+    });
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(crate::i18n::tr(
+                "跳过后仍可查看实时行情与 K 线，随时可在设置页配置密钥",
+            ))
+            .size(11.0)
+            .color(theme::cur().text_dim.gamma_multiply(0.85)),
+        )
+        .wrap_mode(egui::TextWrapMode::Wrap),
+    );
 }

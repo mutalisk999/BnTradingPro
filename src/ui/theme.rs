@@ -35,6 +35,10 @@ pub struct Theme {
     pub row_hover: Color32,
     /// 大按钮未选中态底色（买/卖切换、页签等）
     pub btn_idle: Color32,
+    /// 涨/跌等彩色填充（买卖按钮、最新价标签）上的前景文字
+    pub on_fill: Color32,
+    /// 金色 accent 填充（主按钮）上的前景文字
+    pub on_accent: Color32,
 }
 
 pub const DARK: Theme = Theme {
@@ -57,6 +61,8 @@ pub const DARK: Theme = Theme {
     tag_bg: Color32::from_rgb(44, 52, 66),
     row_hover: Color32::from_rgb(38, 46, 60),
     btn_idle: Color32::from_rgb(30, 37, 48),
+    on_fill: Color32::from_rgb(255, 255, 255),
+    on_accent: Color32::from_rgb(28, 22, 2),
 };
 
 pub const LIGHT: Theme = Theme {
@@ -79,6 +85,8 @@ pub const LIGHT: Theme = Theme {
     tag_bg: Color32::from_rgb(219, 225, 234),
     row_hover: Color32::from_rgb(235, 239, 245),
     btn_idle: Color32::from_rgb(226, 232, 240),
+    on_fill: Color32::from_rgb(255, 255, 255),
+    on_accent: Color32::from_rgb(40, 30, 4),
 };
 
 static MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
@@ -114,6 +122,25 @@ pub fn signed_color(d: f64) -> Color32 {
         t.down
     } else {
         t.text_dim
+    }
+}
+
+/// MA 均线配色：浅色主题用加深变体（原色在近白图表背景上对比度不足 3:1）
+pub fn ma_colors() -> [Color32; 4] {
+    if is_light() {
+        [
+            Color32::from_rgb(178, 122, 0),  // 琥珀（加深）
+            Color32::from_rgb(186, 32, 118), // 粉（加深）
+            Color32::from_rgb(0, 116, 172),  // 青（加深）
+            Color32::from_rgb(104, 66, 180), // 紫（加深）
+        ]
+    } else {
+        [
+            Color32::from_rgb(255, 193, 61),
+            Color32::from_rgb(240, 100, 181),
+            Color32::from_rgb(80, 200, 255),
+            Color32::from_rgb(170, 130, 255),
+        ]
     }
 }
 

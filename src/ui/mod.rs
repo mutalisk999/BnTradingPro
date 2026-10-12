@@ -6,6 +6,7 @@ pub mod help;
 pub mod market;
 pub mod orders;
 pub mod settings;
+pub mod symbols;
 pub mod theme;
 pub mod trade;
 pub mod unlock;

@@ -4,11 +4,29 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// 代理配置（REST 与 WebSocket 均生效）
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ProxyConfig {
     pub enabled: bool,
     /// 支持 http://host:port 与 socks5://[user:pass@]host:port
     pub url: String,
+}
+
+impl std::fmt::Debug for ProxyConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // url 可能内嵌 user:pass@：Debug 输出一律脱敏，
+        // 防止 cfg 的 {:?} 进日志时带出代理口令（明文落盘 config.toml 是既定取舍）
+        let redacted = match self.url.split_once("://") {
+            Some((scheme, rest)) => {
+                let host = rest.rsplit('@').next().unwrap_or("");
+                format!("{scheme}//***@{host}")
+            }
+            None => self.url.clone(),
+        };
+        f.debug_struct("ProxyConfig")
+            .field("enabled", &self.enabled)
+            .field("url", &redacted)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

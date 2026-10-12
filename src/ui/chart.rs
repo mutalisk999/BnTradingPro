@@ -8,23 +8,25 @@ use crate::ui::widgets;
 use chrono::TimeZone;
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
-use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 
-/// 均线周期与配色（MA5/MA10/MA20/MA60）
+/// 均线周期（MA5/MA10/MA20/MA60）；配色见 `theme::ma_colors()`（随主题切换）
 pub const MA_PERIODS: [usize; 4] = [5, 10, 20, 60];
-pub const MA_COLORS: [Color32; 4] = [
-    Color32::from_rgb(255, 193, 61),  // 琥珀
-    Color32::from_rgb(240, 100, 181), // 粉
-    Color32::from_rgb(80, 200, 255),  // 青
-    Color32::from_rgb(170, 130, 255), // 紫
-];
 
 #[derive(Debug, Clone)]
 pub struct ChartState {
     pub bars_visible: f32,
     pub right_off: f32,
     pub ma: [bool; 4],
+    /// K 线克隆缓存：按 (市场, 交易对, 周期, kline_version) 失效。
+    /// 之前每帧深克隆最多 1500 根 K 线并全量重建 SMA 前缀和（~10MB/s 分配），
+    /// 缓存后仅在数据变化时重算一次
+    cache_key: Option<(crate::binance::Market, String, Interval, u64)>,
+    cache_klines: Vec<Candle>,
+    cache_closes: Vec<f64>,
+    /// 收盘价前缀和（长度 = closes.len()+1）：所有周期 SMA 共用，
+    /// 查询 (prefix[gi+1]-prefix[gi+1-period])/period
+    cache_prefix: Vec<f64>,
 }
 
 impl Default for ChartState {
@@ -33,6 +35,10 @@ impl Default for ChartState {
             bars_visible: 120.0,
             right_off: 0.0,
             ma: [true, true, true, false],
+            cache_key: None,
+            cache_klines: Vec::new(),
+            cache_closes: Vec::new(),
+            cache_prefix: Vec::new(),
         }
     }
 }
@@ -45,23 +51,30 @@ pub struct Overlay {
 
 pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = app.state.clone();
-    let dp = state.with_rule(app.market, &app.symbol, |r| {
+    let dp = state.with_rule(app.market, &app.page.symbol, |r| {
         r.map(|x| x.price_dp()).unwrap_or(2)
     });
 
     // ---------- 头部工具行：MA 开关（24h 统计已移至页头） ----------
+    let ma_colors = theme::ma_colors();
     ui.horizontal(|ui| {
         for (i, &period) in MA_PERIODS.iter().enumerate() {
             let label = egui::RichText::new(format!("MA{period}"))
                 .size(11.5)
                 .strong();
-            let label = if app.chart.ma[i] {
-                label.color(MA_COLORS[i])
+            let label = if app.page.chart.ma[i] {
+                label.color(ma_colors[i])
             } else {
                 label.color(theme::cur().text_dim)
             };
-            if ui.selectable_label(app.chart.ma[i], label).clicked() {
-                app.chart.ma[i] = !app.chart.ma[i];
+            if ui
+                .add(
+                    egui::Button::selectable(app.page.chart.ma[i], label)
+                        .min_size(egui::vec2(0.0, 24.0)),
+                )
+                .clicked()
+            {
+                app.page.chart.ma[i] = !app.page.chart.ma[i];
             }
         }
     });
@@ -71,7 +84,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let mut overlays: Vec<Overlay> = Vec::new();
     if state.has_creds() {
         for o in state.orders.lock().open(app.market).iter() {
-            if o.symbol == app.symbol {
+            if o.symbol == app.page.symbol {
                 let color = if o.side == "BUY" {
                     theme::cur().up
                 } else {
@@ -84,13 +97,13 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 };
                 if let Some(p) = o.price.filter(|p| !p.is_zero()) {
                     overlays.push(Overlay {
-                        price: f64_of(&p),
+                        price: widgets::f64_decimal(&p),
                         color,
                         label: format!("{}{} {}", crate::i18n::tr("挂单 "), side_txt, fmt_norm(&p)),
                     });
                 } else if let Some(s) = o.stop_price.filter(|s| !s.is_zero()) {
                     overlays.push(Overlay {
-                        price: f64_of(&s),
+                        price: widgets::f64_decimal(&s),
                         color,
                         label: format!("{}{} {}", crate::i18n::tr("触发 "), side_txt, fmt_norm(&s)),
                     });
@@ -99,9 +112,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         }
         if app.market == crate::binance::Market::UmFutures {
             for p in state.acct.lock().fut_positions.iter() {
-                if p.symbol == app.symbol && p.amt != Decimal::ZERO {
+                if p.symbol == app.page.symbol && p.amt != Decimal::ZERO {
                     overlays.push(Overlay {
-                        price: f64_of(&p.entry_price),
+                        price: widgets::f64_decimal(&p.entry_price),
                         color: theme::cur().accent,
                         label: format!(
                             "{}{}",
@@ -114,17 +127,34 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         }
     }
 
-    // 短暂持锁克隆所需数据后立即释放：md 是全局行情锁（depth/ticker/kline 每条
-    // WS 消息都要写），不能在整段图表绘制期间持有，否则拖动/悬停重绘会饿死行情写入
-    let (klines, interval) = {
-        let md = state.md.lock();
-        let Some(md) = md.get(app.market, &app.symbol) else {
+    // 短暂持锁：仅当缓存键（市场/交易对/周期/kline版本）变化时才克隆一次 K 线
+    // 并重建 SMA 前缀和；md 是全局行情锁，绝不在绘制期间持有
+    let interval;
+    {
+        let md_guard = state.md.lock();
+        let Some(md) = md_guard.get(app.market, &app.page.symbol) else {
             widgets::placeholder(ui, ui.max_rect(), crate::i18n::tr("加载行情中…"));
             return;
         };
-        (md.klines.clone(), md.interval)
-    };
-    if klines.is_empty() {
+        let key = (app.market, app.page.symbol.clone(), md.interval, md.kline_version);
+        if app.page.chart.cache_key.as_ref() != Some(&key) {
+            app.page.chart.cache_klines = md.klines.clone();
+            app.page.chart.cache_closes = md
+                .klines
+                .iter()
+                .map(|c| widgets::f64_decimal(&c.c))
+                .collect();
+            let mut prefix = Vec::with_capacity(app.page.chart.cache_closes.len() + 1);
+            prefix.push(0.0f64);
+            for v in &app.page.chart.cache_closes {
+                prefix.push(prefix.last().unwrap() + v);
+            }
+            app.page.chart.cache_prefix = prefix;
+            app.page.chart.cache_key = Some(key);
+        }
+        interval = md.interval;
+    }
+    if app.page.chart.cache_klines.is_empty() {
         widgets::placeholder(
             ui,
             ui.max_rect(),
@@ -132,11 +162,17 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         );
         return;
     }
-    draw(ui, app, &klines, interval, dp, &overlays);
-}
-
-fn f64_of(d: &Decimal) -> f64 {
-    d.to_f64().unwrap_or(0.0)
+    // draw 需要 &mut app（交互状态）又引用缓存数据：先把缓存整体取出，
+    // 用独立于 app 的本地借用绘制，结束后归还
+    let (kls, closes, prefix) = (
+        std::mem::take(&mut app.page.chart.cache_klines),
+        std::mem::take(&mut app.page.chart.cache_closes),
+        std::mem::take(&mut app.page.chart.cache_prefix),
+    );
+    draw(ui, app, &kls, &prefix, interval, dp, &overlays);
+    app.page.chart.cache_klines = kls;
+    app.page.chart.cache_closes = closes;
+    app.page.chart.cache_prefix = prefix;
 }
 
 fn fmt_norm(d: &Decimal) -> String {
@@ -147,6 +183,7 @@ fn draw(
     ui: &mut egui::Ui,
     app: &mut BnApp,
     candles: &[Candle],
+    prefix: &[f64],
     interval: Interval,
     dp: u32,
     overlays: &[Overlay],
@@ -163,23 +200,23 @@ fn draw(
         let scroll = ui.input(|i| i.smooth_scroll_delta).y;
         if scroll.abs() > 0.5 {
             let f = (1.0 + scroll * 0.0015).clamp(0.6, 1.6);
-            app.chart.bars_visible = (app.chart.bars_visible * f).clamp(20.0, 480.0);
+            app.page.chart.bars_visible = (app.page.chart.bars_visible * f).clamp(20.0, 480.0);
         }
     }
     if resp.dragged() {
         let d = resp.drag_delta();
-        let bar_w = plot.width() / app.chart.bars_visible.max(1.0);
+        let bar_w = plot.width() / app.page.chart.bars_visible.max(1.0);
         // 上界取 max(0)，K 线不足 10 根时 clamp 不会 panic
         let max_off = (candles.len() as f32 - 10.0).max(0.0);
-        app.chart.right_off = (app.chart.right_off + d.x / bar_w).clamp(0.0, max_off);
+        app.page.chart.right_off = (app.page.chart.right_off + d.x / bar_w).clamp(0.0, max_off);
     }
     if resp.double_clicked() {
-        app.chart.right_off = 0.0;
+        app.page.chart.right_off = 0.0;
     }
 
     let n = candles.len() as i64;
-    let bars = app.chart.bars_visible.min(n as f32).max(10.0);
-    let end = (n - app.chart.right_off as i64).clamp(1, n);
+    let bars = app.page.chart.bars_visible.min(n as f32).max(10.0);
+    let end = (n - app.page.chart.right_off as i64).clamp(1, n);
     let start = (end - bars as i64).max(0);
     let visible = &candles[start as usize..end as usize];
     if visible.is_empty() {
@@ -187,25 +224,27 @@ fn draw(
     }
 
     // ---------- 价格范围 ----------
-    // 每帧一次把 Decimal 批量转 f64：旧实现在多条绘制通道里反复 to_string().parse()，
-    // 480 根可见 K 线时每帧上万次字符串堆分配。SMA 改前缀和，O(1) 查询替代 O(period) 重算。
-    let closes: Vec<f64> = candles.iter().map(|c| f64_of(&c.c)).collect();
-    let mut prefix = Vec::with_capacity(closes.len() + 1);
-    prefix.push(0.0f64);
-    for v in &closes {
-        prefix.push(prefix.last().unwrap() + v);
-    }
+    // closes/prefix 由调用方按 kline_version 缓存传入（见 show），
+    // SMA 查询 O(1)：(prefix[gi+1]-prefix[gi+1-period])/period
     let sma_at = |gi: usize, period: usize| -> Option<f64> {
-        if gi + 1 < period {
+        if gi + 1 < period || gi + 1 >= prefix.len() {
             return None;
         }
         Some((prefix[gi + 1] - prefix[gi + 1 - period]) / period as f64)
     };
+    let ma_colors = theme::ma_colors();
     let vis_ohlc: Vec<[f64; 4]> = visible
         .iter()
-        .map(|c| [f64_of(&c.o), f64_of(&c.h), f64_of(&c.l), f64_of(&c.c)])
+        .map(|c| {
+            [
+                widgets::f64_decimal(&c.o),
+                widgets::f64_decimal(&c.h),
+                widgets::f64_decimal(&c.l),
+                widgets::f64_decimal(&c.c),
+            ]
+        })
         .collect();
-    let vis_vol: Vec<f64> = visible.iter().map(|c| f64_of(&c.v)).collect();
+    let vis_vol: Vec<f64> = visible.iter().map(|c| widgets::f64_decimal(&c.v)).collect();
 
     let pad_ratio = 0.06;
     let price_h = plot.height() * 0.82;
@@ -224,7 +263,7 @@ fn draw(
     // 可见范围的均线也纳入范围
     for gi in start as usize..end as usize {
         for (k, &period) in MA_PERIODS.iter().enumerate() {
-            if !app.chart.ma[k] {
+            if !app.page.chart.ma[k] {
                 continue;
             }
             if let Some(v) = sma_at(gi, period) {
@@ -264,7 +303,9 @@ fn draw(
     // ---------- 网格与价格轴 ----------
     let step = nice_step(span as f64, 6);
     let grid_font = FontId::monospace(11.0);
-    let mut gp = step as f32;
+    // 从 >= lo 的第一个网格点起步：若从 step 起步，迭代次数为 hi/step——
+    // 全平坦窗口（span 钳到 0.0001）下高价币会达到数十亿次迭代、页面冻结
+    let mut gp = ((lo as f64 / step).floor() * step) as f32;
     while gp <= hi {
         if gp >= lo {
             let y = y_of(gp);
@@ -278,7 +319,7 @@ fn draw(
             painter.text(
                 Pos2::new(plot.left() + chart_w + 6.0, y),
                 Align2::LEFT_CENTER,
-                fmt_f64(gp as f64, dp as usize),
+                widgets::fmt_thousands(gp as f64, dp as usize),
                 grid_font.clone(),
                 theme::cur().text_dim,
             );
@@ -335,7 +376,7 @@ fn draw(
 
     // ---------- MA 均线 ----------
     for (k, &period) in MA_PERIODS.iter().enumerate() {
-        if !app.chart.ma[k] {
+        if !app.page.chart.ma[k] {
             continue;
         }
         let mut pts: Vec<Pos2> = Vec::new();
@@ -345,7 +386,7 @@ fn draw(
             }
         }
         if pts.len() > 1 {
-            painter.add(Shape::line(pts, Stroke::new(1.3_f32, MA_COLORS[k])));
+            painter.add(Shape::line(pts, Stroke::new(1.3_f32, ma_colors[k])));
         }
     }
 
@@ -396,7 +437,7 @@ fn draw(
         5.0,
         4.0,
     ));
-    let tag = fmt_f64(last_close, dp as usize);
+    let tag = widgets::fmt_thousands(last_close, dp as usize);
     let tag_size = egui::vec2(axis_w - 8.0, 16.0);
     painter.rect_filled(
         Rect::from_min_size(
@@ -411,7 +452,7 @@ fn draw(
         Align2::CENTER_CENTER,
         tag,
         FontId::monospace(11.0),
-        Color32::WHITE,
+        theme::cur().on_fill,
     );
 
     // ---------- 叠加线（挂单/持仓） ----------
@@ -464,7 +505,7 @@ fn draw(
             painter.text(
                 Pos2::new(plot.left() + chart_w + 6.0, hp.y),
                 Align2::LEFT_CENTER,
-                fmt_f64(p_of(hp.y) as f64, dp as usize),
+                widgets::fmt_thousands(p_of(hp.y) as f64, dp as usize),
                 grid_font.clone(),
                 theme::cur().text,
             );
@@ -478,12 +519,17 @@ fn draw(
                 0.0
             };
             let lines = format!(
-                "{}\n开 {}  高 {}\n低 {}  收 {}\n量 {}   {}{:.2}%",
+                "{}\n{} {}  {} {}\n{} {}  {} {}\n{} {}   {}{:.2}%",
                 time_label_full(c.t),
-                fmt_f64(o, dp as usize),
-                fmt_f64(h, dp as usize),
-                fmt_f64(l, dp as usize),
-                fmt_f64(close, dp as usize),
+                crate::i18n::tr("开"),
+                widgets::fmt_thousands(o, dp as usize),
+                crate::i18n::tr("高"),
+                widgets::fmt_thousands(h, dp as usize),
+                crate::i18n::tr("低"),
+                widgets::fmt_thousands(l, dp as usize),
+                crate::i18n::tr("收"),
+                widgets::fmt_thousands(close, dp as usize),
+                crate::i18n::tr("量"),
                 fmt_norm(&c.v),
                 if chg >= 0.0 { "+" } else { "" },
                 chg
@@ -552,24 +598,24 @@ fn draw(
     painter.text(
         Pos2::new(plot.left() + 8.0, legend_y),
         Align2::LEFT_TOP,
-        format!("{} · {}", app.symbol, interval.label()),
+        format!("{} · {}", app.page.symbol, interval.label()),
         FontId::proportional(11.5),
         theme::cur().text_dim,
     );
     legend_y += 16.0;
     for (k, &period) in MA_PERIODS.iter().enumerate() {
-        if !app.chart.ma[k] {
+        if !app.page.chart.ma[k] {
             continue;
         }
         let val = sma_at(last_gi, period)
-            .map(|v| fmt_f64(v, dp as usize))
+            .map(|v| widgets::fmt_thousands(v, dp as usize))
             .unwrap_or_else(|| "—".into());
         painter.text(
             Pos2::new(plot.left() + 8.0, legend_y),
             Align2::LEFT_TOP,
             format!("MA{period} {val}"),
             FontId::monospace(11.0),
-            MA_COLORS[k],
+            ma_colors[k],
         );
         legend_y += 14.0;
     }
@@ -607,8 +653,4 @@ fn nice_step(range: f64, target: usize) -> f64 {
         }
     }
     10.0 * mag
-}
-
-fn fmt_f64(v: f64, dp: usize) -> String {
-    widgets::fmt_thousands(v, dp)
 }

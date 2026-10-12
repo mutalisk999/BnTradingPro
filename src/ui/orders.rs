@@ -1,9 +1,8 @@
 //! 订单与持仓：当前挂单（撤销）、合约持仓（平仓/杠杆）、订单历史、成交历史
 
 use crate::app::BnApp;
-use crate::binance::client::{OrderKind, OrderRequest};
 use crate::binance::model::PositionRisk;
-use crate::binance::{FutPosSide, Market, Side};
+use crate::binance::{FutPosSide, Side};
 use crate::engine::Command;
 use crate::ui::{theme, widgets};
 use eframe::egui;
@@ -69,7 +68,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
             state.send_cmd(Command::RefreshOpenOrders { market });
         }
         if !list.is_empty() {
-            let sym = app.symbol.clone();
+            let sym = app.page.symbol.clone();
             let sym_open = list.iter().filter(|o| o.symbol == sym).count();
             // 当前交易对没有挂单时禁用，避免"点了没反应"的静默空操作
             let cancel_all = ui
@@ -173,7 +172,11 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         ui.label(egui::RichText::new(txt).size(11.5).color(c).strong());
                     });
                     row.col(|ui| {
-                        let extra = if o.reduce_only { " 只减" } else { "" };
+                        let extra = if o.reduce_only {
+                            format!(" {}", crate::i18n::tr("只减"))
+                        } else {
+                            String::new()
+                        };
                         ui.label(
                             egui::RichText::new(format!("{}{extra}", type_cn(&o.order_type)))
                                 .size(11.5),
@@ -336,15 +339,16 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
             for p in &positions {
                 body.row(22.0, |mut row| {
                     let long = p.amt > Decimal::ZERO;
-                    let f = |d: &Decimal| crate::ui::widgets::f64_decimal(d);
+                    // 价格/盈亏用 normalize 全精度展示：固定 {:.4} 会把
+                    // 低价币（<0.0001）的开仓价、盈亏、强平价全部显示成 0
                     row.col(|ui| {
                         ui.label(egui::RichText::new(&p.symbol).strong().size(11.5));
                     });
                     row.col(|ui| {
                         let (txt, c) = if long {
-                            ("多", theme::cur().up)
+                            (crate::i18n::tr("多"), theme::cur().up)
                         } else {
-                            ("空", theme::cur().down)
+                            (crate::i18n::tr("空"), theme::cur().down)
                         };
                         ui.label(egui::RichText::new(txt).color(c).strong().size(11.5));
                     });
@@ -357,39 +361,37 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         ui.label(
-                            egui::RichText::new(format!("{:.4}", f(&p.entry_price)))
+                            egui::RichText::new(p.entry_price.normalize().to_string())
                                 .monospace()
                                 .size(11.5),
                         );
                     });
                     row.col(|ui| {
                         ui.label(
-                            egui::RichText::new(format!("{:.4}", f(&p.mark_price)))
+                            egui::RichText::new(p.mark_price.normalize().to_string())
                                 .monospace()
                                 .size(11.5),
                         );
                     });
                     row.col(|ui| {
-                        let up = f(&p.unrealized);
-                        let c = if up >= 0.0 {
+                        let c = if p.unrealized >= Decimal::ZERO {
                             theme::cur().up
                         } else {
                             theme::cur().down
                         };
                         ui.label(
-                            egui::RichText::new(format!("{up:+.4}"))
+                            egui::RichText::new(format!("{:+}", p.unrealized.normalize()))
                                 .monospace()
                                 .color(c)
                                 .size(11.5),
                         );
                     });
                     row.col(|ui| {
-                        let liq = f(&p.liquidation_price);
                         ui.label(
-                            egui::RichText::new(if liq > 0.0 {
-                                format!("{liq:.2}")
-                            } else {
+                            egui::RichText::new(if p.liquidation_price.is_zero() {
                                 "—".into()
+                            } else {
+                                p.liquidation_price.normalize().to_string()
                             })
                             .monospace()
                             .size(11.5),
@@ -397,7 +399,11 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         ui.label(
-                            egui::RichText::new(format!("{}x", f(&p.leverage) as i64)).size(11.5),
+                            egui::RichText::new(format!(
+                                "{}x",
+                                crate::ui::widgets::f64_decimal(&p.leverage) as i64
+                            ))
+                            .size(11.5),
                         );
                     });
                     row.col(|ui| {
@@ -412,39 +418,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
         });
 
     if let Some((symbol, side, qty, pos_side)) = close_req {
-        if !state.has_creds() {
-            return;
-        }
-        let mark = state
-            .acct
-            .lock()
-            .fut_positions
-            .iter()
-            .find(|p| p.symbol == symbol)
-            .map(|p| p.mark_price)
-            .unwrap_or_default();
-        let req = OrderRequest {
-            symbol: symbol.clone(),
-            side,
-            kind: OrderKind::Market { qty },
-            position_side: pos_side,
-            reduce_only: !dual,
-            client_id: Some(format!("btp-{}", chrono::Utc::now().timestamp_millis())),
-        };
-        // 走确认弹窗，避免误触直接发真实市价单；给出金额量级兜住输错数量的失误
-        let mut rows = crate::ui::trade::order_rows(&req);
-        if !mark.is_zero() {
-            rows.push((
-                crate::i18n::tr("预估金额").to_string(),
-                format!("≈ {}", (qty * mark).normalize().round_dp(8)),
-            ));
-        }
-        app.confirm = Some(crate::app::ConfirmOrder {
-            market: Market::UmFutures,
-            side: req.side,
-            req,
-            rows,
-        });
+        crate::ui::trade::confirm_market_close(app, symbol, side, qty, pos_side);
     }
 }
 
@@ -605,8 +579,10 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
         );
         return;
     }
-    let trades = state.orders.lock().trades.clone();
-    let hist_key = state.orders.lock().history_symbol.clone();
+    let (trades, hist_key) = {
+        let o = state.orders.lock();
+        (o.trades.clone(), o.history_symbol.clone())
+    };
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!(
@@ -617,7 +593,13 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
             ))
             .size(12.5),
         );
-        if ui.small_button(crate::i18n::tr("刷新")).clicked() {
+        let resp = ui.add_enabled(
+            hist_key.is_some(),
+            egui::Button::new(crate::i18n::tr("刷新")).small(),
+        );
+        // 尚未选定交易对时刷新是空操作：禁用并说明，避免"点了没反应"
+        let resp = resp.on_disabled_hover_text(crate::i18n::tr("请先在交易页选择交易对"));
+        if resp.clicked() {
             if let Some((m, s)) = hist_key.clone() {
                 state.send_cmd(Command::RefreshHistory {
                     market: m,
@@ -677,9 +659,9 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         let (txt, c) = if t.is_buyer {
-                            ("买入", theme::cur().up)
+                            (crate::i18n::tr("买入"), theme::cur().up)
                         } else {
-                            ("卖出", theme::cur().down)
+                            (crate::i18n::tr("卖出"), theme::cur().down)
                         };
                         ui.label(egui::RichText::new(txt).color(c).size(11.5));
                     });

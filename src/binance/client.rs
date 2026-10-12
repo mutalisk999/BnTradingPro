@@ -69,9 +69,11 @@ pub struct BinanceRest {
     api_key: Option<Zeroizing<String>>,
     api_secret: Option<Zeroizing<String>>,
     time_offset_ms: AtomicI64,
-    weight_used: AtomicU64,
-    weight_window: Mutex<Option<std::time::Instant>>,
-    weight_limit: u64,
+    /// 每市场独立的已用权重计数：现货与合约的限额（6000/min vs 2400/min）
+    /// 与响应头互不相关，混用一份计数会互相污染导致误限速/漏限速
+    weight_used: [AtomicU64; 2],
+    weight_window: [Mutex<Option<std::time::Instant>>; 2],
+    weight_limit: [u64; 2],
 }
 
 impl BinanceRest {
@@ -82,7 +84,7 @@ impl BinanceRest {
             .user_agent(concat!("BnTradingPro/", env!("CARGO_PKG_VERSION")));
         if proxy.enabled && !proxy.url.trim().is_empty() {
             let p = reqwest::Proxy::all(proxy.url.trim())
-                .map_err(|e| BinanceError::Network(format!("代理配置无效: {e}")))?;
+                .map_err(|e| BinanceError::Network(format!("{}{e}", crate::i18n::tr("代理配置无效: "))))?;
             builder = builder.proxy(p);
         }
         let http = builder
@@ -93,9 +95,10 @@ impl BinanceRest {
             api_key: None,
             api_secret: None,
             time_offset_ms: AtomicI64::new(0),
-            weight_used: AtomicU64::new(0),
-            weight_window: Mutex::new(None),
-            weight_limit: 2000, // 兼顾现货 6000/min 与合约 2400/min 的保守阈值
+            weight_used: [AtomicU64::new(0), AtomicU64::new(0)],
+            weight_window: [Mutex::new(None), Mutex::new(None)],
+            // 各自取限额的 2/3 留余量：现货 6000/min、合约 2400/min
+            weight_limit: [4000, 1600],
         })
     }
 
@@ -132,7 +135,7 @@ impl BinanceRest {
         let ep = endpoints(ctx.market, ctx.testnet, overrides);
         // 路径必须带市场前缀：现货 /api/v3/time、合约 /fapi/v1/time
         let path = format!("{}/time", ctx.market.api_prefix());
-        let v = self.get_public_raw(&ep, &path, &[]).await?;
+        let v = self.get_public_raw(&ep, ctx.market, &path, &[]).await?;
         let server = v
             .get("serverTime")
             .and_then(|x| x.as_i64())
@@ -152,7 +155,7 @@ impl BinanceRest {
         params: &[(&str, &str)],
     ) -> Result<Value, BinanceError> {
         let ep = endpoints(ctx.market, ctx.testnet, overrides);
-        self.get_public_raw(&ep, path, params).await
+        self.get_public_raw(&ep, ctx.market, path, params).await
     }
 
     pub async fn signed(
@@ -180,7 +183,7 @@ impl BinanceRest {
         if !self.has_creds() {
             return Err(BinanceError::NoCreds);
         }
-        self.wait_for_weight().await?;
+        self.wait_for_weight(ctx.market).await?;
         let ep = endpoints(ctx.market, ctx.testnet, overrides);
         let url = format!("{}{}", ep.rest, path);
         let key = self.api_key.as_ref().unwrap();
@@ -193,21 +196,22 @@ impl BinanceRest {
             .send()
             .await
             .map_err(map_req_err)?;
-        self.track_weight(&resp);
+        self.track_weight(ctx.market, &resp);
         parse_response(resp).await
     }
 
-    async fn wait_for_weight(&self) -> Result<(), BinanceError> {
+    async fn wait_for_weight(&self, market: Market) -> Result<(), BinanceError> {
+        let i = market as usize;
         let wait = {
-            let mut window = self.weight_window.lock().unwrap();
+            let mut window = self.weight_window[i].lock().unwrap();
             match *window {
                 None => None,
                 Some(start) => {
                     if start.elapsed() > Duration::from_secs(60) {
                         *window = None;
-                        self.weight_used.store(0, Ordering::Relaxed);
+                        self.weight_used[i].store(0, Ordering::Relaxed);
                         None
-                    } else if self.weight_used.load(Ordering::Relaxed) >= self.weight_limit {
+                    } else if self.weight_used[i].load(Ordering::Relaxed) >= self.weight_limit[i] {
                         Some(Duration::from_secs(60) - start.elapsed())
                     } else {
                         None
@@ -218,19 +222,19 @@ impl BinanceRest {
         // 在锁外等待，避免 MutexGuard 跨 await 导致 future 非 Send
         if let Some(wait) = wait {
             tracing::warn!(
-                "已用权重 {} 过高，等待 {:?}",
-                self.weight_used.load(Ordering::Relaxed),
+                "已用权重({market}) {} 过高，等待 {:?}",
+                self.weight_used[i].load(Ordering::Relaxed),
                 wait
             );
             tokio::time::sleep(wait).await;
-            let mut window = self.weight_window.lock().unwrap();
+            let mut window = self.weight_window[i].lock().unwrap();
             *window = None;
-            self.weight_used.store(0, Ordering::Relaxed);
+            self.weight_used[i].store(0, Ordering::Relaxed);
         }
         Ok(())
     }
 
-    fn track_weight(&self, resp: &reqwest::Response) {
+    fn track_weight(&self, market: Market, resp: &reqwest::Response) {
         let h = resp
             .headers()
             .get("x-mbx-used-weight-1m")
@@ -239,8 +243,9 @@ impl BinanceRest {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok())
         {
-            self.weight_used.store(w, Ordering::Relaxed);
-            let mut window = self.weight_window.lock().unwrap();
+            let i = market as usize;
+            self.weight_used[i].store(w, Ordering::Relaxed);
+            let mut window = self.weight_window[i].lock().unwrap();
             if window.is_none() {
                 *window = Some(std::time::Instant::now());
             }
@@ -250,17 +255,18 @@ impl BinanceRest {
     async fn get_public_raw(
         &self,
         ep: &crate::binance::Endpoints,
+        market: Market,
         path: &str,
         params: &[(&str, &str)],
     ) -> Result<Value, BinanceError> {
-        self.wait_for_weight().await?;
+        self.wait_for_weight(market).await?;
         let full = format!("{}{}", ep.rest, path);
         let mut req = self.http.get(&full);
         if !params.is_empty() {
             req = req.query(params);
         }
         let resp = req.send().await.map_err(map_req_err)?;
-        self.track_weight(&resp);
+        self.track_weight(market, &resp);
         parse_response(resp).await
     }
 
@@ -275,7 +281,7 @@ impl BinanceRest {
         if !self.has_creds() {
             return Err(BinanceError::NoCreds);
         }
-        self.wait_for_weight().await?;
+        self.wait_for_weight(ctx.market).await?;
 
         let qs = build_signed_query(
             &params,
@@ -292,7 +298,7 @@ impl BinanceRest {
             .send()
             .await
             .map_err(map_req_err)?;
-        self.track_weight(&resp);
+        self.track_weight(ctx.market, &resp);
         parse_response(resp).await
     }
 }

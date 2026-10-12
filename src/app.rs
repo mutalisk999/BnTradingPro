@@ -6,6 +6,7 @@ use crate::config::{self, AppConfig};
 use crate::engine::state::SharedState;
 use crate::engine::{Command, Engine};
 use crate::security::vault;
+use zeroize::Zeroizing;
 use crate::ui::{chart, orders, settings, theme, trade, unlock, widgets};
 use eframe::egui;
 use std::sync::Arc;
@@ -164,12 +165,14 @@ pub struct BnApp {
     pub engine: Engine,
 
     pub phase: Phase,
-    pub master: Option<String>,
-    pub pw1: String,
-    pub pw2: String,
+    /// 主密码/密钥输入缓冲：Zeroizing 保证 drop 时清零堆内存，
+    /// 与全链路（Creds/客户端 secret）的清零纪律一致
+    pub master: Option<Zeroizing<String>>,
+    pub pw1: Zeroizing<String>,
+    pub pw2: Zeroizing<String>,
     pub pw_err: String,
-    pub api_key: String,
-    pub api_secret: String,
+    pub api_key: Zeroizing<String>,
+    pub api_secret: Zeroizing<String>,
     pub keys_err: String,
 
     /// 当前顶层页签
@@ -177,21 +180,21 @@ pub struct BnApp {
     /// 已应用的主题/语言（用于配置变更时重新应用）
     pub applied_theme: String,
     pub applied_lang: String,
-    /// 活动交易上下文（镜像自 spot/fut 页，切页时保存/恢复，UI 代码直接读写）
+    /// 当前交易市场（随交易页签切换）
     pub market: Market,
-    pub symbol: String,
-    pub interval: Interval,
-    pub symbol_filter: String,
-    pub form: trade::OrderForm,
-    pub chart: chart::ChartState,
-    pub leverage_input: String,
-    pub sub_tab: SubTab,
+    /// 活动交易页状态：交易页签内唯一活跃副本，切页时与 spot/fut 整体 swap。
+    /// 不做逐字段镜像同步——新增字段只改 TradingPage 本身，不存在漏同步
+    pub page: TradingPage,
     pub confirm: Option<ConfirmOrder>,
     pub settings: SettingsDraft,
 
     /// 现货/期货页各自的持久状态
     pub spot: TradingPage,
     pub fut: TradingPage,
+    /// 侧栏符号列表缓存（市场，过滤词大写，结果）：每帧重建 2600 个字符串克隆太浪费
+    pub symbols_cache: Option<(Market, String, std::sync::Arc<Vec<String>>)>,
+    /// 进入主界面后的首帧账户数据加载标记（历史），解锁/存钥后重新触发
+    pub initial_load_done: bool,
     /// 引擎当前唯一的行情订阅（后订阅替换前订阅），用于去重
     pub active_sub: Option<(Market, String, Interval)>,
     /// 删除凭据库的两步确认（第一次点击进入待确认态）
@@ -230,27 +233,23 @@ impl BnApp {
             engine,
             phase,
             master: None,
-            pw1: String::new(),
-            pw2: String::new(),
+            pw1: Zeroizing::default(),
+            pw2: Zeroizing::default(),
             pw_err: String::new(),
-            api_key: String::new(),
-            api_secret: String::new(),
+            api_key: Zeroizing::default(),
+            api_secret: Zeroizing::default(),
             keys_err: String::new(),
             tab: Tab::Spot,
             applied_theme: cfg.theme_mode.clone(),
             applied_lang: cfg.lang.clone(),
             market: Market::Spot,
-            symbol: default_symbol.clone(),
-            interval,
-            symbol_filter: String::new(),
-            form: trade::OrderForm::default(),
-            chart: chart::ChartState::default(),
-            leverage_input: String::new(),
-            sub_tab: SubTab::Open,
+            page: TradingPage::new(default_symbol.clone(), interval),
             confirm: None,
             settings: SettingsDraft::from_cfg(&cfg),
             spot: TradingPage::new(default_symbol.clone(), interval),
             fut: TradingPage::new(default_symbol.clone(), interval),
+            symbols_cache: None,
+            initial_load_done: false,
             // 引擎启动时已订阅现货默认交易对
             active_sub: Some((Market::Spot, default_symbol, interval)),
             vault_delete_armed: false,
@@ -276,13 +275,13 @@ impl BnApp {
             Tab::Futures => &mut self.fut,
             _ => return,
         };
-        page.symbol = self.symbol.clone();
-        page.interval = self.interval;
-        page.symbol_filter = self.symbol_filter.clone();
-        page.form = self.form.clone();
-        page.chart = self.chart.clone();
-        page.sub_tab = self.sub_tab;
-        page.leverage_input = self.leverage_input.clone();
+        page.symbol = self.page.symbol.clone();
+        page.interval = self.page.interval;
+        page.symbol_filter = self.page.symbol_filter.clone();
+        page.form = self.page.form.clone();
+        page.chart = self.page.chart.clone();
+        page.sub_tab = self.page.sub_tab;
+        page.leverage_input = self.page.leverage_input.clone();
     }
 
     /// 从目标页恢复镜像（仅交易页）
@@ -296,15 +295,15 @@ impl BnApp {
             _ => return,
         };
         self.market = m;
-        self.symbol = page.symbol;
-        self.interval = page.interval;
-        self.symbol_filter = page.symbol_filter;
-        self.form = page.form;
-        self.chart = page.chart;
-        self.sub_tab = page.sub_tab;
-        self.leverage_input = page.leverage_input;
+        self.page.symbol = page.symbol;
+        self.page.interval = page.interval;
+        self.page.symbol_filter = page.symbol_filter;
+        self.page.form = page.form;
+        self.page.chart = page.chart;
+        self.page.sub_tab = page.sub_tab;
+        self.page.leverage_input = page.leverage_input;
 
-        self.subscribe(m, self.symbol.clone(), self.interval);
+        self.subscribe(m, self.page.symbol.clone(), self.page.interval);
         if self.state.has_creds() {
             self.state
                 .send_cmd(Command::RefreshOpenOrders { market: m });
@@ -335,16 +334,16 @@ impl BnApp {
     // ---------- 订阅切换 ----------
 
     pub fn switch_symbol(&mut self, s: String) {
-        if self.symbol == s {
+        if self.page.symbol == s {
             return;
         }
-        self.symbol = s.clone();
+        self.page.symbol = s.clone();
         // 表单残留清空 + 图表回到最新
-        self.form.price.clear();
-        self.form.qty.clear();
-        self.form.trigger.clear();
-        self.chart.right_off = 0.0;
-        self.subscribe(self.market, s.clone(), self.interval);
+        self.page.form.price.clear();
+        self.page.form.qty.clear();
+        self.page.form.trigger.clear();
+        self.page.chart.right_off = 0.0;
+        self.subscribe(self.market, s.clone(), self.page.interval);
         if self.state.has_creds() {
             self.state.send_cmd(Command::RefreshOpenOrders {
                 market: self.market,
@@ -357,19 +356,30 @@ impl BnApp {
     }
 
     pub fn switch_interval(&mut self, iv: Interval) {
-        if self.interval == iv {
+        if self.page.interval == iv {
             return;
         }
-        self.interval = iv;
-        let symbol = self.symbol.clone();
+        self.page.interval = iv;
+        // 新快照只有 500 根，保留旧平移偏移会把图表卡在 1 根 K 线上
+        self.page.chart.right_off = 0.0;
+        let symbol = self.page.symbol.clone();
         self.subscribe(self.market, symbol, iv);
     }
-
-    // ---------- eframe::App ----------
 
     // ---------- 布局 ----------
 
     fn main_ui(&mut self, ui: &mut egui::Ui) {
+        // 进入主界面首帧（含解锁/存钥后）：ReloadAll 已覆盖挂单与账户，
+        // 成交/订单历史需要指定交易对，这里补发当前页的
+        if !self.initial_load_done {
+            self.initial_load_done = true;
+            if self.state.has_creds() {
+                self.state.send_cmd(Command::RefreshHistory {
+                    market: self.market,
+                    symbol: self.page.symbol.clone(),
+                });
+            }
+        }
         egui::Panel::top("top_bar")
             .frame(
                 egui::Frame::default()
@@ -455,11 +465,14 @@ impl BnApp {
                     } else {
                         "light".into()
                     };
-                    cfg.save(&crate::config::data_dir());
                     theme::set_mode_str(&cfg.theme_mode);
                     theme::apply(ui.ctx());
                     self.applied_theme = cfg.theme_mode.clone();
+                    // 同步进设置草稿：否则设置页"保存并重连"会用旧草稿把主题切换回滚
+                    self.settings.theme_mode = cfg.theme_mode.clone();
+                    // 落盘走引擎命令，UI 线程不做同步磁盘 IO
                     *self.state.cfg.write() = cfg;
+                    self.state.send_cmd(Command::PersistConfig);
                 }
                 if ui
                     .small_button(egui::RichText::new(lang_txt).size(12.0))
@@ -469,14 +482,17 @@ impl BnApp {
                     let mut cfg = self.state.cfg.read().clone();
                     let to_en = cfg.lang == "en";
                     cfg.lang = if to_en { "zh".into() } else { "en".into() };
-                    cfg.save(&crate::config::data_dir());
                     crate::i18n::set_lang(if cfg.lang == "en" {
                         crate::i18n::EN
                     } else {
                         crate::i18n::ZH
                     });
                     self.applied_lang = cfg.lang.clone();
+                    // 同步进设置草稿：否则设置页"保存并重连"会用旧草稿把语言切换回滚
+                    self.settings.lang = cfg.lang.clone();
+                    // 落盘走引擎命令，UI 线程不做同步磁盘 IO
                     *self.state.cfg.write() = cfg;
+                    self.state.send_cmd(Command::PersistConfig);
                 }
                 ui.separator();
                 let testnet = self.state.cfg.read().testnet;
@@ -538,7 +554,7 @@ impl BnApp {
             )
             .show(ui, |ui| {
                 // 列表自身用 show_rows 虚拟化滚动，外层不再包 ScrollArea
-                self.symbols_sidebar(ui);
+                crate::ui::symbols::show(self, ui);
             });
 
         egui::Panel::right("trade_panel")
@@ -594,252 +610,10 @@ impl BnApp {
                     .inner_margin(8.0),
             )
             .show(ui, |ui| {
-                self.page_header(ui);
+                crate::ui::market::show_header(self, ui);
                 ui.add_space(2.0);
                 chart::show(self, ui);
             });
-    }
-
-    fn page_header(&mut self, ui: &mut egui::Ui) {
-        let state = self.state.clone();
-        let dp = state
-            .with_rule(self.market, &self.symbol, |r| {
-                r.map(|x| x.price_dp() as usize)
-            })
-            .unwrap_or(2);
-        let (base, quote) = state
-            .with_rule(self.market, &self.symbol, |r| {
-                r.map(|x| (x.base.clone(), x.quote.clone()))
-            })
-            .unwrap_or((String::new(), String::new()));
-
-        // 第一行：交易对 | 最新价/涨跌 | 周期直选按钮
-        // wrapped：窄窗口时周期按钮换行而不是被裁掉
-        ui.horizontal_wrapped(|ui| {
-            ui.label(egui::RichText::new(self.symbol.clone()).strong().size(16.5));
-            ui.separator();
-            let tick = state
-                .md
-                .lock()
-                .get(self.market, &self.symbol)
-                .and_then(|md| md.ticker.clone());
-            if let Some(t) = &tick {
-                let chg: f64 = t.price_change_percent.to_string().parse().unwrap_or(0.0);
-                let c = theme::signed_color(chg);
-                let px: f64 = t.last_price.to_string().parse().unwrap_or(0.0);
-                ui.label(
-                    egui::RichText::new(widgets::fmt_thousands(px, dp))
-                        .monospace()
-                        .strong()
-                        .size(21.0)
-                        .color(c),
-                );
-                ui.label(
-                    egui::RichText::new(format!("{chg:+.2}%"))
-                        .monospace()
-                        .size(13.5)
-                        .color(c),
-                );
-            }
-            ui.separator();
-            // 周期直选（无需下拉）
-            for iv in Interval::all() {
-                let active = self.interval == iv;
-                let txt = if active {
-                    egui::RichText::new(iv.label())
-                        .size(12.5)
-                        .strong()
-                        .color(theme::cur().accent)
-                } else {
-                    egui::RichText::new(iv.label())
-                        .size(12.0)
-                        .color(theme::cur().text_dim)
-                };
-                if ui.selectable_label(active, txt).clicked() {
-                    self.switch_interval(iv);
-                }
-            }
-        });
-
-        // 第二行：24h OHLC / 交易量 / 交易额 /（合约）资金费率（wrapped 防窄窗截断）
-        ui.horizontal_wrapped(|ui| {
-            let tick = state
-                .md
-                .lock()
-                .get(self.market, &self.symbol)
-                .and_then(|md| md.ticker.clone());
-            if let Some(t) = tick {
-                // Extend：值标签不在数字内部断行，horizontal_wrapped 会把整个标签挪到下一行
-                let ext = |rt: egui::RichText| {
-                    egui::Label::new(rt).wrap_mode(egui::TextWrapMode::Extend)
-                };
-                let stat = |ui: &mut egui::Ui, label: &str, value: String, color: egui::Color32| {
-                    ui.add(ext(theme::card_label(label)));
-                    ui.add(ext(
-                        egui::RichText::new(value)
-                            .monospace()
-                            .size(12.0)
-                            .color(color),
-                    ));
-                    ui.add_space(4.0);
-                };
-                let o = widgets::fmt_thousands(t.open_price.to_string().parse().unwrap_or(0.0), dp);
-                let h = widgets::fmt_thousands(t.high_price.to_string().parse().unwrap_or(0.0), dp);
-                let l = widgets::fmt_thousands(t.low_price.to_string().parse().unwrap_or(0.0), dp);
-                let c = widgets::fmt_thousands(t.last_price.to_string().parse().unwrap_or(0.0), dp);
-                stat(ui, crate::i18n::tr("24h 开"), o, theme::cur().text);
-                stat(ui, crate::i18n::tr("24h 高"), h, theme::cur().up);
-                stat(ui, crate::i18n::tr("24h 低"), l, theme::cur().down);
-                stat(ui, crate::i18n::tr("24h 收"), c, theme::cur().text);
-                ui.separator();
-                let base_txt = if base.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {base}")
-                };
-                let quote_txt = if quote.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {quote}")
-                };
-                stat(
-                    ui,
-                    crate::i18n::tr("24h 量"),
-                    format!(
-                        "{}{base_txt}",
-                        widgets::fmt_compact(t.volume.to_string().parse().unwrap_or(0.0))
-                    ),
-                    theme::cur().text,
-                );
-                stat(
-                    ui,
-                    crate::i18n::tr("24h 额"),
-                    format!(
-                        "{}{quote_txt}",
-                        widgets::fmt_compact(t.quote_volume.to_string().parse().unwrap_or(0.0))
-                    ),
-                    theme::cur().text,
-                );
-            }
-            // 合约：资金费率（正/负着色 + 显式符号）
-            if self.market == crate::binance::Market::UmFutures {
-                let funding = state
-                    .md
-                    .lock()
-                    .get(self.market, &self.symbol)
-                    .and_then(|md| md.mark.clone())
-                    .and_then(|m| m.funding_rate);
-                if let Some(r) = funding {
-                    let rf = r.to_string().parse::<f64>().unwrap_or(0.0);
-                    let color = if rf > 0.0 {
-                        theme::cur().up
-                    } else if rf < 0.0 {
-                        theme::cur().down
-                    } else {
-                        theme::cur().text_dim
-                    };
-                    ui.separator();
-                    ui.add(
-                        egui::Label::new(theme::card_label(crate::i18n::tr("资金费率")))
-                            .wrap_mode(egui::TextWrapMode::Extend),
-                    );
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(format!("{rf:+.4}%"))
-                                .monospace()
-                                .size(12.0)
-                                .strong()
-                                .color(color),
-                        )
-                        .wrap_mode(egui::TextWrapMode::Extend),
-                    );
-                }
-            }
-        });
-        ui.separator();
-    }
-
-    fn symbols_sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.add(
-            egui::TextEdit::singleline(&mut self.symbol_filter)
-                .id_salt(egui::Id::new("sidebar_search"))
-                .hint_text(crate::i18n::tr("搜索交易对…"))
-                .desired_width(f32::INFINITY),
-        );
-        ui.add_space(2.0);
-
-        let filter = self.symbol_filter.trim().to_uppercase();
-        let favs_all = self.state.favorites(self.market);
-        let mut switched: Option<String> = None;
-        let mut toggled: Option<String> = None;
-
-        // 自选区（置顶）
-        let favs: Vec<String> = favs_all
-            .iter()
-            .filter(|s| filter.is_empty() || s.contains(&filter))
-            .cloned()
-            .collect();
-        if !favs.is_empty() {
-            theme::section(ui, crate::i18n::tr("⭐ 自选"));
-            for sym in &favs {
-                symbol_row(ui, self, sym, true, &mut switched, &mut toggled);
-            }
-            ui.add_space(2.0);
-        }
-
-        // 全部交易对：只借读规则簿、克隆过滤后的符号列表（字符串克隆成本远低于
-        // 整本规则簿深克隆）。列表用 show_rows 虚拟化——每帧只构造可见行的控件，
-        // 现货全量约 2600 个交易对也能流畅滚动，因此不再需要截断上限
-        let all_syms: Vec<String> = {
-            let rules = self.state.rules.read();
-            let book = &rules[self.market as usize];
-            book.symbols
-                .iter()
-                .filter(|s| filter.is_empty() || s.contains(&filter))
-                .filter(|s| !favs.contains(s))
-                .cloned()
-                .collect()
-        };
-        theme::section(ui, crate::i18n::tr("全部"));
-        // 槽位高度 ≥ 行内控件自然高度（星标按钮约 24px），避免行间点击区重叠
-        const SYMBOL_ROW_H: f32 = 24.0;
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show_rows(ui, SYMBOL_ROW_H, all_syms.len(), |ui, range| {
-                // 每行放进精确槽位：不依赖控件自然高度（声明行距与实际行距
-                // 不一致时，内容会随滚动深度漂移、与滚动条错位）
-                let x_range = ui.max_rect().x_range();
-                let top = ui.max_rect().top();
-                let start = range.start;
-                for i in range {
-                    let y0 = top + (i - start) as f32 * SYMBOL_ROW_H;
-                    let rect = egui::Rect::from_x_y_ranges(x_range, y0..=(y0 + SYMBOL_ROW_H));
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |row_ui| {
-                        symbol_row(
-                            row_ui,
-                            self,
-                            &all_syms[i],
-                            false,
-                            &mut switched,
-                            &mut toggled,
-                        );
-                    });
-                }
-            });
-        if all_syms.is_empty() && favs.is_empty() {
-            ui.label(
-                egui::RichText::new(crate::i18n::tr("无匹配交易对"))
-                    .size(12.0)
-                    .color(theme::cur().text_dim),
-            );
-        }
-
-        if let Some(sym) = toggled {
-            self.state.toggle_favorite(self.market, &sym);
-        }
-        if let Some(sym) = switched {
-            self.switch_symbol(sym);
-        }
     }
 
     /// 交易页底部子页签：挂单 / 持仓(期货) / 历史 / 成交
@@ -855,8 +629,8 @@ impl BnApp {
         ui.horizontal(|ui| {
             ui.add_space(2.0);
             for (t, label) in tabs {
-                if ui.selectable_label(self.sub_tab == t, label).clicked() {
-                    self.sub_tab = t;
+                if ui.selectable_label(self.page.sub_tab == t, label).clicked() {
+                    self.page.sub_tab = t;
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -871,7 +645,7 @@ impl BnApp {
         ui.separator();
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| match self.sub_tab {
+            .show(ui, |ui| match self.page.sub_tab {
                 SubTab::Open => orders::show_open(self, ui),
                 SubTab::Positions => orders::show_positions(self, ui),
                 SubTab::History => orders::show_history(self, ui),
@@ -881,6 +655,11 @@ impl BnApp {
 
     fn confirm_dialog(&mut self, ctx: &egui::Context) {
         if self.confirm.is_none() {
+            return;
+        }
+        // Esc 取消：真实资金操作必须有键盘退出路径
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.confirm = None;
             return;
         }
         let mut submit = false;
@@ -937,15 +716,21 @@ impl BnApp {
                         });
                     ui.add_space(6.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add(egui::Button::new(
+                        // busy（含入队未执行）时禁用提交：防止重复点击发出双倍订单
+                        let placing = self.state.is_busy("place");
+                        let submit_btn = ui.add_enabled(
+                            !placing,
+                            egui::Button::new(
                                 egui::RichText::new(crate::i18n::tr("确认提交")).strong(),
-                            ))
-                            .clicked()
-                        {
+                            ),
+                        );
+                        if submit_btn.clicked() {
                             submit = true;
                         }
-                        if ui.button(crate::i18n::tr("取消")).clicked() {
+                        let cancel_btn = ui.button(crate::i18n::tr("取消"));
+                        // 初始焦点落在取消上：回车/空格默认走安全路径
+                        cancel_btn.request_focus();
+                        if cancel_btn.clicked() {
                             cancel = true;
                         }
                     });
@@ -953,6 +738,9 @@ impl BnApp {
             });
         if submit {
             let c = self.confirm.take().unwrap();
+            // 入队即置忙（引擎负责释放）：覆盖"下单命令排队在被卡住的刷新
+            // 之后"的窗口，期间提交按钮禁用，防止双击双单
+            self.state.set_busy("place", true);
             self.engine.send(Command::PlaceOrder {
                 market: c.market,
                 req: c.req,
@@ -961,78 +749,6 @@ impl BnApp {
             self.confirm = None;
         }
     }
-}
-
-/// 侧边栏交易对行：名称（点击切换）+ 星标（点击加/取自选）
-fn symbol_row(
-    ui: &mut egui::Ui,
-    app: &BnApp,
-    sym: &str,
-    is_fav: bool,
-    switched: &mut Option<String>,
-    toggled: &mut Option<String>,
-) {
-    let selected = *sym == app.symbol;
-    // 行悬停高亮：先在控件下层铺底色，再放按钮
-    let row_rect =
-        egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 22.0));
-    let hovered = ui.rect_contains_pointer(row_rect);
-    if hovered && !selected {
-        ui.painter()
-            .rect_filled(row_rect, 3.0, theme::cur().row_hover);
-    }
-    ui.horizontal(|ui| {
-        let name_txt = {
-            let t = egui::RichText::new(sym).size(12.5).color(if selected {
-                theme::cur().accent
-            } else {
-                theme::cur().text
-            });
-            if selected {
-                t.strong()
-            } else {
-                t
-            }
-        };
-        let name_btn = egui::Button::new(name_txt)
-            .fill(if selected {
-                theme::cur().card
-            } else {
-                egui::Color32::TRANSPARENT
-            })
-            .stroke(egui::Stroke::NONE)
-            .corner_radius(3)
-            .min_size(egui::vec2(ui.available_width() - 26.0, 20.0));
-        if ui
-            .add(name_btn)
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
-            *switched = Some(sym.to_string());
-        }
-        let star = if is_fav { "★" } else { "☆" };
-        let star_txt = egui::RichText::new(star).size(13.0).color(if is_fav {
-            theme::cur().accent
-        } else {
-            theme::cur().text_dim
-        });
-        if ui
-            .add(
-                egui::Button::new(star_txt)
-                    .fill(egui::Color32::TRANSPARENT)
-                    .corner_radius(3),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(if is_fav {
-                crate::i18n::tr("取消自选")
-            } else {
-                crate::i18n::tr("加入自选")
-            })
-            .clicked()
-        {
-            *toggled = Some(sym.to_string());
-        }
-    });
 }
 
 /// 简化状态灯（布尔）
@@ -1077,6 +793,10 @@ impl eframe::App for BnApp {
             && std::env::var("BTP_DEMO").ok().as_deref() == Some("1")
         {
             self.phase = Phase::Main;
+        }
+        if !matches!(self.phase, Phase::Main) {
+            // 离开主界面（解锁页/换钥页）后重新进入时需要再做一次初始加载
+            self.initial_load_done = false;
         }
         match self.phase {
             Phase::Main => self.main_ui(ui),

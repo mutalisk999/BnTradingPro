@@ -16,8 +16,8 @@ pub enum Market {
 impl Market {
     pub fn label(&self) -> &'static str {
         match self {
-            Market::Spot => "现货",
-            Market::UmFutures => "U本位合约",
+            Market::Spot => crate::i18n::tr("现货"),
+            Market::UmFutures => crate::i18n::tr("U本位合约"),
         }
     }
 
@@ -80,11 +80,18 @@ pub fn endpoints(market: Market, testnet: bool, cfg: &crate::config::AppConfig) 
 }
 
 fn non_empty(s: &str, default: &str) -> String {
-    if s.trim().is_empty() {
-        default.to_string()
-    } else {
-        s.trim().trim_end_matches('/').to_string()
+    let t = s.trim();
+    if t.is_empty() {
+        return default.to_string();
     }
+    let t = t.trim_end_matches('/');
+    // 覆盖端点必须加密：http/ws 会把 X-MBX-APIKEY 头、签名 query 与 listenKey
+    // 全部明文暴露给链路上的观察者，一律拒绝并回退内置默认
+    if !t.starts_with("https://") && !t.starts_with("wss://") {
+        tracing::warn!("忽略不安全的端点覆盖（须为 https:// 或 wss://）：{t}");
+        return default.to_string();
+    }
+    t.to_string()
 }
 
 /// K 线周期
@@ -153,6 +160,26 @@ impl Interval {
             .unwrap_or(Interval::M15)
     }
 
+    /// 周期对应的毫秒数（1M 按自然月近似为 30 天，仅用于K线窗口判断）
+    pub fn ms(&self) -> i64 {
+        match self {
+            Interval::M1 => 60 * 1000,
+            Interval::M3 => 3 * 60 * 1000,
+            Interval::M5 => 5 * 60 * 1000,
+            Interval::M15 => 15 * 60 * 1000,
+            Interval::M30 => 30 * 60 * 1000,
+            Interval::H1 => 60 * 60 * 1000,
+            Interval::H2 => 2 * 60 * 60 * 1000,
+            Interval::H4 => 4 * 60 * 60 * 1000,
+            Interval::H6 => 6 * 60 * 60 * 1000,
+            Interval::H12 => 12 * 60 * 60 * 1000,
+            Interval::D1 => 24 * 60 * 60 * 1000,
+            Interval::D3 => 3 * 24 * 60 * 60 * 1000,
+            Interval::W1 => 7 * 24 * 60 * 60 * 1000,
+            Interval::MO1 => 30 * 24 * 60 * 60 * 1000,
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         self.as_str()
     }
@@ -175,8 +202,8 @@ impl Side {
 
     pub fn label(&self) -> &'static str {
         match self {
-            Side::Buy => "买入",
-            Side::Sell => "卖出",
+            Side::Buy => crate::i18n::tr("买入"),
+            Side::Sell => crate::i18n::tr("卖出"),
         }
     }
 }
@@ -208,9 +235,9 @@ impl FutPosSide {
 
     pub fn label(&self) -> &'static str {
         match self {
-            FutPosSide::Both => "单向",
-            FutPosSide::Long => "做多",
-            FutPosSide::Short => "做空",
+            FutPosSide::Both => crate::i18n::tr("单向"),
+            FutPosSide::Long => crate::i18n::tr("做多"),
+            FutPosSide::Short => crate::i18n::tr("做空"),
         }
     }
 }
@@ -234,6 +261,22 @@ mod tests {
         assert_eq!(
             endpoints(Market::UmFutures, true, &cfg).rest,
             "https://my-proxy.example.com"
+        );
+    }
+
+    #[test]
+    fn insecure_override_rejected() {
+        let mut cfg = crate::config::AppConfig::default();
+        // http/ws 覆盖会把 API Key 头与签名 query 明文暴露，必须回退默认
+        cfg.override_spot_rest = "http://evil.example.com".into();
+        assert_eq!(
+            endpoints(Market::Spot, false, &cfg).rest,
+            "https://api.binance.com"
+        );
+        cfg.override_spot_ws = "ws://evil.example.com".into();
+        assert_eq!(
+            endpoints(Market::Spot, false, &cfg).ws,
+            "wss://stream.binance.com:9443"
         );
     }
 
