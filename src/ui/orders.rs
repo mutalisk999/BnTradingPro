@@ -49,13 +49,21 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     let market = app.market;
     if !state.has_creds() {
-        ui.label(egui::RichText::new("未配置 API 密钥").color(theme::cur().text_dim));
+        ui.label(
+            egui::RichText::new(crate::i18n::tr("未配置 API 密钥")).color(theme::cur().text_dim),
+        );
         return;
     }
     let list = state.orders.lock().open(market).clone();
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new(format!("{} · {} 笔挂单", market.label(), list.len())).size(12.5),
+            egui::RichText::new(format!(
+                "{} · {}{}",
+                market.label(),
+                list.len(),
+                crate::i18n::tr("笔挂单")
+            ))
+            .size(12.5),
         );
         if ui.small_button(crate::i18n::tr("刷新")).clicked() {
             state.send_cmd(Command::RefreshOpenOrders { market });
@@ -64,7 +72,11 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
             let sym = app.symbol.clone();
             let sym_open = list.iter().filter(|o| o.symbol == sym).count();
             if ui
-                .small_button(format!("撤销 {} 全部({sym_open})", sym))
+                .small_button(format!(
+                    "{} {}({sym_open})",
+                    crate::i18n::tr("撤销全部"),
+                    sym
+                ))
                 .clicked()
                 && sym_open > 0
             {
@@ -114,15 +126,15 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::remainder()) // 操作
         .header(22.0, |mut h| {
             for t in [
-                "时间",
-                "交易对",
-                "方向",
-                "类型",
-                "价格",
-                "数量",
-                "已成交",
-                "状态",
-                "操作",
+                crate::i18n::tr("时间"),
+                crate::i18n::tr("交易对"),
+                crate::i18n::tr("方向"),
+                crate::i18n::tr("类型"),
+                crate::i18n::tr("价格"),
+                crate::i18n::tr("数量"),
+                crate::i18n::tr("已成交"),
+                crate::i18n::tr("状态"),
+                crate::i18n::tr("操作"),
             ] {
                 h.col(|ui| {
                     ui.label(
@@ -150,7 +162,11 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             theme::cur().down
                         };
-                        let txt = if o.side == "BUY" { "买入" } else { "卖出" };
+                        let txt = if o.side == "BUY" {
+                            crate::i18n::tr("买入")
+                        } else {
+                            crate::i18n::tr("卖出")
+                        };
                         ui.label(egui::RichText::new(txt).size(11.5).color(c).strong());
                     });
                     row.col(|ui| {
@@ -163,16 +179,15 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                     row.col(|ui| {
                         // 止损/止盈市价单 price 为 0，真实价格在 stopPrice
                         let p = match o.price.filter(|p| !p.is_zero()) {
-                            Some(p) => {
-                                format!("{:.*}", dp, p.to_string().parse::<f64>().unwrap_or(0.0))
-                            }
+                            Some(p) => format!("{:.*}", dp, crate::ui::widgets::f64_decimal(&p)),
                             None => match o.stop_price.filter(|s| !s.is_zero()) {
                                 Some(s) => format!(
-                                    "触发 {:.*}",
+                                    "{} {:.*}",
+                                    crate::i18n::tr("触发"),
                                     dp,
-                                    s.to_string().parse::<f64>().unwrap_or(0.0)
+                                    crate::ui::widgets::f64_decimal(&s)
                                 ),
-                                None => "市价".into(),
+                                None => crate::i18n::tr("市价").into(),
                             },
                         };
                         ui.label(egui::RichText::new(p).monospace().size(11.5));
@@ -182,7 +197,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                             egui::RichText::new(format!(
                                 "{:.*}",
                                 qdp,
-                                o.orig_qty.to_string().parse::<f64>().unwrap_or(0.0)
+                                crate::ui::widgets::f64_decimal(&o.orig_qty)
                             ))
                             .monospace()
                             .size(11.5),
@@ -193,7 +208,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                             egui::RichText::new(format!(
                                 "{:.*}",
                                 qdp,
-                                o.executed_qty.to_string().parse::<f64>().unwrap_or(0.0)
+                                crate::ui::widgets::f64_decimal(&o.executed_qty)
                             ))
                             .monospace()
                             .size(11.5),
@@ -229,7 +244,9 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
 pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     if !state.has_creds() {
-        ui.label(egui::RichText::new("未配置 API 密钥").color(theme::cur().text_dim));
+        ui.label(
+            egui::RichText::new(crate::i18n::tr("未配置 API 密钥")).color(theme::cur().text_dim),
+        );
         return;
     }
     let (positions, dual) = {
@@ -244,15 +261,23 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
         )
     };
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("U本位合约 · {} 个持仓", positions.len())).size(12.5));
+        ui.label(
+            egui::RichText::new(format!(
+                "{} · {}{}",
+                crate::i18n::tr("U本位合约"),
+                positions.len(),
+                crate::i18n::tr("个持仓")
+            ))
+            .size(12.5),
+        );
         if ui.small_button(crate::i18n::tr("刷新")).clicked() {
             state.send_cmd(Command::RefreshAccount);
         }
         if ui
             .small_button(if dual {
-                "切换单向持仓"
+                crate::i18n::tr("切换单向持仓")
             } else {
-                "切换双向持仓"
+                crate::i18n::tr("切换双向持仓")
             })
             .clicked()
         {
@@ -285,15 +310,15 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::remainder())
         .header(22.0, |mut h| {
             for t in [
-                "交易对",
-                "方向",
-                "数量",
-                "开仓价",
-                "标记价",
-                "未实现盈亏",
-                "强平价",
-                "杠杆",
-                "操作",
+                crate::i18n::tr("交易对"),
+                crate::i18n::tr("方向"),
+                crate::i18n::tr("数量"),
+                crate::i18n::tr("开仓价"),
+                crate::i18n::tr("标记价"),
+                crate::i18n::tr("未实现盈亏"),
+                crate::i18n::tr("强平价"),
+                crate::i18n::tr("杠杆"),
+                crate::i18n::tr("操作"),
             ] {
                 h.col(|ui| {
                     ui.label(
@@ -308,7 +333,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
             for p in &positions {
                 body.row(22.0, |mut row| {
                     let long = p.amt > Decimal::ZERO;
-                    let f = |d: &Decimal| d.to_string().parse::<f64>().unwrap_or(0.0);
+                    let f = |d: &Decimal| crate::ui::widgets::f64_decimal(d);
                     row.col(|ui| {
                         ui.label(egui::RichText::new(&p.symbol).strong().size(11.5));
                     });
@@ -410,7 +435,9 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
 pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     if !state.has_creds() {
-        ui.label(egui::RichText::new("未配置 API 密钥").color(theme::cur().text_dim));
+        ui.label(
+            egui::RichText::new(crate::i18n::tr("未配置 API 密钥")).color(theme::cur().text_dim),
+        );
         return;
     }
     let (hist, key) = {
@@ -420,10 +447,16 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         match &key {
             Some((m, s)) => ui.label(
-                egui::RichText::new(format!("{} {} · 最近 100 笔", m.label(), s)).size(12.5),
+                egui::RichText::new(format!(
+                    "{} {} · {}",
+                    m.label(),
+                    s,
+                    crate::i18n::tr("最近 100 笔")
+                ))
+                .size(12.5),
             ),
             None => ui.label(
-                egui::RichText::new("切换交易对后自动加载")
+                egui::RichText::new(crate::i18n::tr("切换交易对后自动加载"))
                     .size(12.5)
                     .color(theme::cur().text_dim),
             ),
@@ -460,14 +493,14 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::remainder())
         .header(22.0, |mut h| {
             for t in [
-                "时间",
-                "交易对",
-                "方向",
-                "类型",
-                "价格",
-                "数量",
-                "已成交",
-                "状态",
+                crate::i18n::tr("时间"),
+                crate::i18n::tr("交易对"),
+                crate::i18n::tr("方向"),
+                crate::i18n::tr("类型"),
+                crate::i18n::tr("价格"),
+                crate::i18n::tr("数量"),
+                crate::i18n::tr("已成交"),
+                crate::i18n::tr("状态"),
             ] {
                 h.col(|ui| {
                     ui.label(
@@ -503,8 +536,10 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         let p = match o.price.filter(|p| !p.is_zero()) {
                             Some(p) => p.normalize().to_string(),
                             None => match o.stop_price.filter(|s| !s.is_zero()) {
-                                Some(s) => format!("触发 {}", s.normalize()),
-                                None => "市价".into(),
+                                Some(s) => {
+                                    format!("{} {}", crate::i18n::tr("触发"), s.normalize())
+                                }
+                                None => crate::i18n::tr("市价").into(),
                             },
                         };
                         ui.label(egui::RichText::new(p).monospace().size(11.5));
@@ -545,13 +580,23 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
 pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     if !state.has_creds() {
-        ui.label(egui::RichText::new("未配置 API 密钥").color(theme::cur().text_dim));
+        ui.label(
+            egui::RichText::new(crate::i18n::tr("未配置 API 密钥")).color(theme::cur().text_dim),
+        );
         return;
     }
     let trades = state.orders.lock().trades.clone();
     let hist_key = state.orders.lock().history_symbol.clone();
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("最近 {} 笔成交", trades.len())).size(12.5));
+        ui.label(
+            egui::RichText::new(format!(
+                "{} {}{}",
+                crate::i18n::tr("最近"),
+                trades.len(),
+                crate::i18n::tr("笔成交")
+            ))
+            .size(12.5),
+        );
         if ui.small_button(crate::i18n::tr("刷新")).clicked() {
             if let Some((m, s)) = hist_key.clone() {
                 state.send_cmd(Command::RefreshHistory {
@@ -583,14 +628,14 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::remainder())
         .header(22.0, |mut h| {
             for t in [
-                "时间",
-                "交易对",
-                "方向",
-                "价格",
-                "数量",
-                "金额",
-                "手续费",
-                "角色",
+                crate::i18n::tr("时间"),
+                crate::i18n::tr("交易对"),
+                crate::i18n::tr("方向"),
+                crate::i18n::tr("价格"),
+                crate::i18n::tr("数量"),
+                crate::i18n::tr("金额"),
+                crate::i18n::tr("手续费"),
+                crate::i18n::tr("角色"),
             ] {
                 h.col(|ui| {
                     ui.label(

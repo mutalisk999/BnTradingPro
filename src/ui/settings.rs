@@ -15,43 +15,51 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let dir = config::data_dir();
     let mut apply = false;
 
-    ui.heading(egui::RichText::new("设置").size(14.0));
+    ui.heading(egui::RichText::new(crate::i18n::tr("设置")).size(14.0));
     ui.separator();
 
     // ---------- 环境 ----------
     ui.group(|ui| {
-        ui.label(egui::RichText::new("交易环境").strong());
+        ui.label(egui::RichText::new(crate::i18n::tr("交易环境")).strong());
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut app.settings.testnet, true, "测试网 (Testnet)");
-            ui.selectable_value(&mut app.settings.testnet, false, "实盘");
+            ui.selectable_value(
+                &mut app.settings.testnet,
+                true,
+                crate::i18n::tr("测试网 (Testnet)"),
+            );
+            ui.selectable_value(&mut app.settings.testnet, false, crate::i18n::tr("实盘"));
             if app.settings.testnet {
                 theme::badge(ui, "TESTNET", theme::cur().accent);
                 ui.label(
-                    egui::RichText::new(
+                    egui::RichText::new(crate::i18n::tr(
                         "测试网密钥在 testnet.binance.vision / testnet.binancefuture.com 申请",
-                    )
+                    ))
                     .size(11.0)
                     .color(theme::cur().text_dim),
                 );
             } else {
-                theme::badge(ui, "实盘 · 真实资金", theme::cur().err);
+                theme::badge(ui, crate::i18n::tr("实盘 · 真实资金"), theme::cur().err);
             }
         });
         if !app.settings.testnet {
             ui.label(
-                egui::RichText::new("⚠ 实盘模式下下单将使用真实资金，请确认密钥与环境正确！")
-                    .size(12.0)
-                    .color(theme::cur().err),
+                egui::RichText::new(crate::i18n::tr(
+                    "⚠ 实盘模式下下单将使用真实资金，请确认密钥与环境正确！",
+                ))
+                .size(12.0)
+                .color(theme::cur().err),
             );
         }
     });
 
     // ---------- 代理 ----------
     ui.group(|ui| {
-        ui.label(egui::RichText::new("网络代理（REST 与 WebSocket 均生效）").strong());
-        ui.checkbox(&mut app.settings.proxy_enabled, "启用代理");
+        ui.label(
+            egui::RichText::new(crate::i18n::tr("网络代理（REST 与 WebSocket 均生效）")).strong(),
+        );
+        ui.checkbox(&mut app.settings.proxy_enabled, crate::i18n::tr("启用代理"));
         ui.horizontal(|ui| {
-            ui.label("地址");
+            ui.label(crate::i18n::tr("地址"));
             ui.add(
                 egui::TextEdit::singleline(&mut app.settings.proxy_url)
                     .desired_width(320.0)
@@ -107,7 +115,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 
     // ---------- 参数 ----------
     ui.group(|ui| {
-        ui.label(egui::RichText::new("请求参数").strong());
+        ui.label(egui::RichText::new(crate::i18n::tr("请求参数")).strong());
         ui.horizontal(|ui| {
             ui.label("recvWindow");
             ui.add(
@@ -116,14 +124,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     .suffix(" ms"),
             );
             ui.separator();
-            ui.label("HTTP 超时");
+            ui.label(crate::i18n::tr("HTTP 超时"));
             ui.add(
                 egui::DragValue::new(&mut app.settings.http_timeout_secs)
                     .range(3..=120)
                     .suffix(" s"),
             );
             ui.separator();
-            ui.label("日志级别");
+            ui.label(crate::i18n::tr("日志级别"));
             egui::ComboBox::from_id_salt("log_level")
                 .selected_text(app.settings.log_level.clone())
                 .width(90.0)
@@ -134,13 +142,13 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 });
         });
         ui.horizontal(|ui| {
-            ui.label("默认交易对");
+            ui.label(crate::i18n::tr("默认交易对"));
             ui.add(
                 egui::TextEdit::singleline(&mut app.settings.default_symbol)
                     .desired_width(110.0)
                     .hint_text("BTCUSDT"),
             );
-            ui.label("默认K线周期");
+            ui.label(crate::i18n::tr("默认K线周期"));
             egui::ComboBox::from_id_salt("default_iv")
                 .selected_text(app.settings.default_interval.clone())
                 .width(70.0)
@@ -158,33 +166,33 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 
     // ---------- 端点覆盖 ----------
     ui.group(|ui| {
-        ui.label(egui::RichText::new("端点覆盖（留空使用内置默认）").strong());
+        ui.label(egui::RichText::new(crate::i18n::tr("端点覆盖（留空使用内置默认）")).strong());
         egui::Grid::new("ep_grid")
             .num_columns(2)
             .spacing([10.0, 4.0])
             .show(ui, |ui| {
-                ui.label("现货 REST");
+                ui.label(crate::i18n::tr("现货 REST"));
                 ui.add(
                     egui::TextEdit::singleline(&mut app.settings.override_spot_rest)
                         .desired_width(360.0)
                         .hint_text("https://api.binance.com"),
                 );
                 ui.end_row();
-                ui.label("现货 WS");
+                ui.label(crate::i18n::tr("现货 WS"));
                 ui.add(
                     egui::TextEdit::singleline(&mut app.settings.override_spot_ws)
                         .desired_width(360.0)
                         .hint_text("wss://stream.binance.com:9443"),
                 );
                 ui.end_row();
-                ui.label("合约 REST");
+                ui.label(crate::i18n::tr("合约 REST"));
                 ui.add(
                     egui::TextEdit::singleline(&mut app.settings.override_fut_rest)
                         .desired_width(360.0)
                         .hint_text("https://fapi.binance.com"),
                 );
                 ui.end_row();
-                ui.label("合约 WS");
+                ui.label(crate::i18n::tr("合约 WS"));
                 ui.add(
                     egui::TextEdit::singleline(&mut app.settings.override_fut_ws)
                         .desired_width(360.0)
@@ -197,7 +205,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // ---------- 应用 ----------
     if ui
         .add(
-            egui::Button::new(egui::RichText::new("保存并重连").strong())
+            egui::Button::new(egui::RichText::new(crate::i18n::tr("保存并重连")).strong())
                 .min_size(egui::vec2(140.0, 28.0)),
         )
         .clicked()
@@ -210,18 +218,22 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 
     // ---------- 密钥管理 ----------
     ui.group(|ui| {
-        ui.label(egui::RichText::new("API 密钥").strong());
+        ui.label(egui::RichText::new(crate::i18n::tr("API 密钥")).strong());
         ui.horizontal(|ui| {
             if state.has_creds() {
-                theme::badge(ui, "已配置", theme::cur().up);
+                theme::badge(ui, crate::i18n::tr("已配置"), theme::cur().up);
             } else {
-                theme::badge(ui, "未配置（仅公开行情）", theme::cur().warn);
+                theme::badge(
+                    ui,
+                    crate::i18n::tr("未配置（仅公开行情）"),
+                    theme::cur().warn,
+                );
             }
             if ui
                 .small_button(if state.has_creds() {
-                    "更换密钥"
+                    crate::i18n::tr("更换密钥")
                 } else {
-                    "配置密钥"
+                    crate::i18n::tr("配置密钥")
                 })
                 .clicked()
             {
@@ -230,10 +242,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 app.api_secret.clear();
                 app.phase = Phase::EnterKeys;
             }
-            if vault::vault_exists(&dir) && ui.small_button("删除凭据库").clicked() {
+            if vault::vault_exists(&dir) && ui.small_button(crate::i18n::tr("删除凭据库")).clicked()
+            {
                 let _ = std::fs::remove_file(dir.join(vault::VAULT_FILE));
                 state.set_creds(None);
-                state.push_toast(ToastKind::Info, "已删除本机凭据库");
+                state.push_toast(
+                    ToastKind::Info,
+                    crate::i18n::tr("已删除本机凭据库").to_string(),
+                );
                 app.phase = Phase::EnterKeys;
             }
         });
@@ -241,20 +257,23 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 
     // ---------- 关于 ----------
     ui.group(|ui| {
-        ui.label(egui::RichText::new("关于").strong());
+        ui.label(egui::RichText::new(crate::i18n::tr("关于")).strong());
         ui.label(
             egui::RichText::new(format!(
-                "BnTradingPro v{} · 数据目录: {}",
+                "BnTradingPro v{} · {} {}",
                 env!("CARGO_PKG_VERSION"),
+                crate::i18n::tr("数据目录"),
                 dir.display()
             ))
             .size(11.5)
             .color(theme::cur().text_dim),
         );
         ui.label(
-            egui::RichText::new("本工具仅供个人交易辅助与研究，不构成任何投资建议；使用实盘交易产生的一切后果由使用者自行承担。")
-                .size(11.0)
-                .color(theme::cur().text_dim),
+            egui::RichText::new(crate::i18n::tr(
+                "本工具仅供个人交易辅助与研究，不构成任何投资建议；使用实盘交易产生的一切后果由使用者自行承担。",
+            ))
+            .size(11.0)
+            .color(theme::cur().text_dim),
         );
     });
 
@@ -264,6 +283,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         app.settings = SettingsDraft::from_cfg(&cfg);
         cfg.save(&dir);
         state.update_cfg(cfg);
-        state.push_toast(ToastKind::Ok, "设置已保存，正在重连…");
+        state.push_toast(
+            ToastKind::Ok,
+            crate::i18n::tr("设置已保存，正在重连…").to_string(),
+        );
     }
 }

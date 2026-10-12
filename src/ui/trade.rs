@@ -102,9 +102,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // 双向持仓模式下买卖即决定开多/开空，持仓方向随方向按钮联动（见 build_request）
     ui.columns(2, |cols| {
         let buy = egui::RichText::new(if market == Market::UmFutures {
-            "买入 / 开多"
+            crate::i18n::tr("买入 / 开多")
         } else {
-            "买入"
+            crate::i18n::tr("买入")
         })
         .strong()
         .size(14.5)
@@ -113,7 +113,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             .fill(if app.form.side == Side::Buy {
                 theme::cur().up
             } else {
-                egui::Color32::from_rgb(30, 37, 48)
+                theme::cur().btn_idle
             })
             .rounding(5.0);
         if cols[0]
@@ -123,9 +123,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             app.form.side = Side::Buy;
         }
         let sell = egui::RichText::new(if market == Market::UmFutures {
-            "卖出 / 开空"
+            crate::i18n::tr("卖出 / 开空")
         } else {
-            "卖出"
+            crate::i18n::tr("卖出")
         })
         .strong()
         .size(14.5)
@@ -134,7 +134,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             .fill(if app.form.side == Side::Sell {
                 theme::cur().down
             } else {
-                egui::Color32::from_rgb(30, 37, 48)
+                theme::cur().btn_idle
             })
             .rounding(5.0);
         if cols[1]
@@ -173,9 +173,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 // 双向模式：持仓方向跟随买/卖（买入=开多 LONG，卖出=开空 SHORT），
                 // 避免方向按钮与持仓侧独立选择导致 "SELL+LONG" 平多误操作
                 let pos_txt = if app.form.side == Side::Buy {
-                    "开多 (LONG)"
+                    crate::i18n::tr("开多 (LONG)")
                 } else {
-                    "开空 (SHORT)"
+                    crate::i18n::tr("开空 (SHORT)")
                 };
                 ui.horizontal(|ui| {
                     ui.label(theme::card_label(crate::i18n::tr("持仓方向")));
@@ -187,7 +187,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 });
             }
             if !dual {
-                ui.checkbox(&mut app.form.reduce_only, "只减仓 (ReduceOnly)");
+                ui.checkbox(
+                    &mut app.form.reduce_only,
+                    crate::i18n::tr("只减仓 (ReduceOnly)"),
+                );
             }
             // 杠杆
             ui.horizontal(|ui| {
@@ -206,8 +209,13 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                             .color(theme::cur().accent),
                     );
                 }
-                let _ = widgets::num_field(ui, "lev_in", &mut app.leverage_input, "杠杆倍数");
-                if ui.button("设置").clicked() {
+                let _ = widgets::num_field(
+                    ui,
+                    "lev_in",
+                    &mut app.leverage_input,
+                    crate::i18n::tr("杠杆倍数"),
+                );
+                if ui.button(crate::i18n::tr("设定")).clicked() {
                     match app.leverage_input.trim().parse::<u32>() {
                         Ok(l) if (1..=125).contains(&l) => {
                             state.send_cmd(Command::SetLeverage {
@@ -216,7 +224,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                             });
                         }
                         _ => {
-                            state.push_toast(ToastKind::Warn, "杠杆倍数需为 1-125 的整数");
+                            state.push_toast(
+                                ToastKind::Warn,
+                                crate::i18n::tr("杠杆倍数需为 1-125 的整数").to_string(),
+                            );
                         }
                     }
                 }
@@ -229,8 +240,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         if app.form.kind != UiKind::Market {
             ui.horizontal(|ui| {
                 ui.label(theme::card_label(crate::i18n::tr("价格")));
-                widgets::num_field(ui, "price_in", &mut app.form.price, "价格");
-                if ui.button("市价").clicked() {
+                widgets::num_field(ui, "price_in", &mut app.form.price, crate::i18n::tr("价格"));
+                if ui.button(crate::i18n::tr("市价")).clicked() {
                     let last = state
                         .md
                         .lock()
@@ -251,17 +262,26 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         ) {
             ui.horizontal(|ui| {
                 ui.label(theme::card_label(crate::i18n::tr("触发价")));
-                widgets::num_field(ui, "trig_in", &mut app.form.trigger, "触发价");
+                widgets::num_field(
+                    ui,
+                    "trig_in",
+                    &mut app.form.trigger,
+                    crate::i18n::tr("触发价"),
+                );
             });
         }
         ui.horizontal(|ui| {
-            ui.label("数量");
-            widgets::num_field(ui, "qty_in", &mut app.form.qty, "数量");
+            ui.label(crate::i18n::tr("数量"));
+            widgets::num_field(ui, "qty_in", &mut app.form.qty, crate::i18n::tr("数量"));
             if let Some(r) = &rule {
                 ui.label(
-                    egui::RichText::new(format!("步进 {}", r.step.normalize()))
-                        .size(10.5)
-                        .color(theme::cur().text_dim),
+                    egui::RichText::new(format!(
+                        "{} {}",
+                        crate::i18n::tr("步进"),
+                        r.step.normalize()
+                    ))
+                    .size(10.5)
+                    .color(theme::cur().text_dim),
                 );
             }
         });
@@ -272,7 +292,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             for pct in [25.0, 50.0, 75.0, 100.0] {
                 if ui
                     .button(format!("{}%", pct as i32))
-                    .on_hover_text("按可用余额估算")
+                    .on_hover_text(crate::i18n::tr("按可用余额估算"))
                     .clicked()
                 {
                     fill_by_pct(app, pct / 100.0);
@@ -321,7 +341,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     }
     ui.separator();
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("预估金额").color(theme::cur().text_dim));
+        ui.label(egui::RichText::new(crate::i18n::tr("预估金额")).color(theme::cur().text_dim));
         match total {
             Some(t) => {
                 ui.label(egui::RichText::new(t.normalize().round_dp(8).to_string()).monospace())
@@ -335,31 +355,45 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         if let Some(p) = price_dec {
             if let Some(qp) = crate::binance::symbols::quantize_price(p, r.tick) {
                 if qp != p {
-                    hints.push(format!("价格将量化为 {}", qp.normalize()));
+                    hints.push(format!(
+                        "{} {}",
+                        crate::i18n::tr("价格将量化为"),
+                        qp.normalize()
+                    ));
                 }
             } else {
-                hints.push("价格超出可表示范围".into());
+                hints.push(crate::i18n::tr("价格超出可表示范围").to_string());
             }
         }
         if let Some(q) = qty_dec {
             match crate::binance::symbols::quantize_qty(q, r.step) {
                 Some(qq) => {
                     if qq != q {
-                        hints.push(format!("数量将量化为 {}", qq.normalize()));
+                        hints.push(format!(
+                            "{} {}",
+                            crate::i18n::tr("数量将量化为"),
+                            qq.normalize()
+                        ));
                     }
                     if !r.min_qty.is_zero() && qq < r.min_qty {
-                        hints.push(format!("小于最小下单数量 {}", r.min_qty.normalize()));
+                        hints.push(format!(
+                            "{} {}",
+                            crate::i18n::tr("小于最小下单数量"),
+                            r.min_qty.normalize()
+                        ));
                     }
                     if let Some(tp) = total {
                         if !r.min_notional.is_zero() && tp < r.min_notional {
                             hints.push(format!(
-                                "低于最小名义金额 {}（限价单）",
-                                r.min_notional.normalize()
+                                "{} {}{}",
+                                crate::i18n::tr("低于最小名义金额"),
+                                r.min_notional.normalize(),
+                                crate::i18n::tr("（限价单）")
                             ));
                         }
                     }
                 }
-                None => hints.push("数量超出可表示范围".into()),
+                None => hints.push(crate::i18n::tr("数量超出可表示范围").to_string()),
             }
         }
         if !hints.is_empty() {
@@ -375,10 +409,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.add_space(4.0);
     let busy = state.is_busy("place");
     let (word, color) = match (app.form.side, market) {
-        (Side::Buy, Market::Spot) => ("买入", theme::cur().up),
-        (Side::Sell, Market::Spot) => ("卖出", theme::cur().down),
-        (Side::Buy, Market::UmFutures) => ("买入开多", theme::cur().up),
-        (Side::Sell, Market::UmFutures) => ("卖出开空", theme::cur().down),
+        (Side::Buy, Market::Spot) => (crate::i18n::tr("买入"), theme::cur().up),
+        (Side::Sell, Market::Spot) => (crate::i18n::tr("卖出"), theme::cur().down),
+        (Side::Buy, Market::UmFutures) => (crate::i18n::tr("买入开多"), theme::cur().up),
+        (Side::Sell, Market::UmFutures) => (crate::i18n::tr("卖出开空"), theme::cur().down),
     };
     let btn = egui::Button::new(
         egui::RichText::new(format!("{word} {symbol}"))
@@ -423,42 +457,46 @@ pub fn build_request(app: &BnApp) -> Result<OrderRequest, String> {
     let symbol = app.symbol.clone();
     let rules = state.rules_of(market);
     let Some(r) = rules.get(&symbol) else {
-        return Err("交易规则尚未加载".into());
+        return Err(crate::i18n::tr("交易规则尚未加载").to_string());
     };
-    let qty = widgets::parse_dec(&app.form.qty).ok_or("请输入数量")?;
+    let qty = widgets::parse_dec(&app.form.qty).ok_or(crate::i18n::tr("请输入数量"))?;
     let price = widgets::parse_dec(&app.form.price);
     let trigger = widgets::parse_dec(&app.form.trigger);
 
     // 量化（Option 化防溢出）
-    let q_price =
-        |v: Decimal| crate::binance::symbols::quantize_price(v, r.tick).ok_or("价格超出可表示范围");
-    let q_qty =
-        |v: Decimal| crate::binance::symbols::quantize_qty(v, r.step).ok_or("数量超出可表示范围");
+    let q_price = |v: Decimal| {
+        crate::binance::symbols::quantize_price(v, r.tick)
+            .ok_or_else(|| crate::i18n::tr("价格超出可表示范围").to_string())
+    };
+    let q_qty = |v: Decimal| {
+        crate::binance::symbols::quantize_qty(v, r.step)
+            .ok_or_else(|| crate::i18n::tr("数量超出可表示范围").to_string())
+    };
     let kind = match app.form.kind {
         UiKind::Limit => OrderKind::Limit {
-            price: q_price(price.ok_or("请输入价格")?)?,
+            price: q_price(price.ok_or(crate::i18n::tr("请输入价格"))?)?,
             qty: q_qty(qty)?,
         },
         UiKind::Market => OrderKind::Market { qty: q_qty(qty)? },
         UiKind::StopLossLimit => OrderKind::StopLimit {
-            trigger: q_price(trigger.ok_or("请输入触发价")?)?,
-            price: q_price(price.ok_or("请输入价格")?)?,
+            trigger: q_price(trigger.ok_or(crate::i18n::tr("请输入触发价"))?)?,
+            price: q_price(price.ok_or(crate::i18n::tr("请输入价格"))?)?,
             qty: q_qty(qty)?,
             take_profit: false,
         },
         UiKind::TakeProfitLimit => OrderKind::StopLimit {
-            trigger: q_price(trigger.ok_or("请输入触发价")?)?,
-            price: q_price(price.ok_or("请输入价格")?)?,
+            trigger: q_price(trigger.ok_or(crate::i18n::tr("请输入触发价"))?)?,
+            price: q_price(price.ok_or(crate::i18n::tr("请输入价格"))?)?,
             qty: q_qty(qty)?,
             take_profit: true,
         },
         UiKind::StopLossMarket => OrderKind::StopMarket {
-            trigger: q_price(trigger.ok_or("请输入触发价")?)?,
+            trigger: q_price(trigger.ok_or(crate::i18n::tr("请输入触发价"))?)?,
             qty: q_qty(qty)?,
             take_profit: false,
         },
         UiKind::TakeProfitMarket => OrderKind::StopMarket {
-            trigger: q_price(trigger.ok_or("请输入触发价")?)?,
+            trigger: q_price(trigger.ok_or(crate::i18n::tr("请输入触发价"))?)?,
             qty: q_qty(qty)?,
             take_profit: true,
         },
@@ -561,30 +599,34 @@ fn fill_by_pct(app: &mut BnApp, pct: f64) {
 }
 
 pub fn order_rows(req: &OrderRequest) -> Vec<(String, String)> {
+    let tr = crate::i18n::tr;
     let mut rows = vec![
-        ("交易对".to_string(), req.symbol.clone()),
-        ("方向".to_string(), req.side.label().to_string()),
-        ("类型".to_string(), req.kind.label().to_string()),
-        ("数量".to_string(), req.kind.qty().normalize().to_string()),
+        (tr("交易对").to_string(), req.symbol.clone()),
+        (tr("方向").to_string(), req.side.label().to_string()),
+        (tr("类型").to_string(), req.kind.label().to_string()),
+        (
+            tr("数量").to_string(),
+            req.kind.qty().normalize().to_string(),
+        ),
     ];
     match &req.kind {
         OrderKind::Limit { price, .. } => {
-            rows.push(("价格".to_string(), price.normalize().to_string()))
+            rows.push((tr("价格").to_string(), price.normalize().to_string()))
         }
         OrderKind::Market { .. } => {}
         OrderKind::StopLimit { trigger, price, .. } => {
-            rows.push(("触发价".into(), trigger.normalize().to_string()));
-            rows.push(("委托价".into(), price.normalize().to_string()));
+            rows.push((tr("触发价").into(), trigger.normalize().to_string()));
+            rows.push((tr("委托价").into(), price.normalize().to_string()));
         }
         OrderKind::StopMarket { trigger, .. } => {
-            rows.push(("触发价".into(), trigger.normalize().to_string()));
+            rows.push((tr("触发价").into(), trigger.normalize().to_string()));
         }
     }
     if req.reduce_only {
-        rows.push(("只减仓".into(), "是".into()));
+        rows.push((tr("只减仓").into(), tr("是").into()));
     }
     if req.position_side != FutPosSide::Both {
-        rows.push(("持仓方向".into(), req.position_side.label().into()));
+        rows.push((tr("持仓方向").into(), req.position_side.label().into()));
     }
     rows
 }

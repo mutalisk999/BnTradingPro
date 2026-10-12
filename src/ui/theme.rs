@@ -21,6 +21,20 @@ pub struct Theme {
     pub accent: Color32,
     pub warn: Color32,
     pub err: Color32,
+    /// 图表横向网格线
+    pub grid: Color32,
+    /// 图表纵向时间网格线
+    pub grid_time: Color32,
+    /// 十字光标
+    pub crosshair: Color32,
+    /// 图表悬浮信息框背景
+    pub tooltip_bg: Color32,
+    /// 轴标签/时间标签底色
+    pub tag_bg: Color32,
+    /// 列表行悬停高亮
+    pub row_hover: Color32,
+    /// 大按钮未选中态底色（买/卖切换、页签等）
+    pub btn_idle: Color32,
 }
 
 pub const DARK: Theme = Theme {
@@ -36,6 +50,13 @@ pub const DARK: Theme = Theme {
     accent: Color32::from_rgb(240, 185, 11),
     warn: Color32::from_rgb(240, 160, 48),
     err: Color32::from_rgb(246, 70, 93),
+    grid: Color32::from_rgb(28, 34, 44),
+    grid_time: Color32::from_rgb(26, 32, 42),
+    crosshair: Color32::from_rgb(120, 130, 148),
+    tooltip_bg: Color32::from_rgb(24, 30, 41),
+    tag_bg: Color32::from_rgb(44, 52, 66),
+    row_hover: Color32::from_rgb(38, 46, 60),
+    btn_idle: Color32::from_rgb(30, 37, 48),
 };
 
 pub const LIGHT: Theme = Theme {
@@ -51,6 +72,13 @@ pub const LIGHT: Theme = Theme {
     accent: Color32::from_rgb(201, 148, 0),
     warn: Color32::from_rgb(185, 122, 20),
     err: Color32::from_rgb(214, 58, 80),
+    grid: Color32::from_rgb(223, 228, 236),
+    grid_time: Color32::from_rgb(228, 233, 239),
+    crosshair: Color32::from_rgb(110, 122, 140),
+    tooltip_bg: Color32::from_rgb(255, 255, 255),
+    tag_bg: Color32::from_rgb(219, 225, 234),
+    row_hover: Color32::from_rgb(235, 239, 245),
+    btn_idle: Color32::from_rgb(226, 232, 240),
 };
 
 static MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);

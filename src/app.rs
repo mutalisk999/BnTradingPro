@@ -847,12 +847,12 @@ impl BnApp {
     /// 交易页底部子页签：挂单 / 持仓(期货) / 历史 / 成交
     fn sub_tabs(&mut self, ui: &mut egui::Ui) {
         let mut tabs: Vec<(SubTab, &str)> = vec![
-            (SubTab::Open, "当前挂单"),
-            (SubTab::History, "订单历史"),
-            (SubTab::Trades, "成交历史"),
+            (SubTab::Open, crate::i18n::tr("当前挂单")),
+            (SubTab::History, crate::i18n::tr("订单历史")),
+            (SubTab::Trades, crate::i18n::tr("成交历史")),
         ];
         if self.market == Market::UmFutures {
-            tabs.insert(1, (SubTab::Positions, "持仓"));
+            tabs.insert(1, (SubTab::Positions, crate::i18n::tr("持仓")));
         }
         ui.horizontal(|ui| {
             ui.add_space(2.0);
@@ -864,7 +864,7 @@ impl BnApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let open_n = self.state.orders.lock().open(self.market).len();
                 ui.label(
-                    egui::RichText::new(format!("{} 笔挂单", open_n))
+                    egui::RichText::new(format!("{}{}", open_n, crate::i18n::tr("笔挂单")))
                         .size(11.5)
                         .color(theme::cur().text_dim),
                 );
@@ -970,6 +970,14 @@ fn symbol_row(
     toggled: &mut Option<String>,
 ) {
     let selected = *sym == app.symbol;
+    // 行悬停高亮：先在控件下层铺底色，再放按钮
+    let row_rect =
+        egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 22.0));
+    let hovered = ui.rect_contains_pointer(row_rect);
+    if hovered && !selected {
+        ui.painter()
+            .rect_filled(row_rect, 3.0, theme::cur().row_hover);
+    }
     ui.horizontal(|ui| {
         let name_txt = {
             let t = egui::RichText::new(sym).size(12.5).color(if selected {
@@ -992,7 +1000,11 @@ fn symbol_row(
             .stroke(egui::Stroke::NONE)
             .rounding(3.0)
             .min_size(egui::vec2(ui.available_width() - 26.0, 20.0));
-        if ui.add(name_btn).clicked() {
+        if ui
+            .add(name_btn)
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
             *switched = Some(sym.to_string());
         }
         let star = if is_fav { "★" } else { "☆" };
@@ -1007,6 +1019,7 @@ fn symbol_row(
                     .fill(egui::Color32::TRANSPARENT)
                     .rounding(3.0),
             )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(if is_fav {
                 crate::i18n::tr("取消自选")
             } else {
@@ -1026,8 +1039,13 @@ fn status_dot_bare(ui: &mut egui::Ui, ok: bool) {
     } else {
         theme::cur().err
     };
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 4.5, c);
+    resp.on_hover_text(if ok {
+        crate::i18n::tr("REST 接口正常")
+    } else {
+        crate::i18n::tr("REST 接口异常")
+    });
 }
 
 impl eframe::App for BnApp {

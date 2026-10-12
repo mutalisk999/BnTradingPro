@@ -52,6 +52,12 @@ pub fn parse_dec(s: &str) -> Option<Decimal> {
     Decimal::from_str_exact(t).ok()
 }
 
+/// Decimal → f64 数值转换（替代 to_string().parse()，避免每帧大量字符串堆分配）
+pub fn f64_decimal(d: &Decimal) -> f64 {
+    use rust_decimal::prelude::ToPrimitive;
+    d.to_f64().unwrap_or(0.0)
+}
+
 /// 千分位分组格式化（用于展示层；精确值仍走 Decimal）
 pub fn fmt_thousands(v: f64, dp: usize) -> String {
     let s = format!("{:.*}", dp, v);
@@ -76,10 +82,22 @@ pub fn fmt_thousands(v: f64, dp: usize) -> String {
     }
 }
 
-/// 大数缩写（成交额）：1.2亿 / 34.5万
+/// 大数缩写（成交额）：中文 1.2亿 / 34.5万；英文 1.2B / 34.5K
 pub fn fmt_compact(v: f64) -> String {
     let a = v.abs();
-    if a >= 1e8 {
+    if crate::i18n::lang() == crate::i18n::EN {
+        if a >= 1e9 {
+            format!("{:.2}B", v / 1e9)
+        } else if a >= 1e6 {
+            format!("{:.2}M", v / 1e6)
+        } else if a >= 1e3 {
+            format!("{:.1}K", v / 1e3)
+        } else if a >= 1.0 {
+            format!("{v:.0}")
+        } else {
+            format!("{v:.4}")
+        }
+    } else if a >= 1e8 {
         format!("{:.2}亿", v / 1e8)
     } else if a >= 1e4 {
         format!("{:.1}万", v / 1e4)

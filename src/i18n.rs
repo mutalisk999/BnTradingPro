@@ -49,7 +49,15 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "错误: " => "Error: ",
         // ---- 页头 ----
         "搜索交易对（如 BTC）…" => "Search symbols (e.g. BTC)…",
+        "搜索交易对…" => "Search symbols…",
         "无匹配交易对" => "No matching symbols",
+        "⭐ 自选" => "★ Favorites",
+        "全部" => "All",
+        "加入自选" => "Add to favorites",
+        "取消自选" => "Remove from favorites",
+        "（仅显示前 400 个，请用搜索过滤）" => "(Showing first 400 — type to filter)",
+        "REST 接口正常" => "REST OK",
+        "REST 接口异常" => "REST Error",
         // ---- 盘口/成交 ----
         "盘口 20 档" => "Order Book (20)",
         "成交明细" => "Recent Trades",
@@ -83,6 +91,13 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "比例" => "Size",
         "按可用余额估算" => "Estimate from available balance",
         "预估金额" => "Est. Value",
+        "设定" => "Set",
+        "杠杆倍数" => "Leverage",
+        "杠杆倍数需为 1-125 的整数" => "Leverage must be an integer from 1 to 125",
+        "交易规则尚未加载" => "Trading rules not loaded yet",
+        "请输入数量" => "Enter quantity",
+        "请输入价格" => "Enter price",
+        "请输入触发价" => "Enter trigger price",
         "价格将量化为" => "Price will be quantized to",
         "数量将量化为" => "Qty will be quantized to",
         "价格超出可表示范围" => "Price out of range",
@@ -106,6 +121,11 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "操作" => "Action",
         "刷新" => "Refresh",
         "撤销" => "Cancel",
+        "撤销全部" => "Cancel All",
+        "U本位合约" => "USDT-M Futures",
+        "个持仓" => " positions",
+        "切换单向持仓" => "Switch to One-way",
+        "切换双向持仓" => "Switch to Hedge",
         "待成交" => "New",
         "部分成交" => "Partially Filled",
         "已撤销" => "Canceled",
@@ -162,6 +182,14 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "合约账户加载中…" => "Loading futures account…",
         // ---- 设置 ----
         "交易环境" => "Environment",
+        "语言与主题" => "Language & Theme",
+        "保存后生效；顶栏右侧 ☀/🌙 与 中/EN 按钮可即时切换" => {
+            "Takes effect on save; the ☀/🌙 and 中/EN buttons in the top bar switch instantly"
+        }
+        "数据目录" => "Data dir:",
+        "本工具仅供个人交易辅助与研究，不构成任何投资建议；使用实盘交易产生的一切后果由使用者自行承担。" => {
+            "For personal trading assistance and research only — not investment advice. You bear all consequences of live trading."
+        }
         "测试网 (Testnet)" => "Testnet",
         "实盘" => "Live",
         "测试网密钥在 testnet.binance.vision / testnet.binancefuture.com 申请" => {

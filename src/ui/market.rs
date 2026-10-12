@@ -20,7 +20,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
 
     ui.add_space(4.0);
     ui.heading(
-        egui::RichText::new("盘口 20 档")
+        egui::RichText::new(crate::i18n::tr("盘口 20 档"))
             .size(13.0)
             .color(theme::cur().text),
     );
@@ -111,7 +111,8 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
         String::new()
     } else {
         format!(
-            "价差 {:.*} ({:.3}%)",
+            "{} {:.*} ({:.3}%)",
+            crate::i18n::tr("价差"),
             dp,
             spread.to_string().parse::<f64>().unwrap_or(0.0),
             spread_pct
@@ -169,10 +170,9 @@ fn book_row(
     price_color: egui::Color32,
 ) {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click());
-    let _ = resp.hover_pos();
+    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     if resp.hovered() {
-        ui.painter()
-            .rect_filled(rect, 0.0, egui::Color32::from_rgb(38, 46, 60));
+        ui.painter().rect_filled(rect, 0.0, theme::cur().row_hover);
     }
     // 深度条
     let bar_w = (w as f64 * ratio.clamp(0.0, 1.0)) as f32;
@@ -219,7 +219,7 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
 
     ui.add_space(4.0);
     ui.heading(
-        egui::RichText::new("成交明细")
+        egui::RichText::new(crate::i18n::tr("成交明细"))
             .size(13.0)
             .color(theme::cur().text),
     );
@@ -237,17 +237,17 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         .spacing([12.0, 2.0])
         .show(ui, |ui| {
             ui.label(
-                egui::RichText::new("价格")
+                egui::RichText::new(crate::i18n::tr("价格"))
                     .size(11.0)
                     .color(theme::cur().text_dim),
             );
             ui.label(
-                egui::RichText::new("数量")
+                egui::RichText::new(crate::i18n::tr("数量"))
                     .size(11.0)
                     .color(theme::cur().text_dim),
             );
             ui.label(
-                egui::RichText::new("时间")
+                egui::RichText::new(crate::i18n::tr("时间"))
                     .size(11.0)
                     .color(theme::cur().text_dim),
             );
