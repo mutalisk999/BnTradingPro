@@ -418,8 +418,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         (Side::Buy, Market::UmFutures) => (crate::i18n::tr("买入开多"), theme::cur().up),
         (Side::Sell, Market::UmFutures) => (crate::i18n::tr("卖出开空"), theme::cur().down),
     };
+    // 交易对买卖的标的其实是 base 资产（BTCUSDT 买的是 BTC），
+    // 按钮文案用 base；规则未加载时退回交易对原文
+    let base = rule
+        .as_ref()
+        .map(|r| r.base.clone())
+        .unwrap_or_else(|| symbol.clone());
     let btn = egui::Button::new(
-        egui::RichText::new(format!("{word} {symbol}"))
+        egui::RichText::new(format!("{word} {base}"))
             .strong()
             .size(theme::FONT_LG)
             .color(theme::cur().on_fill),

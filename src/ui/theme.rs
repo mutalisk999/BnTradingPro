@@ -10,6 +10,8 @@ use egui::{Color32, FontData, FontDefinitions, Stroke, Style, Visuals};
 pub const FONT_SM: f32 = 11.0;
 pub const FONT_MD: f32 = 12.5;
 pub const FONT_BODY: f32 = 14.0;
+/// 品牌名等需要强调的展示型文字
+pub const FONT_XL: f32 = 20.0;
 pub const FONT_LG: f32 = 16.5;
 pub const FONT_HERO: f32 = 20.0;
 /// 常规按钮/页签高度

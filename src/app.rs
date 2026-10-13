@@ -392,10 +392,10 @@ impl BnApp {
                 egui::Frame::default()
                     .fill(theme::cur().panel)
                     .stroke(egui::Stroke::new(1.0_f32, theme::cur().border))
-                    .inner_margin(egui::Margin::symmetric(14, 6)),
+                    .inner_margin(egui::Margin::symmetric(14, 8)),
             )
             .show(ui, |ui| {
-                ui.set_min_height(40.0);
+                ui.set_min_height(46.0);
                 self.topbar(ui);
             });
 
@@ -430,13 +430,17 @@ impl BnApp {
     /// 顶部导航：品牌 + 四大页签 + 连接状态
     fn topbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("BnTradingPro")
-                    .strong()
-                    .color(theme::cur().accent)
-                    .size(theme::FONT_LG),
-            );
-            ui.add_space(10.0);
+            // 品牌：加大字号并整体下移一点（嵌套纵向布局做垂直微调）
+            ui.vertical(|ui| {
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new("BnTradingPro")
+                        .strong()
+                        .color(theme::cur().accent)
+                        .size(theme::FONT_XL),
+                );
+            });
+            ui.add_space(12.0);
 
             for tab in [
                 Tab::Spot,
