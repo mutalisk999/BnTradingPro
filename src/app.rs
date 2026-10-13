@@ -216,8 +216,8 @@ pub struct BnApp {
     pub vault_delete_armed: bool,
     /// 认证卡片上一帧实测高度（矮窗口下卡片居中/顶置的布局依据，滞后一帧收敛）
     pub auth_card_h: f32,
-    /// 左侧交易对列表折叠（折叠后仅剩展开按钮，中央区扩大）
-    pub sidebar_collapsed: bool,
+    /// 左侧交易对列表展开（false 时收起为窄条；拖动面板边缘可展开/收起）
+    pub sidebar_expanded: bool,
     /// 图表最大化（隐藏右侧下单/盘口面板，仅保留页头 + 图表）
     pub chart_maximized: bool,
     /// 盘口逐档价格变动高亮（按 BookSite 分组，长度随 BOOK_LEVELS）
@@ -290,7 +290,7 @@ impl BnApp {
             // 首帧定位用：收紧内边距后 EnterKeys 表单实测约 340，Unlock 约 240。
             // 首帧用两页的中间值，第二帧起由实测值收敛，避免开场跳一下
             auth_card_h: 300.0,
-            sidebar_collapsed: false,
+            sidebar_expanded: true,
             chart_maximized: false,
             flash_book: Default::default(),
             flash_trade: Default::default(),
@@ -591,55 +591,59 @@ impl BnApp {
 
     /// 交易页：左侧交易对列表 + 页头 + 图表 | 盘口+成交 | 下单面板 + 底部订单区
     fn trading_ui(&mut self, ui: &mut egui::Ui) {
-        if self.sidebar_collapsed {
-            // 折叠态：窄条面板只放展开按钮，中央区随之扩大
-            egui::Panel::left("symbols_panel")
-                .resizable(false)
-                .exact_size(36.0)
-                .frame(
-                    egui::Frame::default()
-                        .fill(theme::cur().panel)
-                        .inner_margin(4),
-                )
-                .show(ui, |ui| {
-                    ui.vertical_centered(|ui| {
-                        if ui
-                            .small_button("»")
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .on_hover_text(crate::i18n::tr("展开侧边栏"))
-                            .clicked()
-                        {
-                            self.sidebar_collapsed = false;
-                        }
-                    });
+        // 侧栏展开/收起用 show_switched：拖内缘调宽，拖过最小宽度自动收起成窄条，
+        // 窄条向外拖或双击边缘重新展开。两态用不同 id，各自的宽度互不覆盖
+        let collapsed = egui::Panel::left("symbols_panel_collapsed")
+            .resizable(true) // 收起态可向外拖展开
+            .exact_size(36.0)
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::cur().panel)
+                    .inner_margin(4),
+            );
+        let expanded = egui::Panel::left("symbols_panel_expanded")
+            .resizable(true)
+            // 宽度范围按用户指定：默认 150，可拖 120~200
+            .default_size(150.0)
+            .min_size(120.0)
+            .max_size(200.0)
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::cur().panel)
+                    .inner_margin(8),
+            );
+        // is_expanded 走局部变量：&mut self.sidebar_expanded 与闭包内再改 self 会双重可变借用
+        let mut expanded_flag = self.sidebar_expanded;
+        egui::Panel::show_switched(ui, &mut expanded_flag, collapsed, expanded, |ui, expanded| {
+            if expanded {
+                // 收起按钮固定在列表顶部；symbol_filter 在 app.page 上，折叠不丢状态
+                ui.horizontal(|ui| {
+                    if ui
+                        .small_button("«")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(crate::i18n::tr("收起侧边栏"))
+                        .clicked()
+                    {
+                        self.sidebar_expanded = false;
+                    }
                 });
-        } else {
-            egui::Panel::left("symbols_panel")
-                .resizable(true)
-                .default_size(66.0)
-                .min_size(60.0)
-                .max_size(320.0)
-                .frame(
-                    egui::Frame::default()
-                        .fill(theme::cur().panel)
-                        .inner_margin(8),
-                )
-                .show(ui, |ui| {
-                    // 收起按钮固定在列表顶部；symbol_filter 在 app.page 上，折叠不丢状态
-                    ui.horizontal(|ui| {
-                        if ui
-                            .small_button("«")
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .on_hover_text(crate::i18n::tr("收起侧边栏"))
-                            .clicked()
-                        {
-                            self.sidebar_collapsed = true;
-                        }
-                    });
-                    // 列表自身用 show_rows 虚拟化滚动，外层不再包 ScrollArea
-                    crate::ui::symbols::show(self, ui);
+                // 列表自身用 show_rows 虚拟化滚动，外层不再包 ScrollArea
+                crate::ui::symbols::show(self, ui);
+            } else {
+                // 折叠态：窄条面板只放展开按钮，中央区随之扩大
+                ui.vertical_centered(|ui| {
+                    if ui
+                        .small_button("»")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(crate::i18n::tr("展开侧边栏"))
+                        .clicked()
+                    {
+                        self.sidebar_expanded = true;
+                    }
                 });
-        }
+            }
+        });
+        self.sidebar_expanded = expanded_flag;
 
         // 图表最大化：右侧下单/盘口/成交与底部订单区全部隐藏，图表占满中央区
         if !self.chart_maximized {

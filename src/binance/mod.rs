@@ -274,9 +274,11 @@ mod tests {
 
     #[test]
     fn insecure_override_rejected() {
-        let mut cfg = crate::config::AppConfig::default();
         // http/ws 覆盖会把 API Key 头与签名 query 明文暴露，必须回退默认
-        cfg.override_spot_rest = "http://evil.example.com".into();
+        let mut cfg = crate::config::AppConfig {
+            override_spot_rest: "http://evil.example.com".into(),
+            ..Default::default()
+        };
         assert_eq!(
             endpoints(Market::Spot, false, &cfg).rest,
             "https://api.binance.com"
