@@ -5,6 +5,18 @@
 use eframe::egui;
 use egui::{Color32, FontData, FontDefinitions, Stroke, Style, Visuals};
 
+// ---------- 字号 / 控件高度 token ----------
+/// 全应用仅 5 档字号：小字（辅助小字）→ 次要（表格/说明）→ 正文 → 页面标题 → 大数字
+pub const FONT_SM: f32 = 11.0;
+pub const FONT_MD: f32 = 12.5;
+pub const FONT_BODY: f32 = 14.0;
+pub const FONT_LG: f32 = 16.5;
+pub const FONT_HERO: f32 = 20.0;
+/// 常规按钮/页签高度
+pub const BTN_H: f32 = 28.0;
+/// 主操作按钮高度（买卖切换、下单提交）
+pub const BTN_LG: f32 = 36.0;
+
 // ---------- 主题定义 ----------
 
 #[derive(Debug, Clone, Copy)]
@@ -61,7 +73,9 @@ pub const DARK: Theme = Theme {
     tag_bg: Color32::from_rgb(44, 52, 66),
     row_hover: Color32::from_rgb(38, 46, 60),
     btn_idle: Color32::from_rgb(30, 37, 48),
-    on_fill: Color32::from_rgb(255, 255, 255),
+    // 涨/跌填充上的文字用深色：白色在 up=rgb(14,203,129) 上对比度仅 2.1:1，
+    // 深色对 up 8.1:1、对 down 4.9:1
+    on_fill: Color32::from_rgb(6, 32, 22),
     on_accent: Color32::from_rgb(28, 22, 2),
 };
 
@@ -71,12 +85,15 @@ pub const LIGHT: Theme = Theme {
     bg: Color32::from_rgb(244, 246, 249),
     panel: Color32::from_rgb(255, 255, 255),
     panel2: Color32::from_rgb(248, 250, 252),
-    card: Color32::from_rgb(239, 242, 247),
+    // 卡片近纯白：与灰底 bg 拉开层次，卡片"浮"在页面上
+    card: Color32::from_rgb(252, 253, 255),
     border: Color32::from_rgb(216, 222, 231),
     text: Color32::from_rgb(27, 32, 38),
-    text_dim: Color32::from_rgb(107, 118, 132),
-    accent: Color32::from_rgb(201, 148, 0),
-    warn: Color32::from_rgb(185, 122, 20),
+    // 加深一档：在近白卡片底 (252,253,255) 上对比度 ≥4.5:1
+    text_dim: Color32::from_rgb(96, 106, 120),
+    // accent/warn 加深：原色在白底上对比度 2.7:1 / 3.5:1，不满足 4.5:1
+    accent: Color32::from_rgb(140, 102, 0),
+    warn: Color32::from_rgb(146, 96, 8),
     err: Color32::from_rgb(214, 58, 80),
     grid: Color32::from_rgb(223, 228, 236),
     grid_time: Color32::from_rgb(228, 233, 239),
@@ -85,8 +102,11 @@ pub const LIGHT: Theme = Theme {
     tag_bg: Color32::from_rgb(219, 225, 234),
     row_hover: Color32::from_rgb(235, 239, 245),
     btn_idle: Color32::from_rgb(226, 232, 240),
-    on_fill: Color32::from_rgb(255, 255, 255),
-    on_accent: Color32::from_rgb(40, 30, 4),
+    // 彩色填充（up/down）上的文字用黑色：白色对浅色 up 仅 3.5:1；
+    // 黑色对 up 6.1:1、对 down 4.6:1
+    on_fill: Color32::from_rgb(0, 0, 0),
+    // accent 加深后深色字对比度跌至 3.1:1，改白色（5.2:1）
+    on_accent: Color32::from_rgb(255, 255, 255),
 };
 
 static MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
@@ -146,7 +166,7 @@ pub fn ma_colors() -> [Color32; 4] {
 
 /// 彩色小徽标
 pub fn badge(ui: &mut egui::Ui, text: &str, fg: Color32) {
-    let txt = egui::RichText::new(format!(" {text} ")).size(11.5).strong();
+    let txt = egui::RichText::new(format!(" {text} ")).size(FONT_SM).strong();
     egui::Frame::default()
         .fill(fg.gamma_multiply(0.22))
         .stroke(Stroke::new(1.0_f32, fg.gamma_multiply(0.85)))
@@ -155,6 +175,84 @@ pub fn badge(ui: &mut egui::Ui, text: &str, fg: Color32) {
         .show(ui, |ui| {
             ui.label(txt.color(fg));
         });
+}
+
+// ---------- 按钮层级 ----------
+
+/// 主操作按钮：全宽 + accent 填充 + on_accent 文字（保存、提交、解锁等唯一主入口）
+pub fn btn_primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
+    let btn = egui::Button::new(
+        egui::RichText::new(text)
+            .strong()
+            .size(FONT_BODY)
+            .color(cur().on_accent),
+    )
+    .fill(cur().accent)
+    .corner_radius(5)
+    .min_size(egui::vec2(ui.available_width(), BTN_LG));
+    ui.add_enabled(enabled, btn)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// 普通按钮：card 底 + 边框，中性文字
+pub fn btn_default(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
+    let btn = egui::Button::new(egui::RichText::new(text).size(FONT_BODY))
+        .fill(cur().card)
+        .stroke(Stroke::new(1.0_f32, cur().border))
+        .corner_radius(6)
+        .min_size(egui::vec2(0.0, BTN_H));
+    ui.add_enabled(enabled, btn)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// 危险按钮：红色淡填充 + 红字（撤销/平仓/删除凭据库等破坏性操作）
+pub fn btn_danger(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
+    // 用半透明红叠加：gamma_multiply 在浅色主题下会变成近黑色块
+    // （egui 0.36 移除了 ecolor::lerp_color；自透明向 c 以 t 渐显 ≈ 全通道乘 t）
+    let fill = cur().err.gamma_multiply(0.16);
+    let btn = egui::Button::new(
+        egui::RichText::new(text)
+            .size(FONT_BODY)
+            .color(cur().err),
+    )
+    .fill(fill)
+    .stroke(Stroke::new(1.0_f32, cur().err.gamma_multiply(0.55)))
+    .corner_radius(6)
+    .min_size(egui::vec2(0.0, BTN_H));
+    ui.add_enabled(enabled, btn)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// 固定字号的小加载圈（统一 13px，避免调用点出现裸 .size()）
+pub fn spinner(ui: &mut egui::Ui) {
+    ui.add(egui::Spinner::new().size(FONT_BODY));
+}
+
+/// 胶囊页签：激活态 accent 淡填充 + accent 文字，未激活透明 + 暗文字，
+/// 填充带淡入动画（hover/切换只触发一次动画，不常驻重绘）
+pub fn pill_tab(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
+    let t = cur();
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(FONT_BODY),
+        if active { t.accent } else { t.text_dim },
+    );
+    let pad_x = 12.0;
+    let size = egui::vec2(galley.size().x + pad_x * 2.0, BTN_H);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let anim = ui.ctx().animate_bool(egui::Id::new("pill_tab").with(label), active);
+    // 半透明 accent 叠加：深浅两主题下都是"淡淡的 accent 色块"
+    let mut fill = t.accent.gamma_multiply(0.16 * anim);
+    if resp.hovered() && !active {
+        fill = t.row_hover;
+    }
+    ui.painter().rect_filled(rect, 6.0, fill);
+    ui.painter().galley(
+        rect.center() - galley.size() / 2.0,
+        galley,
+        if active { t.accent } else { t.text_dim },
+    );
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 // ---------- 字体 ----------
@@ -178,7 +276,27 @@ fn load_font(fonts: &mut FontDefinitions, key: &str, candidates: &[&str]) -> boo
 pub fn apply_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
 
-    // UI 主字体：微软雅黑（拉丁+CJK 统一渲染），放最前优先命中
+    // 等宽数字字体：Cascadia（Win11）→ Consolas（Win10 均有）。
+    // mono 优先：Proportional 首位命中拉丁/数字（交易终端数字对齐是第一优先级），
+    // CJK 与 emoji 逐字回退到后续字体
+    if load_font(
+        &mut fonts,
+        "mono",
+        &[
+            "CascadiaCode.ttf",
+            "CascadiaMono.ttf",
+            "consola.ttf",
+            "lucon.ttf",
+        ],
+    ) {
+        if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+            fam.insert(0, "mono".to_owned());
+        }
+        if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+            fam.insert(0, "mono".to_owned());
+        }
+    }
+    // UI 中文字体：微软雅黑，只作回退（拉丁/数字已被 mono 命中，中文才落到这里）
     if load_font(
         &mut fonts,
         "cjk",
@@ -191,25 +309,8 @@ pub fn apply_fonts(ctx: &egui::Context) {
         ],
     ) {
         if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-            fam.insert(0, "cjk".to_owned());
+            fam.push("cjk".to_owned());
         }
-    }
-    // 等宽数字字体：Cascadia（Win11）→ Consolas（Win10 均有），中文回退雅黑
-    if load_font(
-        &mut fonts,
-        "mono",
-        &[
-            "CascadiaCode.ttf",
-            "CascadiaMono.ttf",
-            "consola.ttf",
-            "lucon.ttf",
-        ],
-    ) {
-        if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-            fam.insert(0, "mono".to_owned());
-        }
-    }
-    if fonts.font_data.contains_key("cjk") {
         if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
             fam.push("cjk".to_owned());
         }
@@ -298,11 +399,11 @@ pub fn apply(ctx: &egui::Context) {
     style.spacing.menu_margin = egui::Margin::symmetric(6, 4);
     style.spacing.combo_width = 90.0;
     style.text_styles = [
-        (egui::TextStyle::Heading, egui::FontId::proportional(19.0)),
-        (egui::TextStyle::Body, egui::FontId::proportional(14.0)),
-        (egui::TextStyle::Button, egui::FontId::proportional(14.0)),
-        (egui::TextStyle::Small, egui::FontId::proportional(11.5)),
-        (egui::TextStyle::Monospace, egui::FontId::monospace(13.5)),
+        (egui::TextStyle::Heading, egui::FontId::proportional(FONT_HERO)),
+        (egui::TextStyle::Body, egui::FontId::proportional(FONT_BODY)),
+        (egui::TextStyle::Button, egui::FontId::proportional(FONT_BODY)),
+        (egui::TextStyle::Small, egui::FontId::proportional(FONT_SM)),
+        (egui::TextStyle::Monospace, egui::FontId::monospace(FONT_BODY)),
     ]
     .into();
     // 0.35+ 按主题分别持有 Style；本应用自带明暗配色（theme::cur()），两个主题统一用同一份
@@ -320,40 +421,85 @@ pub fn card<R>(
 ) -> egui::InnerResponse<R> {
     egui::Frame::default()
         .fill(cur().card)
-        .stroke(Stroke::new(1.0_f32, cur().border))
-        .corner_radius(6)
+        // 边框压暗一档：卡片轮廓更实，与面板底色拉开层次
+        .stroke(Stroke::new(1.0_f32, cur().border.gamma_multiply(0.7)))
+        .corner_radius(8)
         .inner_margin(egui::Margin::symmetric(12, 10))
         .outer_margin(egui::Margin::symmetric(0, 4))
         .show(ui, add_contents)
 }
 
-/// 顶部导航页签（激活态金色文字 + 边框）
-pub fn nav_tab(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
-    let txt = if active {
-        egui::RichText::new(label)
-            .strong()
-            .size(14.5)
-            .color(cur().accent)
-    } else {
-        egui::RichText::new(label).size(14.0).color(cur().text_dim)
-    };
-    let btn = egui::Button::new(txt)
-        .fill(Color32::TRANSPARENT)
-        .stroke(if active {
-            Stroke::new(2.0_f32, cur().accent)
-        } else {
-            Stroke::NONE
+/// 带标题行的卡片：标题 + 可选右侧操作槽 + 分隔线 + 内容体
+pub fn card_with_header<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    add_right: impl FnOnce(&mut egui::Ui),
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    card(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(title)
+                    .size(FONT_LG)
+                    .strong()
+                    .color(cur().text),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add_right);
+        });
+        ui.separator();
+        add_contents(ui)
+    })
+}
+
+// ---------- 表单行 ----------
+
+/// 表单行内输入控件（TextEdit/DragValue）统一最小高
+pub const CONTROL_H: f32 = 26.0;
+/// 表单行标准高度（≥ 控件高，留少量呼吸空间）
+pub const ROW_H: f32 = 30.0;
+
+/// 固定高度表单行。
+///
+/// `ui.horizontal` 的行高初始只有 `interact_size.y`（18px），行内后置的高控件
+/// （ComboBox/按钮 ≈28px）会把行撑高，而先放置的标签不会随之重新居中，
+/// 造成"标签偏高、控件偏矮"的逐项错位。这里预分配 ROW_H 并统一控件高度，
+/// 行内所有元素以同一基线垂直居中，行高不再中途变化。
+pub fn form_row<R>(
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let w = ui.available_width();
+    ui.allocate_ui(egui::vec2(w, ROW_H), |ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            // 按钮高度 = 文本 + 2×button_padding.y（下拉框同理），压到 4 使其
+            // 与 interact_size.y 撑起的输入控件同为 CONTROL_H
+            ui.spacing_mut().button_padding.y = 4.0;
+            ui.spacing_mut().interact_size.y = CONTROL_H;
+            add_contents(ui)
         })
-        .corner_radius(3)
-        .min_size(egui::vec2(0.0, 28.0));
-    ui.add(btn).clicked()
+    })
+    .inner
+}
+
+/// 表单行标签：固定宽度保证后续控件左缘对齐，行高保证文字垂直居中
+pub fn row_label(ui: &mut egui::Ui, text: impl Into<egui::RichText>, w: f32) {
+    ui.allocate_ui(egui::vec2(w, ROW_H), |ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.label(text.into());
+        });
+    });
+}
+
+/// 顶部导航页签（胶囊样式，激活态 accent 填充）
+pub fn nav_tab(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
+    pill_tab(ui, label, active).clicked()
 }
 
 /// 区块小标题
 pub fn section(ui: &mut egui::Ui, label: &str) {
     ui.label(
         egui::RichText::new(label)
-            .size(11.5)
+            .size(FONT_SM)
             .strong()
             .color(cur().text_dim),
     );
@@ -362,7 +508,7 @@ pub fn section(ui: &mut egui::Ui, label: &str) {
 /// 表格/卡片内的小标签文字
 pub fn card_label(label: &str) -> egui::RichText {
     egui::RichText::new(label.to_string())
-        .size(11.5)
+        .size(FONT_SM)
         .color(cur().text_dim)
 }
 

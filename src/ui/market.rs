@@ -29,7 +29,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.add_space(4.0);
     ui.heading(
         egui::RichText::new(crate::i18n::tr("盘口 10 档"))
-            .size(13.0)
+            .size(theme::FONT_BODY)
             .color(theme::cur().text),
     );
     ui.separator();
@@ -122,13 +122,13 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
                 egui::RichText::new(format!("{:.*}", dp, mid_f))
                     .monospace()
                     .strong()
-                    .size(13.5)
+                    .size(theme::FONT_BODY)
                     .color(theme::cur().text),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     egui::RichText::new(spread_txt)
-                        .size(11.0)
+                        .size(theme::FONT_SM)
                         .color(theme::cur().text_dim),
                 );
             });
@@ -192,7 +192,7 @@ fn book_row(
         egui::Pos2::new(rect.left() + 2.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         format!("{price_f:.*}", dp),
-        egui::FontId::monospace(12.0),
+        egui::FontId::monospace(theme::FONT_MD),
         price_color,
     );
     // 数量（右）
@@ -200,7 +200,7 @@ fn book_row(
         egui::Pos2::new(rect.right() - 2.0, rect.center().y),
         egui::Align2::RIGHT_CENTER,
         format!("{qty_f:.*}", qdp),
-        egui::FontId::monospace(12.0),
+        egui::FontId::monospace(theme::FONT_MD),
         theme::cur().text,
     );
     if resp.clicked() {
@@ -214,16 +214,11 @@ fn book_row(
 /// 逐笔成交
 pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
-    let dp = state
-        .with_rule(app.market, &app.page.symbol, |r| {
-            r.map(|x| x.price_dp() as usize)
-        })
-        .unwrap_or(2);
 
     ui.add_space(4.0);
     ui.heading(
         egui::RichText::new(crate::i18n::tr("成交明细"))
-            .size(13.0)
+            .size(theme::FONT_BODY)
             .color(theme::cur().text),
     );
     ui.separator();
@@ -239,6 +234,13 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     };
 
     ui.set_min_width(0.0);
+    // 数字列右对齐 + 最小列宽：价格/数量纵向成列，便于扫读
+    let num_cell = |ui: &mut egui::Ui, text: egui::RichText, w: f32| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.set_min_width(w);
+            ui.label(text);
+        });
+    };
     egui::Grid::new("trades_grid")
         .num_columns(3)
         .spacing([12.0, 2.0])
@@ -246,7 +248,7 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
             for t in ["价格", "数量", "时间"] {
                 ui.label(
                     egui::RichText::new(crate::i18n::tr(t))
-                        .size(11.0)
+                        .size(theme::FONT_SM)
                         .color(theme::cur().text_dim),
                 );
             }
@@ -258,26 +260,26 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
                 } else {
                     theme::cur().up
                 };
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{:.*}",
-                        dp,
-                        widgets::f64_decimal(&t.price)
-                    ))
-                    .monospace()
-                    .size(12.0)
-                    .color(col),
-                );
-                ui.label(
-                    egui::RichText::new(t.qty.normalize().to_string())
+                num_cell(
+                    ui,
+                    egui::RichText::new(widgets::fmt_dec_grouped(&t.price))
                         .monospace()
-                        .size(12.0)
+                        .size(theme::FONT_MD)
+                        .color(col),
+                    72.0,
+                );
+                num_cell(
+                    ui,
+                    egui::RichText::new(widgets::fmt_dec_grouped(&t.qty))
+                        .monospace()
+                        .size(theme::FONT_MD)
                         .color(theme::cur().text),
+                    64.0,
                 );
                 ui.label(
                     egui::RichText::new(widgets::fmt_time_short(t.time))
                         .monospace()
-                        .size(12.0)
+                        .size(theme::FONT_MD)
                         .color(theme::cur().text_dim),
                 );
                 ui.end_row();
@@ -310,10 +312,14 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
         }
     };
 
-    // 第一行：交易对 | 最新价/涨跌 | 周期直选按钮
+    // 第一行：交易对 | 最新价/涨跌 | 周期直选按钮 | 自选星标
     // wrapped：窄窗口时周期按钮换行而不是被裁掉
     ui.horizontal_wrapped(|ui| {
-        ui.label(egui::RichText::new(app.page.symbol.clone()).strong().size(16.5));
+        ui.label(
+            egui::RichText::new(app.page.symbol.clone())
+                .strong()
+                .size(theme::FONT_LG),
+        );
         ui.separator();
         if let Some(t) = &tick {
             let chg = widgets::f64_decimal(&t.price_change_percent);
@@ -323,36 +329,50 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 egui::RichText::new(widgets::fmt_thousands(px, dp))
                     .monospace()
                     .strong()
-                    .size(21.0)
+                    .size(theme::FONT_LG)
                     .color(c),
             );
             ui.label(
                 egui::RichText::new(format!("{chg:+.2}%"))
                     .monospace()
-                    .size(13.5)
+                    .size(theme::FONT_BODY)
                     .color(c),
             );
         }
         ui.separator();
-        // 周期直选（无需下拉）；最小高度 24px 保证最常见的点击目标可命中
+        // 周期直选（胶囊页签）
         for iv in Interval::all() {
-            let active = app.page.interval == iv;
-            let txt = if active {
-                egui::RichText::new(iv.label())
-                    .size(12.5)
-                    .strong()
-                    .color(theme::cur().accent)
-            } else {
-                egui::RichText::new(iv.label())
-                    .size(12.0)
-                    .color(theme::cur().text_dim)
-            };
-            // min_size 直接加高命中区：add_sized 的 justify 布局会破坏
-            // horizontal_wrapped 的换行判定（按钮会挤在首行直到被裁剪）
-            if ui.add(egui::Button::selectable(active, txt).min_size(egui::vec2(0.0, 24.0))).clicked() {
+            if theme::pill_tab(ui, iv.label(), app.page.interval == iv).clicked() {
                 app.switch_interval(iv);
             }
         }
+        // F1：自选星标固定在行最右
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let is_fav = app.state.favorites(app.market).contains(&app.page.symbol);
+            let star_txt = egui::RichText::new(if is_fav { "★" } else { "☆" })
+                .size(theme::FONT_BODY)
+                .color(if is_fav {
+                    theme::cur().accent
+                } else {
+                    theme::cur().text_dim
+                });
+            if ui
+                .add(
+                    egui::Button::new(star_txt)
+                        .fill(egui::Color32::TRANSPARENT)
+                        .corner_radius(3),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(if is_fav {
+                    crate::i18n::tr("取消自选")
+                } else {
+                    crate::i18n::tr("加入自选")
+                })
+                .clicked()
+            {
+                app.state.toggle_favorite(app.market, &app.page.symbol);
+            }
+        });
     });
 
     // 第二行：24h OHLC / 交易量 / 交易额 /（合约）资金费率（wrapped 防窄窗截断）
@@ -365,7 +385,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 ui.add(ext(
                     egui::RichText::new(value)
                         .monospace()
-                        .size(12.0)
+                        .size(theme::FONT_MD)
                         .color(color),
                 ));
                 ui.add_space(4.0);
@@ -428,7 +448,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 egui::Label::new(
                     egui::RichText::new(format!("{rf:+.4}%"))
                         .monospace()
-                        .size(12.0)
+                        .size(theme::FONT_MD)
                         .strong()
                         .color(color),
                 )

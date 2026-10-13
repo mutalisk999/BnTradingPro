@@ -49,7 +49,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         // ---- 页头 ----
         "搜索交易对…" => "Search symbols…",
         "无匹配交易对" => "No matching symbols",
-        "⭐ 自选" => "★ Favorites",
+        "自选" => "Favorites",
         "全部" => "All",
         "加入自选" => "Add to favorites",
         "取消自选" => "Remove from favorites",
@@ -119,7 +119,13 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "低于最小名义金额" => "Below min notional",
         "（限价单）" => " (limit order)",
         "提交中…" => "Submitting…",
-        "本地时间与服务器偏差过大，正在自动校时，请重试" => "Clock drift too large — auto resyncing, please retry",
+        "本地时间与服务器偏差过大，已自动校时并重试，请重试" => {
+            "Clock drift too large — time resynced and request retried, please try again"
+        }
+        "IP 已被限频封禁（418），请降低请求频率后重试" => {
+            "IP banned by rate limiting (418) — reduce request frequency and retry later"
+        }
+        "请求频率超限（429），请稍后重试" => "Rate limit exceeded (429) — retry later",
         "API Key 无效或权限不足（检查 Key、IP 白名单、是否用对测试网/实盘）" => {
             "API key invalid or unauthorized (check the key, IP whitelist, testnet vs live)"
         }
@@ -208,8 +214,8 @@ fn en_lookup(zh: &'static str) -> &'static str {
         // ---- 设置 ----
         "交易环境" => "Environment",
         "语言与主题" => "Language & Theme",
-        "保存后生效；顶栏右侧 ☀/🌙 与 中/EN 按钮可即时切换" => {
-            "Takes effect on save; the ☀/🌙 and 中/EN buttons in the top bar switch instantly"
+        "保存后生效；顶栏右侧 深色/浅色 与 中/EN 按钮可即时切换" => {
+            "Takes effect on save; the Dark/Light and 中/EN buttons in the top bar switch instantly"
         }
         "数据目录" => "Data dir:",
         "本工具仅供个人交易辅助与研究，不构成任何投资建议；使用实盘交易产生的一切后果由使用者自行承担。" => {
@@ -220,6 +226,9 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "测试网密钥在 testnet.binance.vision / testnet.binancefuture.com 申请" => {
             "Get testnet keys at testnet.binance.vision / testnet.binancefuture.com"
         }
+        "测试网与实盘的 API 密钥不通用，切换环境后需重新配置密钥" => {
+            "Testnet and live API keys are not interchangeable — reconfigure keys after switching"
+        }
         "⚠ 实盘模式下下单将使用真实资金，请确认密钥与环境正确！" => {
             "⚠ Live mode places orders with REAL funds — verify your key and environment!"
         }
@@ -227,6 +236,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "启用代理" => "Enable proxy",
         "地址" => "Address",
         "请求参数" => "Request Parameters",
+        "接收窗口" => "recvWindow",
         "HTTP 超时" => "HTTP Timeout",
         "日志级别" => "Log Level",
         "默认交易对" => "Default Symbol",
@@ -252,6 +262,9 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "English" => "English",
         "设置已保存，正在重连…" => "Settings saved, reconnecting…",
         "已删除本机凭据库" => "Local vault deleted",
+        "已清空端点覆盖：测试网与实盘端点不通用" => {
+            "Endpoint overrides cleared: testnet and live endpoints are not interchangeable"
+        }
         // ---- 登录页 ----
         "Binance 现货 / U本位合约 交易终端" => "Binance Spot / USDT-M Futures Trading Terminal",
         "解锁" => "Unlock",
@@ -416,8 +429,22 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "做空" => "Short",
         "缺少" => "Missing",
         "加载失败: " => "Failed to load: ",
+        "该交易对同时存在多空双向持仓，无法确定止盈止损的平仓方向，请先手动平掉一侧" => {
+            "Symbol has both long and short positions — cannot determine the stop order's closing side. Close one side first"
+        }
+        "点击关闭" => "Click to dismiss",
+        "清空搜索" => "Clear search",
+        // ---- UI 重构补充（侧栏折叠 / 图表最大化与副图指标 / 空状态 / 步进提示）----
+        "收起侧边栏" => "Collapse sidebar",
+        "展开侧边栏" => "Expand sidebar",
+        "全屏" => "Fullscreen",
+        "还原" => "Restore",
+        "数量已按步进调整" => "Quantity adjusted to step",
+        "下单后将显示在这里" => "Placed orders will appear here",
+        "尝试其他关键词" => "Try another keyword",
+        "余额到账后自动显示" => "Balances appear once credited",
+        "交易规则加载中，请检查网络与代理" => "Loading symbol rules — check network & proxy",
         "错误" => "Error",
-        "交易规则加载中，请检查网络与代理" => "Loading trading rules — check network/proxy",
         _ => return_en_fallback(zh),
     }
 }

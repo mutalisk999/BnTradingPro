@@ -15,13 +15,16 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let dir = config::data_dir();
     let mut apply = false;
 
-    ui.heading(egui::RichText::new(crate::i18n::tr("设置")).strong().size(16.5));
+    ui.heading(
+        egui::RichText::new(crate::i18n::tr("设置"))
+            .strong()
+            .size(theme::FONT_LG),
+    );
     ui.separator();
 
     // ---------- 环境 ----------
-    ui.group(|ui| {
-        ui.label(egui::RichText::new(crate::i18n::tr("交易环境")).strong());
-        ui.horizontal(|ui| {
+    theme::card_with_header(ui, crate::i18n::tr("交易环境"), |_| {}, |ui| {
+        theme::form_row(ui, |ui| {
             ui.selectable_value(
                 &mut app.settings.testnet,
                 true,
@@ -34,36 +37,47 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     egui::RichText::new(crate::i18n::tr(
                         "测试网密钥在 testnet.binance.vision / testnet.binancefuture.com 申请",
                     ))
-                    .size(11.0)
+                    .size(theme::FONT_SM)
                     .color(theme::cur().text_dim),
                 );
             } else {
                 theme::badge(ui, crate::i18n::tr("实盘 · 真实资金"), theme::cur().err);
             }
         });
+        ui.label(
+            egui::RichText::new(crate::i18n::tr(
+                "测试网与实盘的 API 密钥不通用，切换环境后需重新配置密钥",
+            ))
+            .size(theme::FONT_SM)
+            .color(theme::cur().text_dim),
+        );
         if !app.settings.testnet {
             ui.label(
                 egui::RichText::new(crate::i18n::tr(
                     "⚠ 实盘模式下下单将使用真实资金，请确认密钥与环境正确！",
                 ))
-                .size(12.0)
+                .size(theme::FONT_MD)
                 .color(theme::cur().err),
             );
         }
     });
 
     // ---------- 代理 ----------
-    ui.group(|ui| {
-        ui.label(
-            egui::RichText::new(crate::i18n::tr("网络代理（REST 与 WebSocket 均生效）")).strong(),
-        );
-        ui.checkbox(&mut app.settings.proxy_enabled, crate::i18n::tr("启用代理"));
-        ui.horizontal(|ui| {
-            ui.label(crate::i18n::tr("地址"));
+    theme::card_with_header(
+        ui,
+        crate::i18n::tr("网络代理（REST 与 WebSocket 均生效）"),
+        |_| {},
+        |ui| {
+            ui.checkbox(&mut app.settings.proxy_enabled, crate::i18n::tr("启用代理"));
+        theme::form_row(ui, |ui| {
+            theme::row_label(ui, crate::i18n::tr("地址"), 40.0);
+            // 遮蔽显示：代理地址常含 user:pass@ 凭据，明文回显有录屏/窥屏暴露风险
             ui.add(
                 egui::TextEdit::singleline(&mut app.settings.proxy_url)
+                    .password(true)
                     .text_color(theme::cur().text)
                     .desired_width(320.0)
+                    .min_size(egui::vec2(0.0, theme::CONTROL_H))
                     .hint_text(
                         "http://127.0.0.1:7890 或 socks5://127.0.0.1:7890（支持 user:pass@）",
                     ),
@@ -72,10 +86,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     });
 
     // ---------- 外观与语言 ----------
-    ui.group(|ui| {
-        ui.label(egui::RichText::new(crate::i18n::tr("语言与主题")).strong());
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(crate::i18n::tr("语言")).strong());
+    theme::card_with_header(ui, crate::i18n::tr("语言与主题"), |_| {}, |ui| {
+        theme::form_row(ui, |ui| {
+            theme::row_label(ui, crate::i18n::tr("语言"), 40.0);
             let mut lang = app.settings.lang.clone();
             egui::ComboBox::from_id_salt("lang_cb")
                 .selected_text(if lang == "en" {
@@ -90,7 +103,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 });
             app.settings.lang = lang;
             ui.separator();
-            ui.label(egui::RichText::new(crate::i18n::tr("主题")).strong());
+            theme::row_label(ui, crate::i18n::tr("主题"), 40.0);
             let mut mode = app.settings.theme_mode.clone();
             egui::ComboBox::from_id_salt("theme_cb")
                 .selected_text(if mode == "light" {
@@ -107,18 +120,25 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         });
         ui.label(
             egui::RichText::new(crate::i18n::tr(
-                "保存后生效；顶栏右侧 ☀/🌙 与 中/EN 按钮可即时切换",
+                "保存后生效；顶栏右侧 深色/浅色 与 中/EN 按钮可即时切换",
             ))
-            .size(11.0)
+            .size(theme::FONT_SM)
             .color(theme::cur().text_dim),
         );
     });
 
     // ---------- 参数 ----------
-    ui.group(|ui| {
-        ui.label(egui::RichText::new(crate::i18n::tr("请求参数")).strong());
-        ui.horizontal(|ui| {
-            ui.label("recvWindow");
+    theme::card_with_header(ui, crate::i18n::tr("请求参数"), |_| {}, |ui| {
+        theme::form_row(ui, |ui| {
+            ui.label(crate::i18n::tr("接收窗口"));
+            // 英文界面标签本身就是 "recvWindow"，仅中文界面补英文小字说明
+            if crate::i18n::lang() == crate::i18n::ZH {
+                ui.label(
+                    egui::RichText::new("recvWindow")
+                        .size(theme::FONT_SM)
+                        .color(theme::cur().text_dim),
+                );
+            }
             ui.add(
                 egui::DragValue::new(&mut app.settings.recv_window_ms)
                     .range(1000..=60000)
@@ -142,12 +162,13 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     }
                 });
         });
-        ui.horizontal(|ui| {
+        theme::form_row(ui, |ui| {
             ui.label(crate::i18n::tr("默认交易对"));
             ui.add(
                 egui::TextEdit::singleline(&mut app.settings.default_symbol)
                     .text_color(theme::cur().text)
                     .desired_width(110.0)
+                    .min_size(egui::vec2(0.0, theme::CONTROL_H))
                     .hint_text("BTCUSDT"),
             );
             ui.label(crate::i18n::tr("默认K线周期"));
@@ -167,22 +188,24 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     });
 
     // ---------- 端点覆盖 ----------
-    ui.group(|ui| {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(crate::i18n::tr("端点覆盖（留空使用内置默认）")).strong());
-            let overridden = [
-                &app.settings.override_spot_rest,
-                &app.settings.override_spot_ws,
-                &app.settings.override_fut_rest,
-                &app.settings.override_fut_ws,
-            ]
-            .iter()
-            .any(|s| !s.trim().is_empty());
+    let overridden = [
+        &app.settings.override_spot_rest,
+        &app.settings.override_spot_ws,
+        &app.settings.override_fut_rest,
+        &app.settings.override_fut_ws,
+    ]
+    .iter()
+    .any(|s| !s.trim().is_empty());
+    theme::card_with_header(
+        ui,
+        crate::i18n::tr("端点覆盖（留空使用内置默认）"),
+        |ui| {
             if overridden {
                 // 自定义端点会把携带 API Key 的请求重定向到任意主机，必须显式可见
                 theme::badge(ui, crate::i18n::tr("自定义端点已启用"), theme::cur().warn);
             }
-        });
+        },
+        |ui| {
         egui::Grid::new("ep_grid")
             .num_columns(2)
             .spacing([10.0, 4.0])
@@ -223,13 +246,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     });
 
     // ---------- 应用 ----------
-    if ui
-        .add(
-            egui::Button::new(egui::RichText::new(crate::i18n::tr("保存并重连")).strong())
-                .min_size(egui::vec2(140.0, 28.0)),
-        )
-        .clicked()
-    {
+    // 主操作按钮：accent 填充（与解锁页主按钮一致），视觉层级高于普通按钮
+    if theme::btn_primary(ui, crate::i18n::tr("保存并重连"), true).clicked() {
         apply = true;
     }
 
@@ -237,9 +255,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.separator();
 
     // ---------- 密钥管理 ----------
-    ui.group(|ui| {
-        ui.label(egui::RichText::new(crate::i18n::tr("API 密钥")).strong());
-        ui.horizontal(|ui| {
+    theme::card_with_header(ui, crate::i18n::tr("API 密钥"), |_| {}, |ui| {
+        theme::form_row(ui, |ui| {
             if state.has_creds() {
                 theme::badge(ui, crate::i18n::tr("已配置"), theme::cur().up);
             } else {
@@ -265,17 +282,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             if vault::vault_exists(&dir) {
                 // 破坏性操作两步确认：误点一次不会直接销毁唯一的本地密钥副本
                 let armed = app.vault_delete_armed;
-                let del = ui.small_button(
-                    egui::RichText::new(if armed {
+                let del = theme::btn_danger(
+                    ui,
+                    if armed {
                         crate::i18n::tr("确认删除凭据库？")
                     } else {
                         crate::i18n::tr("删除凭据库")
-                    })
-                    .color(if armed {
-                        theme::cur().err
-                    } else {
-                        theme::cur().text_dim
-                    }),
+                    },
+                    true,
                 );
                 if del.clicked() {
                     if !armed {
@@ -307,8 +321,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     });
 
     // ---------- 关于 ----------
-    ui.group(|ui| {
-        ui.label(egui::RichText::new(crate::i18n::tr("关于")).strong());
+    theme::card_with_header(ui, crate::i18n::tr("关于"), |_| {}, |ui| {
         ui.label(
             egui::RichText::new(format!(
                 "BnTradingPro v{} · {} {}",
@@ -316,14 +329,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 crate::i18n::tr("数据目录"),
                 dir.display()
             ))
-            .size(11.5)
+            .size(theme::FONT_SM)
             .color(theme::cur().text_dim),
         );
         ui.label(
             egui::RichText::new(crate::i18n::tr(
                 "本工具仅供个人交易辅助与研究，不构成任何投资建议；使用实盘交易产生的一切后果由使用者自行承担。",
             ))
-            .size(11.0)
+            .size(theme::FONT_SM)
             .color(theme::cur().text_dim),
         );
     });
@@ -340,8 +353,34 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         let cfg: AppConfig = std::mem::take(&mut app.settings).into_cfg();
         // 保留草稿（into_cfg 消耗了草稿），保证继续编辑不丢字段
         app.settings = SettingsDraft::from_cfg(&cfg);
+        // 测试网 → 实盘时不沿用端点覆盖：第三方测试网端点会把携带 API Key 的
+        // 实盘签名请求发往该主机，自动清空并提示
+        let was_testnet = state.cfg.read().testnet;
+        let mut cfg = cfg;
+        if was_testnet && !cfg.testnet {
+            let had_override = !cfg.override_spot_rest.trim().is_empty()
+                || !cfg.override_spot_ws.trim().is_empty()
+                || !cfg.override_fut_rest.trim().is_empty()
+                || !cfg.override_fut_ws.trim().is_empty();
+            if had_override {
+                cfg.override_spot_rest.clear();
+                cfg.override_spot_ws.clear();
+                cfg.override_fut_rest.clear();
+                cfg.override_fut_ws.clear();
+                // 草稿同步清空：否则下次点"保存并重连"时 into_cfg 会把旧覆盖
+                // 静默写回（此时已是实盘，清空守卫不再触发）
+                app.settings.override_spot_rest.clear();
+                app.settings.override_spot_ws.clear();
+                app.settings.override_fut_rest.clear();
+                app.settings.override_fut_ws.clear();
+                state.push_toast(
+                    ToastKind::Warn,
+                    crate::i18n::tr("已清空端点覆盖：测试网与实盘端点不通用").to_string(),
+                );
+            }
+        }
         // 先更新内存再发落盘命令：引擎在另一线程出队时快照的是 state.cfg，
-        // 顺序反了会把旧配置写回 config.toml（正是本轮要修的回滚类问题）
+        // 顺序反了会把旧配置写回 config.toml
         state.update_cfg(cfg);
         state.send_cmd(crate::engine::Command::PersistConfig);
         state.push_toast(

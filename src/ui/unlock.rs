@@ -57,21 +57,22 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 Pos2::new(avail.center().x, title_y + 36.0),
                 Align2::CENTER_CENTER,
                 crate::i18n::tr("Binance 现货 / U本位合约 交易终端"),
-                FontId::proportional(13.5),
+                FontId::proportional(theme::FONT_BODY),
                 theme::cur().text_dim,
             );
 
-            // 卡片垂直位置：以上一帧实测高度在标题以下区域居中；空间不足时
-            // 顶到标题下方，底边永不越过窗口下边缘，超高部分由内部 ScrollArea
-            // 滚动兜底。高度取上一帧测量值（滞后一帧收敛），静止后完全稳定。
+            // 卡片区域 = 标题以下到窗口底部（留 12px 底边距）。内容在该区域内
+            // 垂直居中——不能按整窗居中：标题占掉顶部后整窗居中会让卡片偏上、
+            // 下方留出大片空白。内容放不下时顶到区域顶部、由内部 ScrollArea
+            // 滚动兜底，卡片永不越过窗口底边。高度取上一帧测量值（滞后一帧
+            // 收敛），静止后完全稳定。
             let region_top = title_y + 58.0;
-            let card_top = (avail.center().y - app.auth_card_h * 0.5)
-                .max(region_top)
-                .min((avail.bottom() - 60.0).max(region_top));
+            let region_h = (avail.bottom() - 12.0 - region_top).max(60.0);
+            let card_top = region_top + ((region_h - app.auth_card_h) * 0.5).max(0.0);
             ui.scope_builder(
                 egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
                     Pos2::new(avail.center().x - card_w / 2.0, card_top),
-                    egui::vec2(card_w, (avail.bottom() - card_top).max(60.0)),
+                    egui::vec2(card_w, (region_h - (card_top - region_top)).max(60.0)),
                 )),
                 |ui| {
                     // 仅当上一帧实测高度在当前区域放不下时才启用内部滚动（滚轮才生效）：
@@ -97,8 +98,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 }
 
 fn card_header(ui: &mut egui::Ui, title: &str) {
-    // 页面标题统一 16.5（egui heading 默认 19px 与其他页不一致）
-    ui.label(egui::RichText::new(title).strong().size(16.5));
+    // 页面标题统一 FONT_LG（egui heading 默认字号与其他页不一致）
+    ui.label(egui::RichText::new(title).strong().size(theme::FONT_LG));
     ui.separator();
 }
 
@@ -108,15 +109,16 @@ fn card_frame(app: &mut BnApp, ui: &mut egui::Ui, card_w: f32) -> f32 {
         .fill(theme::cur().card)
         .stroke(Stroke::new(1.0_f32, theme::cur().border))
         .corner_radius(8)
-        .inner_margin(egui::Margin::same(26))
+        // 内边距收紧：原 26 四边留白过大，卡片显高、底部空洞
+        .inner_margin(egui::Margin::symmetric(22, 12))
         .show(ui, |ui| {
-            ui.set_width(card_w - 52.0);
+            ui.set_width(card_w - 44.0);
             match app.phase {
                 Phase::Unlock => card_header(ui, crate::i18n::tr("解锁")),
                 Phase::EnterKeys => card_header(ui, crate::i18n::tr("配置 API 密钥")),
                 Phase::Main => {}
             }
-            ui.add_space(6.0);
+            ui.add_space(2.0);
             match app.phase {
                 Phase::Unlock => unlock(app, ui),
                 Phase::EnterKeys => enter_keys(app, ui),
@@ -148,24 +150,19 @@ fn error_text(ui: &mut egui::Ui, msg: &str) {
             egui::RichText::new("✗")
                 .color(theme::cur().err)
                 .strong()
-                .size(12.5),
+                .size(theme::FONT_MD),
         );
-        ui.label(egui::RichText::new(msg).color(theme::cur().err).size(12.5));
+        ui.label(
+            egui::RichText::new(msg)
+                .color(theme::cur().err)
+                .size(theme::FONT_MD),
+        );
     });
 }
 
-/// 主按钮（全宽、金色底深色字）
+/// 主按钮（全宽、金色底深色字）：统一走 theme::btn_primary
 fn primary_btn(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
-    let btn = egui::Button::new(
-        egui::RichText::new(text)
-            .strong()
-            .size(14.5)
-            .color(theme::cur().on_accent),
-    )
-    .fill(theme::cur().accent)
-    .corner_radius(5)
-    .min_size(egui::vec2(ui.available_width(), 34.0));
-    ui.add_enabled(enabled, btn).clicked()
+    theme::btn_primary(ui, text, enabled).clicked()
 }
 
 /// 解锁已有凭据库
@@ -173,12 +170,12 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.add(
         egui::Label::new(
             egui::RichText::new(crate::i18n::tr("输入主密码以解密本机保存的 API 密钥"))
-                .size(12.0)
+                .size(theme::FONT_MD)
                 .color(theme::cur().text_dim),
         )
         .wrap_mode(egui::TextWrapMode::Wrap),
     );
-    ui.add_space(10.0);
+    ui.add_space(6.0);
     ui.label(theme::card_label(crate::i18n::tr("主密码")));
     let pw_resp = ui.add(
         egui::TextEdit::singleline(&mut *app.pw1)
@@ -197,7 +194,7 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         error_text(ui, &app.pw_err);
     }
-    ui.add_space(12.0);
+    ui.add_space(8.0);
     if primary_btn(ui, crate::i18n::tr("解锁"), true) {
         try_unlock(app);
     }
@@ -206,18 +203,14 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
         let dir = config::data_dir();
         // 破坏性操作两步确认：误点一次不会直接销毁唯一的本地密钥副本
         let armed = app.vault_delete_armed;
-        let reset_btn = ui.small_button(
-            egui::RichText::new(if armed {
+        let reset_btn = theme::btn_danger(
+            ui,
+            if armed {
                 crate::i18n::tr("确认删除凭据库？")
             } else {
                 crate::i18n::tr("重置凭据库")
-            })
-            .size(11.5)
-            .color(if armed {
-                theme::cur().err
-            } else {
-                theme::cur().warn
-            }),
+            },
+            true,
         );
         if reset_btn.clicked() {
             if !armed {
@@ -246,7 +239,7 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
         if ui
             .small_button(
                 egui::RichText::new(crate::i18n::tr("仅看行情，暂不解锁"))
-                    .size(11.5)
+                    .size(theme::FONT_SM)
                     .color(theme::cur().text_dim),
             )
             .clicked()
@@ -283,6 +276,8 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
     let dir = config::data_dir();
     let vault_exists = vault::vault_exists(&dir);
     let testnet = app.state.cfg.read().testnet;
+    // 紧凑表单：默认 8px 行间距压到 3px，标签与输入框、按钮与跳过行都更贴近
+    ui.spacing_mut().item_spacing.y = 3.0;
     ui.add(
         egui::Label::new(
             egui::RichText::new(if testnet {
@@ -290,12 +285,12 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             } else {
                 crate::i18n::tr("当前环境：实盘（binance.com → API 管理，建议绑定 IP 白名单并只开启现货/合约交易权限）")
             })
-            .size(12.0)
+            .size(theme::FONT_MD)
             .color(if testnet { theme::cur().accent } else { theme::cur().err }),
         )
         .wrap_mode(egui::TextWrapMode::Wrap),
     );
-    ui.add_space(10.0);
+    ui.add_space(2.0);
 
     // 主密码：一体设置（无库）或验证（有库）
     let need_master = vault_exists || app.master.is_none();
@@ -313,33 +308,35 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             if ui.ctx().memory(|m| m.focused().is_none()) {
                 pw_resp.request_focus();
             }
-            ui.add_space(6.0);
+            ui.add_space(2.0);
         } else {
             ui.add(
                 egui::Label::new(
                     egui::RichText::new(crate::i18n::tr("主密码用于加密本机保存的 API Key/Secret（Argon2id + AES-256-GCM）。忘记将无法恢复。"))
-                        .size(12.0)
+                        .size(theme::FONT_MD)
                         .color(theme::cur().text_dim),
                 )
                 .wrap_mode(egui::TextWrapMode::Wrap),
             );
-            ui.add_space(4.0);
-            ui.label(theme::card_label(crate::i18n::tr("主密码（至少 8 位）")));
-            ui.add(
-                egui::TextEdit::singleline(&mut *app.pw1)
-                    .password(true)
-                    .desired_width(f32::INFINITY)
-                    .font(egui::TextStyle::Monospace),
-            );
-            ui.add_space(4.0);
-            ui.label(theme::card_label(crate::i18n::tr("再输一次")));
-            ui.add(
-                egui::TextEdit::singleline(&mut *app.pw2)
-                    .password(true)
-                    .desired_width(f32::INFINITY)
-                    .font(egui::TextStyle::Monospace),
-            );
-            ui.add_space(6.0);
+            ui.add_space(2.0);
+            // 两个密码框并排一行：省掉一整行高度，卡片更紧凑
+            ui.columns(2, |cols| {
+                cols[0].label(theme::card_label(crate::i18n::tr("主密码（至少 8 位）")));
+                cols[0].add(
+                    egui::TextEdit::singleline(&mut *app.pw1)
+                        .password(true)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace),
+                );
+                cols[1].label(theme::card_label(crate::i18n::tr("再输一次")));
+                cols[1].add(
+                    egui::TextEdit::singleline(&mut *app.pw2)
+                        .password(true)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace),
+                );
+            });
+            ui.add_space(2.0);
         }
     }
 
@@ -353,9 +350,9 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             .font(egui::TextStyle::Monospace)
             .text_color(theme::cur().text),
     );
-    ui.add_space(6.0);
+    ui.add_space(2.0);
     ui.label(theme::card_label("API Secret"));
-    ui.add(
+    let secret_resp = ui.add(
         egui::TextEdit::singleline(&mut *app.api_secret)
             .password(true)
             .desired_width(f32::INFINITY)
@@ -366,7 +363,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         error_text(ui, &app.keys_err);
     }
-    ui.add_space(12.0);
+    ui.add_space(2.0);
 
     let can_save = !app.api_key.trim().is_empty()
         && !app.api_secret.trim().is_empty()
@@ -375,67 +372,21 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
     if primary_btn(ui, crate::i18n::tr("保存并连接"), can_save) {
         do_save = true;
     }
-    if do_save {
-        let creds = Creds {
-            api_key: app.api_key.trim().to_string(),
-            api_secret: app.api_secret.trim().to_string(),
-        };
-        let master = app.master.clone().or_else(|| {
-            let m = app.pw1.clone();
-            if m.is_empty() {
-                None
-            } else {
-                Some(m)
-            }
-        });
-        match master {
-            Some(pw) => {
-                // 已有凭据库：先校验主密码
-                if vault_exists {
-                    match vault::load_creds(&dir, &pw) {
-                        Err(vault::VaultError::NotFound) => {}
-                        Err(_) => {
-                            app.keys_err = crate::i18n::tr("主密码错误").to_string();
-                            return;
-                        }
-                        Ok(_) => {}
-                    }
-                } else if pw.len() < 8 {
-                    app.keys_err = crate::i18n::tr("主密码至少 8 位").to_string();
-                    return;
-                } else if pw != app.pw2 {
-                    app.keys_err = crate::i18n::tr("两次输入不一致").to_string();
-                    return;
-                }
-                match vault::save_creds(&dir, &pw, &creds) {
-                    Ok(()) => {
-                        app.state.set_creds(Some(creds));
-                        app.api_key.clear();
-                        app.api_secret.clear();
-                        app.keys_err.clear();
-                        app.master = None;
-                        app.pw1.clear();
-                        app.pw2.clear();
-                        app.state
-                            .push_toast(ToastKind::Ok, crate::i18n::tr("密钥已加密保存并连接"));
-                        app.phase = Phase::Main;
-                    }
-                    Err(e) => app.keys_err = format!("{}{e}", crate::i18n::tr("保存失败: ")),
-                }
-            }
-            None => {
-                app.keys_err = crate::i18n::tr("请输入主密码").to_string();
-            }
-        }
+    // Secret 是表单最后一项：输入完直接回车保存（与解锁页密码框行为一致）
+    if secret_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && can_save {
+        do_save = true;
     }
-    ui.add_space(2.0);
+    if do_save {
+        save_keys(app, &dir, vault_exists);
+    }
     // 跳过入口两种分支都要有：换钥流程（已有库）也需要能随时退出本页，
-    // 否则用户点开"更换密钥"后无路可退
+    // 否则用户点开"更换密钥"后无路可退。提示文字与按钮同行（按钮居右），
+    // 不再单独占一行，底部更紧凑
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         if ui
             .small_button(
                 egui::RichText::new(crate::i18n::tr("跳过，仅看行情"))
-                    .size(11.5)
+                    .size(theme::FONT_SM)
                     .color(theme::cur().text_dim),
             )
             .clicked()
@@ -446,15 +397,67 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             app.pw2.clear();
             app.phase = Phase::Main;
         }
-    });
-    ui.add(
-        egui::Label::new(
+        ui.label(
             egui::RichText::new(crate::i18n::tr(
                 "跳过后仍可查看实时行情与 K 线，随时可在设置页配置密钥",
             ))
-            .size(11.0)
+            .size(theme::FONT_SM)
             .color(theme::cur().text_dim.gamma_multiply(0.85)),
-        )
-        .wrap_mode(egui::TextWrapMode::Wrap),
-    );
+        );
+    });
+}
+
+/// 校验主密码并加密保存密钥，成功后进入主界面（保存按钮与 Secret 回车共用）
+fn save_keys(app: &mut BnApp, dir: &std::path::Path, vault_exists: bool) {
+    let creds = Creds {
+        api_key: app.api_key.trim().to_string(),
+        api_secret: app.api_secret.trim().to_string(),
+    };
+    let master = app.master.clone().or_else(|| {
+        let m = app.pw1.clone();
+        if m.is_empty() {
+            None
+        } else {
+            Some(m)
+        }
+    });
+    match master {
+        Some(pw) => {
+            // 已有凭据库：先校验主密码
+            if vault_exists {
+                match vault::load_creds(dir, &pw) {
+                    Err(vault::VaultError::NotFound) => {}
+                    Err(_) => {
+                        app.keys_err = crate::i18n::tr("主密码错误").to_string();
+                        return;
+                    }
+                    Ok(_) => {}
+                }
+            } else if pw.len() < 8 {
+                app.keys_err = crate::i18n::tr("主密码至少 8 位").to_string();
+                return;
+            } else if pw != app.pw2 {
+                app.keys_err = crate::i18n::tr("两次输入不一致").to_string();
+                return;
+            }
+            match vault::save_creds(dir, &pw, &creds) {
+                Ok(()) => {
+                    app.state.set_creds(Some(creds));
+                    app.api_key.clear();
+                    app.api_secret.clear();
+                    app.keys_err.clear();
+                    app.master = None;
+                    app.pw1.clear();
+                    app.pw2.clear();
+                    app.state
+                        .push_toast(ToastKind::Ok, crate::i18n::tr("密钥已加密保存并连接"));
+                    app.phase = Phase::Main;
+                }
+                Err(e) => app.keys_err = format!("{}{e}", crate::i18n::tr("保存失败: ")),
+            }
+        }
+        None => {
+            app.keys_err = crate::i18n::tr("请输入主密码").to_string();
+        }
+    }
 }

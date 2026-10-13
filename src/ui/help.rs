@@ -7,14 +7,14 @@ use eframe::egui;
 
 fn h(ui: &mut egui::Ui, text: &'static str) {
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(tr(text)).heading().size(16.0));
+    ui.label(egui::RichText::new(tr(text)).heading().size(theme::FONT_LG));
     ui.separator();
 }
 
 fn para(ui: &mut egui::Ui, text: &'static str) {
     ui.label(
         egui::RichText::new(tr(text))
-            .size(13.5)
+            .size(theme::FONT_BODY)
             .color(theme::cur().text),
     );
 }
@@ -24,7 +24,7 @@ fn bullet(ui: &mut egui::Ui, text: &'static str) {
         ui.label(egui::RichText::new("•").color(theme::cur().accent));
         ui.label(
             egui::RichText::new(tr(text))
-                .size(13.0)
+                .size(theme::FONT_BODY)
                 .color(theme::cur().text),
         );
     });
@@ -34,13 +34,13 @@ fn kv(ui: &mut egui::Ui, k: &'static str, v: &'static str) {
     ui.horizontal_wrapped(|ui| {
         ui.label(
             egui::RichText::new(tr(k))
-                .size(12.5)
+                .size(theme::FONT_MD)
                 .strong()
                 .color(theme::cur().accent),
         );
         ui.label(
             egui::RichText::new(tr(v))
-                .size(12.5)
+                .size(theme::FONT_MD)
                 .color(theme::cur().text),
         );
     });
@@ -133,7 +133,7 @@ pub fn show(_app: &mut BnApp, ui: &mut egui::Ui) {
     ui.add_space(2.0);
     ui.label(
         egui::RichText::new(format!("BnTradingPro v{}", env!("CARGO_PKG_VERSION")))
-            .size(11.5)
+            .size(theme::FONT_SM)
             .color(theme::cur().text_dim),
     );
 }

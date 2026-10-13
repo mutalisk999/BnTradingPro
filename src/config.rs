@@ -102,13 +102,21 @@ impl AppConfig {
         if let Ok(s) = toml::to_string_pretty(self) {
             if let Err(e) = std::fs::write(&path, s) {
                 tracing::error!("保存配置失败: {e}");
+            } else {
+                // unix 下收紧权限：config.toml 虽无密钥，但保持与凭据库同等的 0600 纪律
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+                }
             }
         }
     }
 }
 
 pub fn data_dir() -> PathBuf {
+    // 不回退 temp_dir：/tmp 全员可读，fail fast 优于静默降级到不安全位置
     dirs::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
+        .expect("无法确定应用数据目录（请检查 HOME/XDG_DATA_HOME 环境变量）")
         .join("BnTradingPro")
 }

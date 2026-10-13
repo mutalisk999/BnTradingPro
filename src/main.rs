@@ -21,6 +21,8 @@ fn main() -> eframe::Result<()> {
     let _ = std::fs::create_dir_all(&dir);
     let cfg = AppConfig::load(&dir);
 
+    cleanup_old_logs(&dir.join("logs"));
+
     // 日志：滚动文件 + 控制台
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(cfg.log_level.clone()));
@@ -39,6 +41,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("BnTradingPro")
+            .with_icon(app_icon())
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([1100.0, 680.0]),
         ..Default::default()
@@ -49,4 +52,46 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| Ok(Box::new(app::BnApp::new(cc, cfg)))),
     )
+}
+
+/// 窗口/任务栏图标：解码内嵌 PNG（与 build.rs 嵌入 exe 资源的 ico 同一素材）
+fn app_icon() -> egui::IconData {
+    const PNG: &[u8] = include_bytes!("../assets/binance-icon.png");
+    let img = image::load_from_memory(PNG).expect("解析内置图标失败");
+    let rgba = img.to_rgba8();
+    egui::IconData {
+        width: rgba.width(),
+        height: rgba.height(),
+        rgba: rgba.into_raw(),
+    }
+}
+
+/// 启动时清理 7 天前的滚动日志（app.log / app.log.YYYY-MM-DD）
+fn cleanup_old_logs(logs_dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(logs_dir) else {
+        return;
+    };
+    let cutoff = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+        .saturating_sub(7 * 24 * 3600);
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let is_log = name == "app.log" || name.starts_with("app.log.");
+        let Ok(meta) = entry.metadata() else { continue };
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if is_log && meta.is_file() && modified < cutoff {
+            if let Err(e) = std::fs::remove_file(&path) {
+                // 日志初始化尚未完成，只能静默忽略失败
+                let _ = e;
+            }
+        }
+    }
 }

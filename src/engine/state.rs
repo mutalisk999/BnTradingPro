@@ -135,6 +135,9 @@ pub struct SharedState {
     /// 规则簿代次：ReloadAll 重写后递增（UI 侧符号列表缓存据此失效）
     pub rules_version: AtomicU64,
     pub md: Mutex<MarketMd>,
+    /// 当前活跃订阅 (market, symbol)：行情写入据此拒绝旧订阅的在途帧，
+    /// 防止切换交易对后已清空的快照槽位被 entry().or_default() 复活
+    cur_sub: Mutex<Option<(Market, String)>>,
     pub acct: Mutex<AccountSnap>,
     pub orders: Mutex<OrdersSnap>,
     pub toasts: Mutex<Vec<Toast>>,
@@ -155,6 +158,7 @@ impl Default for SharedState {
             rules: RwLock::new([RuleBook::default(), RuleBook::default()]),
             rules_version: AtomicU64::new(0),
             md: Mutex::new(MarketMd::default()),
+            cur_sub: Mutex::new(None),
             acct: Mutex::new(AccountSnap::default()),
             orders: Mutex::new(OrdersSnap::default()),
             toasts: Mutex::new(Vec::new()),
@@ -275,7 +279,22 @@ impl SharedState {
 
     // ---- 行情写入（由后台任务调用） ----
 
+    /// 更新活跃订阅标记（Subscribe 命令入口调用，须先于槽位清理与写入）
+    pub fn set_active_sub(&self, market: Market, symbol: &str) {
+        *self.cur_sub.lock() = Some((market, symbol.to_string()));
+    }
+
     pub fn with_symbol_md(&self, market: Market, symbol: &str, f: impl FnOnce(&mut SymbolMd)) {
+        // 仅活跃 (market, symbol) 允许创建/写入槽位：切换交易对后旧连接仍有
+        // 在途帧，无此守卫时 or_default() 会复活刚清空的旧槽位（数百 KB/个）
+        if !self
+            .cur_sub
+            .lock()
+            .as_ref()
+            .is_some_and(|(m, s)| *m == market && s == symbol)
+        {
+            return;
+        }
         let mut md = self.md.lock();
         let slot = md.slot(market);
         let e = slot.entry(symbol.to_string()).or_default();
@@ -387,6 +406,8 @@ mod tests {
     #[test]
     fn kline_merge_replace_append_ignore() {
         let st = SharedState::default();
+        // 行情写入守卫要求先声明活跃订阅（生产中由 Subscribe 设置）
+        st.set_active_sub(Market::Spot, "BTCUSDT");
         // 同一根 K 线重复推送 → 替换不追加，收盘标记生效
         st.apply_kline(
             Market::Spot,
@@ -439,6 +460,7 @@ mod tests {
             assert_eq!(md.get(Market::Spot, "BTCUSDT").unwrap().klines.len(), 2);
         }
         // 超过 1500 根时丢弃最旧
+        st.set_active_sub(Market::Spot, "ETHUSDT");
         for i in 0..1600u64 {
             st.apply_kline(
                 Market::Spot,
@@ -456,6 +478,8 @@ mod tests {
     #[test]
     fn trade_updates_last_kline() {
         let st = SharedState::default();
+        // 行情写入守卫要求先声明活跃订阅（生产中由 Subscribe 设置）
+        st.set_active_sub(Market::Spot, "BTCUSDT");
         // 生产路径中 md.interval 由 Subscribe 快照先写入，这里对齐
         st.with_symbol_md(Market::Spot, "BTCUSDT", |md| md.interval = Interval::M1);
         st.apply_kline(

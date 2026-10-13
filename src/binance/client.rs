@@ -26,6 +26,11 @@ pub enum BinanceError {
     Api { code: i64, msg: String },
     #[error("响应解析失败: {0}")]
     Decode(String),
+    #[error("请求过于频繁")]
+    RateLimit {
+        banned: bool,
+        retry_after_secs: Option<u64>,
+    },
 }
 
 impl BinanceError {
@@ -37,8 +42,22 @@ impl BinanceError {
             BinanceError::Timeout => tr("请求超时，请检查网络/代理").into(),
             BinanceError::Network(e) => format!("{}{e}", tr("网络错误: ")),
             BinanceError::Decode(e) => format!("{}{e}", tr("响应解析失败: ")),
+            BinanceError::RateLimit {
+                banned,
+                retry_after_secs,
+            } => {
+                let base = if *banned {
+                    tr("IP 已被限频封禁（418），请降低请求频率后重试")
+                } else {
+                    tr("请求频率超限（429），请稍后重试")
+                };
+                match retry_after_secs {
+                    Some(s) => format!("{base}（{s}s 后可重试）"),
+                    None => base.to_string(),
+                }
+            }
             BinanceError::Api { code, msg } => match code {
-                -1021 => tr("本地时间与服务器偏差过大，正在自动校时，请重试").into(),
+                -1021 => tr("本地时间与服务器偏差过大，已自动校时并重试，请重试").into(),
                 -2015 => {
                     tr("API Key 无效或权限不足（检查 Key、IP 白名单、是否用对测试网/实盘）").into()
                 }
@@ -133,16 +152,25 @@ impl BinanceRest {
         overrides: &crate::config::AppConfig,
     ) -> Result<(), BinanceError> {
         let ep = endpoints(ctx.market, ctx.testnet, overrides);
+        self.resync_time(&ep, ctx.market).await
+    }
+
+    /// 按既有端点校时（-1021 自动重试路径复用）
+    async fn resync_time(
+        &self,
+        ep: &crate::binance::Endpoints,
+        market: Market,
+    ) -> Result<(), BinanceError> {
         // 路径必须带市场前缀：现货 /api/v3/time、合约 /fapi/v1/time
-        let path = format!("{}/time", ctx.market.api_prefix());
-        let v = self.get_public_raw(&ep, ctx.market, &path, &[]).await?;
+        let path = format!("{}/time", market.api_prefix());
+        let v = self.get_public_raw(ep, market, &path, &[]).await?;
         let server = v
             .get("serverTime")
             .and_then(|x| x.as_i64())
             .ok_or_else(|| BinanceError::Decode("serverTime 缺失".into()))?;
         let offset = server - Self::now_ms();
         self.time_offset_ms.store(offset, Ordering::Relaxed);
-        tracing::info!("时间同步完成，偏移 {offset}ms ({:?})", ctx.market);
+        tracing::info!("时间同步完成，偏移 {offset}ms");
         Ok(())
     }
 
@@ -283,23 +311,32 @@ impl BinanceRest {
         }
         self.wait_for_weight(ctx.market).await?;
 
-        let qs = build_signed_query(
-            &params,
-            self.signed_now_ms(),
-            ctx.recv_window_ms,
-            self.api_secret.as_ref().unwrap().as_str(),
-        );
-        let url = format!("{}{}?{}", ep.rest, path, qs);
-        let key = self.api_key.as_ref().unwrap();
-        let resp = self
-            .http
-            .request(method, &url)
-            .header("X-MBX-APIKEY", key.as_str())
-            .send()
-            .await
-            .map_err(map_req_err)?;
-        self.track_weight(ctx.market, &resp);
-        parse_response(resp).await
+        // -1021（本地时间与服务器偏差）时自动校时并用新 timestamp 重签重试一次
+        for attempt in 0..2u8 {
+            let qs = build_signed_query(
+                &params,
+                self.signed_now_ms(),
+                ctx.recv_window_ms,
+                self.api_secret.as_ref().unwrap().as_str(),
+            );
+            let url = format!("{}{}?{}", ep.rest, path, qs);
+            let key = self.api_key.as_ref().unwrap();
+            let resp = self
+                .http
+                .request(method.clone(), &url)
+                .header("X-MBX-APIKEY", key.as_str())
+                .send()
+                .await
+                .map_err(map_req_err)?;
+            self.track_weight(ctx.market, &resp);
+            match parse_response(resp).await {
+                Err(BinanceError::Api { code: -1021, .. }) if attempt == 0 => {
+                    self.resync_time(ep, ctx.market).await?;
+                }
+                other => return other,
+            }
+        }
+        unreachable!("循环恰好两次且第二次必经 other 分支返回")
     }
 }
 
@@ -345,6 +382,18 @@ fn urlencode(s: &str) -> String {
 
 async fn parse_response(resp: reqwest::Response) -> Result<Value, BinanceError> {
     let status = resp.status();
+    // 429 限频 / 418 IP 封禁：读取 Retry-After 头，返回专用错误（含可重试时间）
+    if matches!(status.as_u16(), 429 | 418) {
+        let retry_after = resp
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok());
+        return Err(BinanceError::RateLimit {
+            banned: status.as_u16() == 418,
+            retry_after_secs: retry_after,
+        });
+    }
     let text = resp
         .text()
         .await

@@ -56,6 +56,13 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
+# 运行时窗口/任务栏图标（解码内嵌 PNG）
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[build-dependencies]
+# 构建期把 PNG 转成 ico 并嵌入 exe 资源（仅 Windows）
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+winresource = "0.1"
 
 [dev-dependencies]
 http = "1"
