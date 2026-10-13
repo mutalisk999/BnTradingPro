@@ -35,6 +35,31 @@ fn main() -> eframe::Result<()> {
         .init();
     // _log_guard 持有到进程结束，保证日志刷盘
     let _log_guard = guard;
+    // log→tracing 桥接：eframe/egui/winit 用 log crate 报错（如事件循环异常），
+    // 不桥接这些错误会静默丢失
+    tracing_log::LogTracer::init().ok();
+
+    // panic 钩子：panic 消息默认只走 stderr（release 无控制台即彻底丢失），
+    // 这里补写一份到日志文件（含位置与 backtrace），便于事后定位
+    {
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let loc = info
+                .location()
+                .map(|l| format!("{}:{}", l.file(), l.line()))
+                .unwrap_or_else(|| "<unknown>".into());
+            let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = info.payload().downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "<non-string payload>".into()
+            };
+            let bt = std::backtrace::Backtrace::force_capture().to_string();
+            tracing::error!("PANIC at {loc}: {msg}\nbacktrace:\n{bt}");
+            default_hook(info);
+        }));
+    }
 
     tracing::info!("BnTradingPro 启动，数据目录: {}", dir.display());
 
@@ -42,8 +67,8 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("BnTradingPro")
             .with_icon(app_icon())
-            .with_inner_size([1440.0, 900.0])
-            .with_min_inner_size([1100.0, 680.0]),
+            .with_inner_size([960.0, 600.0])
+            .with_min_inner_size([733.0, 453.0]),
         ..Default::default()
     };
 

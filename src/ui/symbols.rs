@@ -242,6 +242,9 @@ fn symbol_row(
             })
             .stroke(egui::Stroke::NONE)
             .corner_radius(3)
+            // 长符号按可用宽度截断显示：按钮宽度跟随面板宽度而非文字自然宽，
+            // 否则 1000PEPEUSDT 这类长名会把行最小宽撑到 ~150px，侧栏拖不窄
+            .truncate()
             .min_size(egui::vec2(name_w, 20.0));
         if ui
             .add(name_btn)

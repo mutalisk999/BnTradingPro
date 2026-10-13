@@ -50,6 +50,8 @@ pub struct AppConfig {
     pub lang: String,
     /// 主题（dark/light）
     pub theme_mode: String,
+    /// 涨跌颜色方向：green_up=绿涨红跌（默认），red_up=红涨绿跌
+    pub price_dir: String,
     /// 现货自选交易对（置顶显示）
     pub favorites_spot: Vec<String>,
     /// 合约自选交易对
@@ -73,6 +75,7 @@ impl Default for AppConfig {
             log_level: "info".to_string(),
             lang: "zh".to_string(),
             theme_mode: "dark".to_string(),
+            price_dir: "green_up".to_string(),
             favorites_spot: Vec::new(),
             favorites_futures: Vec::new(),
             override_spot_rest: String::new(),

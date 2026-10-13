@@ -251,7 +251,14 @@ fn draw(
     // 响应矩形向下溢出面板、抢走下方订单区的点击/拖拽
     let rect = ui.available_rect_before_wrap();
     let (resp, painter) = ui.allocate_painter(rect.size(), Sense::click_and_drag());
-    let plot = resp.rect.shrink(4.0);
+    // 恢复动画等过渡帧里图表高度可能不足 8px：shrink(4.0) 会使 rect 上下颠倒
+    // （min>max），price_h 随之为负，最新价虚线的 clamp 触发 "min > max" panic
+    // （实测崩溃点）。这里钳到非负尺寸
+    let shrunk = resp.rect.shrink(4.0);
+    let plot = egui::Rect::from_min_size(
+        shrunk.min,
+        egui::vec2(shrunk.width().max(0.0), shrunk.height().max(0.0)),
+    );
     let t = theme::cur();
 
     // ---------- 品牌水印（先画，沉在所有元素底下） ----------
@@ -365,7 +372,8 @@ fn draw(
         * 8.2
         + 16.0)
         .clamp(58.0, 120.0);
-    let chart_w = plot.width() - axis_w;
+    // 窄窗口下轴宽可能超过 plot 宽：钳非负，防后续 clamp 的 min>max panic
+    let chart_w = (plot.width() - axis_w).max(0.0);
 
     let y_of = |p: f32| plot.top() + (hi - p) / span * price_h;
     let p_of = |y: f32| hi - (y - plot.top()) / price_h * span;
@@ -663,7 +671,9 @@ fn draw(
             let t_galley =
                 painter.layout_no_wrap(t_txt.clone(), FontId::monospace(theme::FONT_SM), theme::cur().text);
             let tsz = t_galley.size() + Vec2::new(10.0, 4.0);
-            let tx = (cx - tsz.x / 2.0).clamp(plot.left(), plot.left() + chart_w - tsz.x);
+            // 标签比图表宽时上界会小于下界：钳非负防 clamp panic
+            let tx = (cx - tsz.x / 2.0)
+                .clamp(plot.left(), plot.left() + (chart_w - tsz.x).max(0.0));
             painter.rect_filled(
                 Rect::from_min_size(Pos2::new(tx, plot.bottom() - tsz.y), tsz),
                 2.0,

@@ -5,6 +5,7 @@
 
 use crate::app::BnApp;
 use crate::binance::Interval;
+use crate::ui::flash;
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
@@ -12,7 +13,42 @@ use rust_decimal::Decimal;
 use std::sync::Arc;
 
 /// 每侧显示档数
-const BOOK_LEVELS: usize = 10;
+pub const BOOK_LEVELS: usize = 10;
+
+/// 右栏内容页签：盘口 / 成交明细
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BookTab {
+    /// 盘口 10 档
+    Book,
+    /// 成交明细
+    Trades,
+}
+
+/// 右栏：盘口 10 档 / 成交明细 双页签，互斥显示
+pub fn show_book_panel(app: &mut BnApp, ui: &mut egui::Ui) {
+    let prev = app.book_tab;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        if theme::nav_tab(ui, crate::i18n::tr("盘口 10 档"), app.book_tab == BookTab::Book) {
+            app.book_tab = BookTab::Book;
+        }
+        if theme::nav_tab(ui, crate::i18n::tr("成交明细"), app.book_tab == BookTab::Trades) {
+            app.book_tab = BookTab::Trades;
+        }
+    });
+    ui.separator();
+    // 切页签后闪光/残影的"上一帧"属于旧页内容：重置基线，
+    // 避免切回时把缺失时段累积的价格变化整列闪一遍
+    if app.book_tab != prev {
+        app.flash_book = Default::default();
+        app.flash_trade = Default::default();
+        app.book_anim.clear();
+    }
+    match app.book_tab {
+        BookTab::Book => show_book(app, ui),
+        BookTab::Trades => show_trades(app, ui),
+    }
+}
 
 /// 盘口面板：点击价格 → 填入下单价格
 pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
@@ -25,14 +61,6 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     let qdp = state
         .with_rule(app.market, &app.page.symbol, |r| r.map(|x| x.qty_dp() as usize))
         .unwrap_or(4);
-
-    ui.add_space(4.0);
-    ui.heading(
-        egui::RichText::new(crate::i18n::tr("盘口 10 档"))
-            .size(theme::FONT_BODY)
-            .color(theme::cur().text),
-    );
-    ui.separator();
 
     // 短锁拷贝（价格, 数量）
     let (asks, bids) = {
@@ -71,14 +99,23 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     let (ask_cums, ask_total) = cum_of(&asks);
     let (bid_cums, bid_total) = cum_of(&bids);
     let max_cum = ask_total.max(bid_total).max(0.000001);
+    let now = ui.ctx().input(|i| i.time);
 
     let row_h = 18.0;
     // egui 的滚动条悬浮在内容上层，行宽要主动让出滚动条宽度，否则数量列被压住
     let w = ui.available_width() - 10.0;
 
+    // 残影更新：与上一帧价格集合 diff，消失的档位记为淡出残影
+    app.book_anim.update(now, true, &asks, &ask_cums, max_cum);
+    app.book_anim.update(now, false, &bids, &bid_cums, max_cum);
+
+    // 各档矩形（按升序下标存），残影据此定位
+    let mut ask_rects = [egui::Rect::NOTHING; BOOK_LEVELS];
+    let mut bid_rects = [egui::Rect::NOTHING; BOOK_LEVELS];
+
     // 卖盘（高→低）：asks 升序（最近档在前），显示时倒序遍历
     for (i, (price, qty)) in asks.iter().enumerate().rev() {
-        book_row(
+        ask_rects[i] = book_row(
             ui,
             app,
             row_h,
@@ -90,6 +127,8 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             &widgets::f64_decimal(qty),
             qdp,
             theme::cur().down,
+            flash::BookSite::AskPrice,
+            i,
         );
     }
 
@@ -137,7 +176,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
 
     // 买盘（低→高）
     for (i, (price, qty)) in bids.iter().enumerate() {
-        book_row(
+        bid_rects[i] = book_row(
             ui,
             app,
             row_h,
@@ -149,10 +188,137 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             &widgets::f64_decimal(qty),
             qdp,
             theme::cur().up,
+            flash::BookSite::BidPrice,
+            i,
         );
+    }
+
+    // 残影淡出：在消失档位的排序槽位上叠加渐隐底色与深度条。
+    // 不绘制文字（该槽位现已被平移后的新档位占据，文字会重叠花屏）
+    for g in &app.book_anim.ghosts {
+        let age = now - g.t0;
+        if !(0.0..theme::GHOST_SECS).contains(&age) {
+            continue;
+        }
+        let k = (1.0 - age / theme::GHOST_SECS) as f32;
+        let n = if g.is_ask { asks.len() } else { bids.len() };
+        let (i, rect) = if g.is_ask {
+            // ask 显示倒序：显示槽位 s ↔ 升序下标 n-1-s
+            let Some(j) = n.checked_sub(1 + g.slot) else { continue };
+            (j, ask_rects[j])
+        } else {
+            if g.slot >= n {
+                continue;
+            }
+            (g.slot, bid_rects[g.slot])
+        };
+        if i >= BOOK_LEVELS || rect == egui::Rect::NOTHING {
+            continue;
+        }
+        let base = if g.is_ask {
+            theme::cur().down
+        } else {
+            theme::cur().up
+        };
+        let p = ui.painter();
+        p.rect_filled(rect, 0.0, base.gamma_multiply(theme::FLASH_ALPHA * k * 0.7));
+        let bw = (rect.width() as f64 * g.ratio.clamp(0.0, 1.0)) as f32;
+        if bw > 0.5 {
+            p.rect_filled(
+                egui::Rect::from_min_size(
+                    egui::Pos2::new(rect.right() - bw, rect.top()),
+                    egui::vec2(bw, rect.height()),
+                ),
+                0.0,
+                base.gamma_multiply(theme::FLASH_ALPHA * k),
+            );
+        }
     }
 }
 
+/// 已消失盘口档位的残影
+#[derive(Debug, Clone, Copy)]
+struct BookGhost {
+    /// true = 卖盘，false = 买盘
+    is_ask: bool,
+    /// 显示行槽位（0 = 该侧块顶部行）
+    slot: usize,
+    /// 消失时的深度条占比
+    ratio: f64,
+    /// 消失时刻（`ctx.input(|i| i.time)` 域，秒）
+    t0: f64,
+}
+
+/// 盘口动画状态：上一帧价格集合 + 消失档位残影（跨帧存于 BnApp，缓冲区复用零堆分配）
+#[derive(Debug, Clone, Default)]
+pub struct BookAnim {
+    prev_ask: Vec<(Decimal, f64)>,
+    prev_bid: Vec<(Decimal, f64)>,
+    ghosts: Vec<BookGhost>,
+}
+
+impl BookAnim {
+    /// 清空（切换交易对/市场时调用，避免跨符号误判）
+    pub fn clear(&mut self) {
+        self.prev_ask.clear();
+        self.prev_bid.clear();
+        self.ghosts.clear();
+    }
+
+    /// 与上一帧 diff：消失的档位记为残影，过期残影清除。
+    fn update(
+        &mut self,
+        now: f64,
+        is_ask: bool,
+        rows: &[(Decimal, Decimal)],
+        cums: &[f64],
+        max_cum: f64,
+    ) {
+        let mut prev = std::mem::take(if is_ask {
+            &mut self.prev_ask
+        } else {
+            &mut self.prev_bid
+        });
+        self.ghosts.retain(|g| now - g.t0 < theme::GHOST_SECS);
+        for (p, ratio) in &prev {
+            // 仍在当前帧的档位不是残影
+            if rows.iter().any(|(cp, _)| cp == p) {
+                continue;
+            }
+            // 消失档位在当前升序列中的排序位 → 显示槽位
+            let idx = rows.partition_point(|(cp, _)| *cp < *p);
+            let slot = if is_ask {
+                // ask 显示倒序：slot = len-1-idx；idx==len（远端消失）时无槽位
+                rows.len().checked_sub(1 + idx)
+            } else {
+                // bid 显示正序；idx==len（远端消失）时无槽位
+                (idx < rows.len()).then_some(idx)
+            };
+            let Some(slot) = slot else { continue };
+            if self.ghosts.len() >= 8 {
+                self.ghosts.remove(0);
+            }
+            self.ghosts.push(BookGhost {
+                is_ask,
+                slot,
+                ratio: *ratio,
+                t0: now,
+            });
+        }
+        // 记录本帧（价格, 深度占比），供下一帧 diff；复用缓冲区
+        prev.clear();
+        for (i, (p, _)) in rows.iter().enumerate() {
+            prev.push((*p, cums[i] / max_cum));
+        }
+        if is_ask {
+            self.prev_ask = prev;
+        } else {
+            self.prev_bid = prev;
+        }
+    }
+}
+
+/// 盘口单行：悬停/闪烁底色 + 右锚定深度条 + 价格（左）/数量（右），点击价格填单
 #[allow(clippy::too_many_arguments)]
 fn book_row(
     ui: &mut egui::Ui,
@@ -166,12 +332,25 @@ fn book_row(
     qty_f: &f64,
     qdp: usize,
     price_color: egui::Color32,
-) {
+    site: flash::BookSite,
+    idx: usize,
+) -> egui::Rect {
     // 显示用 f64；点击填单必须用 Decimal 原文——dp 回退（规则未加载时=2）
     // 会把 0.00001234 这类价格四舍五入成 "0.00"
     let price_f = widgets::f64_decimal(price);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click());
     let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    // 价格/数量变动高亮：500ms 内行底色渐隐（先于深度条绘制，压在其下层）。
+    // 颜色固定用行方向色（卖盘跌色/买盘涨色），不按数值涨跌翻转：
+    // 位点按显示行观测，吃单使整列价格平移时"涨跌"判定会系统性反向
+    // （卖盘价格整体上移→误闪涨色），故与行静态颜色保持一致
+    let (p_int, _) = app.flash_book(ui.ctx(), site, idx, price_f);
+    let (q_int, _) = app.flash_book(ui.ctx(), site.qty_site(), idx, *qty_f);
+    let intensity = p_int.max(q_int);
+    if intensity > 0.0 {
+        ui.painter()
+            .rect_filled(rect, 0.0, price_color.gamma_multiply(theme::FLASH_ALPHA * intensity));
+    }
     if resp.hovered() {
         ui.painter().rect_filled(rect, 0.0, theme::cur().row_hover);
     }
@@ -209,19 +388,21 @@ fn book_row(
     }
     // 明示"点价格即填单"这一核心交互，并给出悬停提示
     resp.on_hover_text(crate::i18n::tr("点击填入下单价格"));
+    rect
 }
 
 /// 逐笔成交
 pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
-
-    ui.add_space(4.0);
-    ui.heading(
-        egui::RichText::new(crate::i18n::tr("成交明细"))
-            .size(theme::FONT_BODY)
-            .color(theme::cur().text),
-    );
-    ui.separator();
+    // 精度与盘口同源：价格/数量小数位取交易对规则配置（规则未加载时回退 2/4）
+    let dp = state
+        .with_rule(app.market, &app.page.symbol, |r| {
+            r.map(|x| x.price_dp() as usize)
+        })
+        .unwrap_or(2);
+    let qdp = state
+        .with_rule(app.market, &app.page.symbol, |r| r.map(|x| x.qty_dp() as usize))
+        .unwrap_or(4);
 
     // 短锁拷贝最近 30 笔后绘制
     let trades: Vec<crate::binance::model::TradeTick> = {
@@ -254,26 +435,46 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
             }
             ui.end_row();
 
-            for t in &trades {
-                let col = if t.buyer_maker {
-                    theme::cur().down
-                } else {
-                    theme::cur().up
-                };
+            for (row, t) in trades.iter().enumerate() {
+                // 买方主动（buyer_maker=true）→ 主动卖单 → 跌色；反之为涨色。
+                // 与盘口涨跌色同源（theme::trade_color），随 price_dir 翻转
+                let mut col = theme::trade_color(t.buyer_maker);
+                // 最新一行（row 0）：新成交到达时文字向主题文字色短暂提亮后渐回原色。
+                // 不混入涨跌方向色（Grid 无法铺行底色，混色会红绿互相污染）
+                if row == 0 {
+                    let (intensity, _) =
+                        app.flash_trade_top(ui.ctx(), widgets::f64_decimal(&t.price));
+                    if intensity > 0.0 {
+                        col = flash::lerp_color(
+                            col,
+                            theme::cur().text,
+                            intensity * theme::FLASH_BRIGHTEN,
+                        );
+                    }
+                }
                 num_cell(
                     ui,
-                    egui::RichText::new(widgets::fmt_dec_grouped(&t.price))
-                        .monospace()
-                        .size(theme::FONT_MD)
-                        .color(col),
+                    // 不做千分位分组，与盘口一致按规则精度定长显示，纵向小数点对齐
+                    egui::RichText::new(format!(
+                        "{:.*}",
+                        dp,
+                        widgets::f64_decimal(&t.price)
+                    ))
+                    .monospace()
+                    .size(theme::FONT_MD)
+                    .color(col),
                     72.0,
                 );
                 num_cell(
                     ui,
-                    egui::RichText::new(widgets::fmt_dec_grouped(&t.qty))
-                        .monospace()
-                        .size(theme::FONT_MD)
-                        .color(theme::cur().text),
+                    egui::RichText::new(format!(
+                        "{:.*}",
+                        qdp,
+                        widgets::f64_decimal(&t.qty)
+                    ))
+                    .monospace()
+                    .size(theme::FONT_MD)
+                    .color(theme::cur().text),
                     64.0,
                 );
                 ui.label(
@@ -323,8 +524,13 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.separator();
         if let Some(t) = &tick {
             let chg = widgets::f64_decimal(&t.price_change_percent);
-            let c = theme::signed_color(chg);
+            let mut c = theme::signed_color(chg);
             let px = widgets::f64_decimal(&t.last_price);
+            // 最新价变动闪烁：强度 1 → 0 期间把文字色向闪烁色（涨/跌）插值
+            let (fi, fd) = app.flash_header_px(ui.ctx(), px);
+            if fi > 0.0 {
+                c = flash::lerp_color(c, flash::flash_color(fd), fi);
+            }
             ui.label(
                 egui::RichText::new(widgets::fmt_thousands(px, dp))
                     .monospace()

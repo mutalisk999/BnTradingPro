@@ -19,6 +19,52 @@ pub const BTN_H: f32 = 28.0;
 /// 主操作按钮高度（买卖切换、下单提交）
 pub const BTN_LG: f32 = 36.0;
 
+// ---------- 价格变动高亮（flash）token ----------
+/// flash 高亮持续时长：价格变化后行底色在此时间内渐变回原色
+pub const FLASH_SECS: f32 = 0.5;
+/// flash 行底色不透明度（0-1）：叠在行背景之上的涨/跌色强度
+pub const FLASH_ALPHA: f32 = 0.28;
+/// flash 文字提亮幅度（0-1）：无法铺行底色的区域（Grid 成交列表）
+/// 用文字向主题文字色插值代替底色闪烁
+pub const FLASH_BRIGHTEN: f32 = 0.5;
+/// 盘口消失档位残影的淡出时长（秒）：吃单后旧档位底色在此时间内渐隐
+pub const GHOST_SECS: f64 = 0.4;
+
+// ---------- 重绘调度（request_repaint_after 间隔，毫秒）----------
+/// 图表/动画档：≈30fps，K 线最新价与闪烁衰减都在此刷新
+pub const REPAINT_CHART: u64 = 33;
+/// 行情档：盘口深度 20 档 @100ms 推送，盘口/页头/成交随之刷新
+pub const REPAINT_QUOTE: u64 = 100;
+/// 空闲档：无行情变动的页面（资产/设置/帮助）保持低频重绘
+pub const REPAINT_IDLE: u64 = 400;
+
+// ---------- 响应式等比缩放 ----------
+/// 设计基准逻辑尺寸：全部布局常量（面板宽/行高/字号）按此基准标定
+pub const BASE_W: f32 = 1280.0;
+pub const BASE_H: f32 = 720.0;
+/// 等比缩放上下限：小于基准最多缩到 ×0.85，大于基准最多放大到 ×1.5
+pub const SCALE_MIN: f32 = 0.85;
+pub const SCALE_MAX: f32 = 1.5;
+
+/// 按窗口物理尺寸推算全局 pixels_per_point，锁定逻辑工作区 ≈ 基准尺寸，
+/// 实现"窗口变大 → 全站字号/行高/面板/图表等比变大"。返回 None 表示无需调整。
+///
+/// 无反馈回路：物理尺寸 = 逻辑 rect × 当前 ppi，与目标 ppi 无关；
+/// 系数按 5% 量化，拖拽窗口时减少字体重排/重新光栅化次数。
+pub fn auto_ppi(ctx: &egui::Context) -> Option<f32> {
+    let native = ctx.native_pixels_per_point().unwrap_or(1.0);
+    // 0.36 起 screen_rect 在 RawInput 里（Option<Rect>）：逻辑 rect × 当前 ppi = 物理尺寸
+    let rect = ctx.input(|i| i.raw.screen_rect).unwrap_or(egui::Rect::ZERO);
+    let phys = rect.size() * ctx.pixels_per_point();
+    let s = (phys.x / (BASE_W * native)).min(phys.y / (BASE_H * native));
+    // 向下取整而非四舍五入：zoom 变更帧 egui 会用 ratio×content_rect 重写 screen_rect，
+    // 物理尺寸带亚像素回抖（1440 → 1439.9）；1.125 这类边界值用 round 会在相邻档位
+    // 间漂移（1.15↔1.1），floor 对亚像素噪声稳定——恢复后回到与启动一致的档位
+    let s = ((s * 20.0 + 0.001).floor() / 20.0).clamp(SCALE_MIN, SCALE_MAX);
+    let target = native * s;
+    ((ctx.pixels_per_point() - target).abs() > 0.01).then_some(target)
+}
+
 // ---------- 主题定义 ----------
 
 #[derive(Debug, Clone, Copy)]
@@ -127,23 +173,92 @@ pub fn is_light() -> bool {
     mode() == LIGHT_MODE
 }
 
-/// 当前主题配色
-pub fn cur() -> &'static Theme {
-    if is_light() {
-        &LIGHT
+/// 当前主题配色（up/down 字段已按涨跌方向翻转：
+/// 红涨绿跌模式下全应用所有 cur().up/down 取色点统一生效，含K线/盘口/统计）
+pub fn cur() -> Theme {
+    let base = if is_light() { LIGHT } else { DARK };
+    if PRICE_DIR.load(std::sync::atomic::Ordering::Relaxed) == DIR_RED_UP {
+        Theme { up: base.down, down: base.up, ..base }
     } else {
-        &DARK
+        base
     }
 }
 
+/// 涨跌颜色方向：红涨绿跌（A 股/币安默认）或绿涨红跌（美股习惯）
+///
+/// `theme::signed_color` 与所有显式取 `up/down` 的绘制点都应改走
+/// `up_color()/down_color()`，切换本枚举即时全应用生效。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PriceDir {
+    /// 绿涨红跌（币安默认：up=#0ECB81 涨，down=#F6465D 跌）
+    GreenUp,
+    /// 红涨绿跌
+    RedUp,
+}
+
+impl PriceDir {
+    pub fn from_cfg(s: &str) -> Self {
+        if s == "red_up" {
+            PriceDir::RedUp
+        } else {
+            PriceDir::GreenUp
+        }
+    }
+
+    pub fn as_cfg(self) -> &'static str {
+        match self {
+            PriceDir::GreenUp => "green_up",
+            PriceDir::RedUp => "red_up",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PriceDir::GreenUp => crate::i18n::tr("绿涨红跌"),
+            PriceDir::RedUp => crate::i18n::tr("红涨绿跌"),
+        }
+    }
+}
+
+static PRICE_DIR: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+pub const DIR_GREEN_UP: u8 = 0;
+pub const DIR_RED_UP: u8 = 1;
+
+/// 由配置字符串设置涨跌方向
+pub fn set_price_dir_str(s: &str) {
+    let v = if s == "red_up" { DIR_RED_UP } else { DIR_GREEN_UP };
+    PRICE_DIR.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 上涨色（cur() 已按 price_dir 翻转字段，直读即可）
+pub fn up_color() -> Color32 {
+    cur().up
+}
+
+/// 下跌色（cur() 已按 price_dir 翻转字段，直读即可）
+pub fn down_color() -> Color32 {
+    cur().down
+}
+
+/// 由涨跌幅取颜色：>0 上涨色，<0 下跌色，0 中性。
+/// 替代旧的 `signed_color`（写死 up/down，不响应方向配置）
 pub fn signed_color(d: f64) -> Color32 {
-    let t = cur();
     if d > 0.0 {
-        t.up
+        up_color()
     } else if d < 0.0 {
-        t.down
+        down_color()
     } else {
-        t.text_dim
+        cur().text_dim
+    }
+}
+
+/// 逐笔成交主动方向着色：`buyer_maker=true` 记为跌（红），
+/// `false` 记为涨（绿），同样随 price_dir 翻转
+pub fn trade_color(buyer_maker: bool) -> Color32 {
+    if buyer_maker {
+        down_color()
+    } else {
+        up_color()
     }
 }
 
@@ -424,6 +539,9 @@ pub fn apply(ctx: &egui::Context) {
     let (dark, light) = (style.clone(), style);
     ctx.set_style_of(egui::Theme::Dark, dark);
     ctx.set_style_of(egui::Theme::Light, light);
+    // 缩放职责已由 auto_ppi（响应式等比）接管：关闭 egui 内置 Ctrl+加减号缩放，
+    // 否则用户手动缩放会在下一帧被 auto_ppi 静默回退
+    ctx.options_mut(|o| o.zoom_with_keyboard = false);
 }
 
 // ---------- 组件辅助 ----------

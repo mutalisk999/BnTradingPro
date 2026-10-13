@@ -2,6 +2,7 @@
 
 pub mod assets;
 pub mod chart;
+pub mod flash;
 pub mod help;
 pub mod indicators;
 pub mod market;

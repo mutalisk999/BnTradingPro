@@ -56,6 +56,9 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
+# log→tracing 桥接：eframe/egui/winit 走 log crate 输出错误，
+# 不桥接则事件循环出错被静默吞掉（如缩放切换时的 glow 报错）
+tracing-log = "0.2"
 # 运行时窗口/任务栏图标（解码内嵌 PNG）
 image = { version = "0.25", default-features = false, features = ["png"] }
 

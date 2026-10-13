@@ -57,6 +57,8 @@ pub struct OrderForm {
     pub qty: String,
     pub trigger: String,
     pub reduce_only: bool,
+    /// 校验错误文本：非空时在提交按钮上方显示红色提示条（替代仅 toast 的反馈）
+    pub err: String,
 }
 
 impl Default for OrderForm {
@@ -68,6 +70,7 @@ impl Default for OrderForm {
             qty: String::new(),
             trigger: String::new(),
             reduce_only: false,
+            err: String::new(),
         }
     }
 }
@@ -262,16 +265,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             theme::form_row(ui, |ui| {
                 field_label(ui, crate::i18n::tr("价格"));
                 widgets::num_field(ui, "price_in", &mut app.page.form.price, crate::i18n::tr("价格"));
-                if ui.button(crate::i18n::tr("市价")).clicked() {
-                    let last = state
-                        .md
-                        .lock()
-                        .get(market, &symbol)
-                        .and_then(|md| md.ticker.as_ref().map(|t| t.last_price));
-                    if let Some(p) = last {
-                        app.page.form.price = p.normalize().to_string();
-                    }
-                }
+                // 一键填价：盘口最优买卖一价 + 最新价
+                best_px_buttons(ui, app, market, &symbol);
             });
         }
         if matches!(
@@ -412,6 +407,24 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // ---------- 提交 ----------
     ui.add_space(4.0);
     let busy = state.is_busy("place");
+    // 提交前校验：错误以红色提示条显示在按钮上方（输入时实时清红条，
+    // 避免错误残留造成"界面在骂人"），真正的下单仍以确认弹窗兜底
+    let check = build_request(app);
+    let btn_enabled = !busy
+        && state.has_creds()
+        && match &check {
+            Ok(_) => true,
+            Err(e) => {
+                if app.page.form.err != *e {
+                    app.page.form.err = e.clone();
+                }
+                false
+            }
+        };
+    if btn_enabled && !app.page.form.err.is_empty() {
+        app.page.form.err.clear();
+    }
+    err_bar(ui, &app.page.form.err);
     let (word, color) = match (app.page.form.side, market) {
         (Side::Buy, Market::Spot) => (crate::i18n::tr("买入"), theme::cur().up),
         (Side::Sell, Market::Spot) => (crate::i18n::tr("卖出"), theme::cur().down),
@@ -433,9 +446,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     .fill(color)
     .corner_radius(5)
     .min_size(egui::vec2(ui.available_width(), theme::BTN_LG));
-    let resp = ui
-        .add_enabled(!busy && state.has_creds(), btn)
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let resp = ui.add_enabled(btn_enabled, btn).on_hover_cursor(egui::CursorIcon::PointingHand);
     if busy {
         ui.horizontal(|ui| {
             theme::spinner(ui);
@@ -447,30 +458,25 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         });
     }
     if resp.clicked() {
-        match build_request(app) {
-            Ok(req) => {
-                let mut rows = order_rows(&req);
-                // 确认弹窗给出金额量级，兜住市价单输错数量的低级失误
-                if let Some(t) = total {
-                    rows.push((
-                        crate::i18n::tr("预估金额").to_string(),
-                        format!("≈ {}", t.normalize().round_dp(8)),
-                    ));
-                }
-                // 弹窗头部的买卖方向必须与实际请求一致：
-                // 对冲保护单会把 side 翻转为平仓方向（如 LONG→SELL+LONG）
-                let side = req.side;
-                app.confirm = Some(ConfirmOrder {
-                    market: app.market,
-                    req,
-                    rows,
-                    side,
-                });
+        // 校验已在按钮上方红条提示，这里不再重复弹 toast
+        if let Ok(req) = check {
+            let mut rows = order_rows(&req);
+            // 确认弹窗给出金额量级，兜住市价单输错数量的低级失误
+            if let Some(t) = total {
+                rows.push((
+                    crate::i18n::tr("预估金额").to_string(),
+                    format!("≈ {}", t.normalize().round_dp(8)),
+                ));
             }
-            Err(e) => {
-                app.state
-                    .push_toast(crate::engine::state::ToastKind::Warn, e);
-            }
+            // 弹窗头部的买卖方向必须与实际请求一致：
+            // 对冲保护单会把 side 翻转为平仓方向（如 LONG→SELL+LONG）
+            let side = req.side;
+            app.confirm = Some(ConfirmOrder {
+                market: app.market,
+                req,
+                rows,
+                side,
+            });
         }
     }
 }
@@ -479,6 +485,69 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 /// 行高与 form_row 一致，文字垂直居中
 fn field_label(ui: &mut egui::Ui, text: &str) {
     theme::row_label(ui, theme::card_label(text), 46.0);
+}
+
+/// 价格行一键填值按钮：买一 / 卖一 / 最新价。
+/// 单次短锁取齐三个价格，不在面板构建期间持有 md 锁
+fn best_px_buttons(ui: &mut egui::Ui, app: &mut BnApp, market: Market, symbol: &str) {
+    // 短锁拷贝
+    let (bid, ask, last) = {
+        let md = app.state.md.lock();
+        let Some(md) = md.get(market, symbol) else {
+            return;
+        };
+        (
+            md.depth.bids.first().map(|l| l.price),
+            md.depth.asks.first().map(|l| l.price),
+            md.ticker.as_ref().map(|t| t.last_price),
+        )
+    };
+    // 窄行只显示一个"最新"按钮，买一/卖一随后依次折叠，保证输入框不被挤没
+    let avail = ui.available_width();
+    let mut show_mid = avail > 150.0;
+    let show_ask = avail > 200.0 && ask.is_some();
+    let show_bid = avail > 250.0 && bid.is_some();
+    if !show_ask && !show_bid {
+        show_mid = true;
+    }
+    let mut fill = |ui: &mut egui::Ui, label: &str, price: Decimal| {
+        if ui.small_button(label).clicked() {
+            app.page.form.price = price.normalize().to_string();
+        }
+    };
+    if show_bid {
+        if let Some(p) = bid {
+            fill(ui, crate::i18n::tr("买一"), p);
+        }
+    }
+    if show_ask {
+        if let Some(p) = ask {
+            fill(ui, crate::i18n::tr("卖一"), p);
+        }
+    }
+    if show_mid {
+        if let Some(p) = last {
+            fill(ui, crate::i18n::tr("最新"), p);
+        }
+    }
+}
+
+/// 校验错误红条：非空时显示在提交按钮上方
+fn err_bar(ui: &mut egui::Ui, err: &str) {
+    if err.is_empty() {
+        return;
+    }
+    egui::Frame::default()
+        .fill(theme::cur().down.gamma_multiply(0.16))
+        .corner_radius(3)
+        .inner_margin(egui::Margin::symmetric(8, 5))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(err)
+                    .size(theme::FONT_SM)
+                    .color(theme::cur().down),
+            );
+        });
 }
 
 /// 从 UI 状态构建订单请求（量化后），供提交与确认弹窗使用

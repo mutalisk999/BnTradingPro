@@ -113,6 +113,8 @@ pub struct SettingsDraft {
     pub proxy_url: String,
     pub lang: String,
     pub theme_mode: String,
+    /// 涨跌颜色方向：green_up / red_up
+    pub price_dir: String,
     pub favorites_spot: Vec<String>,
     pub favorites_futures: Vec<String>,
 }
@@ -134,6 +136,7 @@ impl SettingsDraft {
             proxy_url: cfg.proxy.url.clone(),
             lang: cfg.lang.clone(),
             theme_mode: cfg.theme_mode.clone(),
+            price_dir: cfg.price_dir.clone(),
             favorites_spot: cfg.favorites_spot.clone(),
             favorites_futures: cfg.favorites_futures.clone(),
         }
@@ -157,6 +160,7 @@ impl SettingsDraft {
             log_level: self.log_level,
             lang: self.lang,
             theme_mode: self.theme_mode,
+            price_dir: self.price_dir,
             favorites_spot: self.favorites_spot,
             favorites_futures: self.favorites_futures,
             override_spot_rest: self.override_spot_rest,
@@ -216,6 +220,20 @@ pub struct BnApp {
     pub sidebar_collapsed: bool,
     /// 图表最大化（隐藏右侧下单/盘口面板，仅保留页头 + 图表）
     pub chart_maximized: bool,
+    /// 盘口逐档价格变动高亮（按 BookSite 分组，长度随 BOOK_LEVELS）
+    pub flash_book: crate::ui::flash::FlashBook,
+    /// 逐笔成交最新行价格变动高亮
+    pub flash_trade: crate::ui::flash::FlashTrade,
+    /// 页头最新价变动高亮
+    pub flash_header: crate::ui::flash::FlashHeader,
+    /// 盘口消失档位残影（淡出动画 + 上一帧价格集合）
+    pub book_anim: crate::ui::market::BookAnim,
+    /// 右栏内容页签：盘口 10 档 / 成交明细
+    pub book_tab: crate::ui::market::BookTab,
+    /// 缩放防抖：上一帧窗口物理尺寸（zoom 切换不改变物理尺寸，仅 resize 改变）
+    ppp_last_phys: Option<(f32, f32)>,
+    /// 缩放防抖：物理尺寸自该时刻起未变（egui time 域，秒）
+    ppp_stable_since: Option<f64>,
 }
 
 impl BnApp {
@@ -235,6 +253,7 @@ impl BnApp {
         };
         let interval = Interval::from_str(&cfg.default_interval);
         theme::set_mode_str(&cfg.theme_mode);
+        theme::set_price_dir_str(&cfg.price_dir);
         theme::apply(&cc.egui_ctx);
         crate::i18n::set_lang(if cfg.lang == "en" {
             crate::i18n::EN
@@ -273,6 +292,13 @@ impl BnApp {
             auth_card_h: 300.0,
             sidebar_collapsed: false,
             chart_maximized: false,
+            flash_book: Default::default(),
+            flash_trade: Default::default(),
+            flash_header: Default::default(),
+            book_anim: Default::default(),
+            book_tab: crate::ui::market::BookTab::Book,
+            ppp_last_phys: None,
+            ppp_stable_since: None,
         }
     }
 
@@ -289,6 +315,9 @@ impl BnApp {
             _ => {}
         }
         self.tab = tab;
+        // 换市场后盘口属于另一套数据，flash 与残影一并清空
+        self.flash_reset();
+        self.book_anim.clear();
         // 切换顶层页签退出图表最大化：资产/设置页没有图表，残留状态会让
         // 交易页在下次进入时仍处于全屏、找不到还原按钮以外的面板
         self.chart_maximized = false;
@@ -350,6 +379,10 @@ impl BnApp {
         self.page.form.qty.clear();
         self.page.form.trigger.clear();
         self.page.chart.right_off = 0.0;
+        // 旧价位点的"上一次值"属于上一个交易对，清空后避免被误判为变动
+        self.flash_reset();
+        // 残影同理：跨符号的价格集合必须清空
+        self.book_anim.clear();
         self.subscribe(self.market, s.clone(), self.page.interval);
         if self.state.has_creds() {
             self.state.send_cmd(Command::RefreshOpenOrders {
@@ -583,8 +616,8 @@ impl BnApp {
         } else {
             egui::Panel::left("symbols_panel")
                 .resizable(true)
-                .default_size(185.0)
-                .min_size(140.0)
+                .default_size(66.0)
+                .min_size(60.0)
                 .max_size(320.0)
                 .frame(
                     egui::Frame::default()
@@ -635,11 +668,8 @@ impl BnApp {
                         .inner_margin(8),
                 )
                 .show(ui, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        crate::ui::market::show_book(self, ui);
-                        ui.add_space(8.0);
-                        crate::ui::market::show_trades(self, ui);
-                    });
+                    egui::ScrollArea::vertical()
+                        .show(ui, |ui| crate::ui::market::show_book_panel(self, ui));
                 });
 
             // 底部订单区（顶层面板，横贯全宽）
@@ -828,7 +858,32 @@ fn status_dot_bare(ui: &mut egui::Ui, ok: bool) {
 impl eframe::App for BnApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone(); // Context 内部是 Arc，克隆廉价；避免与 ui 的可变借用冲突
-                                    // 主题/语言跟随配置（设置页或顶栏修改后即时生效）
+        // 响应式等比缩放（防抖）：最大化/恢复会产生一串 resize 事件，在过渡帧
+        // （窗口高度骤减）应用 zoom 曾引发 chart 绘制的 clamp panic（已单独修复）；
+        // 仍保留防抖：仅当窗口物理尺寸稳定 ≥0.25s 后才应用 zoom，使缩放切换
+        // 与 resize 事件流错开，避免过渡帧下二次布局抖动
+        {
+            let rect = ctx.input(|i| i.raw.screen_rect).unwrap_or(egui::Rect::ZERO);
+            let size = rect.size() * ctx.pixels_per_point();
+            let now = ctx.input(|i| i.time);
+            // 半像素内视为未变（逻辑 rect × ppi 换算存在舍入抖动）
+            let moved = match self.ppp_last_phys {
+                Some((lx, ly)) => (size.x - lx).abs() > 0.5 || (size.y - ly).abs() > 0.5,
+                None => true,
+            };
+            if moved {
+                self.ppp_last_phys = Some((size.x, size.y));
+                self.ppp_stable_since = Some(now);
+            }
+            let stable = now - self.ppp_stable_since.unwrap_or(now) >= 0.25;
+            if stable {
+                if let Some(p) = theme::auto_ppi(&ctx) {
+                    ctx.set_pixels_per_point(p);
+                    ctx.request_repaint();
+                }
+            }
+        }
+        // 主题/语言跟随配置（设置页或顶栏修改后即时生效）
         {
             let cfg = self.state.cfg.read();
             if self.applied_theme != cfg.theme_mode {
@@ -861,6 +916,35 @@ impl eframe::App for BnApp {
             _ => unlock::show(self, ui),
         }
         widgets::draw_toasts(&ctx, &self.state);
-        ctx.request_repaint_after(Duration::from_millis(400));
+        // 分区重绘调度：取本帧所需的最短间隔。
+        // egui 的 request_repaint_after 只能取一个值（多次调用以最短者为准），
+        // 所以这里按"当前可见区域各自需要多快"取最小值，而非全局一刀切
+        let mut next = theme::REPAINT_IDLE;
+        match self.phase {
+            Phase::Main => {
+                if self.tab.market().is_some() {
+                    // 行情区（盘口/页头/成交）@100ms；图表仅在可见时需要 30fps
+                    next = next.min(theme::REPAINT_QUOTE);
+                    if !self.chart_maximized {
+                        next = next.min(theme::REPAINT_CHART);
+                    }
+                }
+                // 闪烁余晖进行中时按图表档重绘，直到衰减完毕
+                if self.flash_active() {
+                    next = next.min(theme::REPAINT_CHART);
+                }
+            }
+            // 解锁/换钥页有轮询动效，也给行情档
+            _ => next = next.min(theme::REPAINT_QUOTE),
+        }
+        ctx.request_repaint_after(Duration::from_millis(next));
+    }
+}
+
+/// 闪烁状态查询（供重绘调度判断是否需要高频刷新）
+impl BnApp {
+    /// 是否有闪烁动画正在进行（任一位点未衰减完毕）
+    fn flash_active(&self) -> bool {
+        self.flash_book.active() || self.flash_trade.active() || self.flash_header.active()
     }
 }

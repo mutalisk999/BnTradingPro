@@ -117,6 +117,27 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     ui.selectable_value(&mut mode, "light".to_string(), crate::i18n::tr("浅色"));
                 });
             app.settings.theme_mode = mode;
+            ui.separator();
+            // 涨跌方向：仅改全局色表（signed_color/up_color/down_color 即时翻转），
+            // 不涉及 egui Style/字体，无需重新 apply
+            theme::row_label(ui, crate::i18n::tr("涨跌色"), 40.0);
+            let mut dir = theme::PriceDir::from_cfg(&app.settings.price_dir);
+            egui::ComboBox::from_id_salt("price_dir_cb")
+                .selected_text(dir.label())
+                .width(110.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut dir, theme::PriceDir::GreenUp, theme::PriceDir::GreenUp.label());
+                    ui.selectable_value(&mut dir, theme::PriceDir::RedUp, theme::PriceDir::RedUp.label());
+                });
+            if dir.as_cfg() != app.settings.price_dir {
+                app.settings.price_dir = dir.as_cfg().to_string();
+                theme::set_price_dir_str(&app.settings.price_dir);
+                // 同步进运行时配置：顶栏/盘口等直接读 theme::up_color 的区域立即生效
+                let mut cfg = app.state.cfg.read().clone();
+                cfg.price_dir = app.settings.price_dir.clone();
+                *app.state.cfg.write() = cfg;
+                app.state.send_cmd(crate::engine::Command::PersistConfig);
+            }
         });
         ui.label(
             egui::RichText::new(crate::i18n::tr(
