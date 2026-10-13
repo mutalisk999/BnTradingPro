@@ -295,7 +295,9 @@ fn draw(
     let span = (hi - lo).max(0.0001);
     let hi = (hi + span * pad_ratio) as f32;
     let lo = (lo - span * pad_ratio) as f32;
-    let span = hi - lo;
+    // 高价位（~1e9）下 f32 分辨率可能把填充后的 hi/lo 收敛到同一个值：
+    // 钳一个非零 span，防止 y_of 除零产生 NaN
+    let span = (hi - lo).max(hi.abs() * 1e-6).max(1e-6);
 
     // 右侧价格轴宽度自适应数字位数（千分位），避免大数值被截断
     let axis_w = ((widgets::fmt_thousands(hi as f64, dp as usize)
@@ -314,10 +316,15 @@ fn draw(
     // ---------- 网格与价格轴 ----------
     let step = nice_step(span as f64, 6);
     let grid_font = FontId::monospace(11.0);
-    // 从 >= lo 的第一个网格点起步：若从 step 起步，迭代次数为 hi/step——
-    // 全平坦窗口（span 钳到 0.0001）下高价币会达到数十亿次迭代、页面冻结
-    let mut gp = ((lo as f64 / step).floor() * step) as f32;
-    while gp <= hi {
+    // 网格点用整数索引计算（gp = idx * step）：f32 累加在 step 极小（横盘品种
+    // span 收缩到 ULP 量级）时会低于 ULP 不再前进，循环永不终止冻结 UI
+    let mut idx = (lo as f64 / step).floor() as i64;
+    loop {
+        let gp64 = idx as f64 * step;
+        if gp64 > hi as f64 {
+            break;
+        }
+        let gp = gp64 as f32;
         if gp >= lo {
             let y = y_of(gp);
             painter.line_segment(
@@ -330,12 +337,12 @@ fn draw(
             painter.text(
                 Pos2::new(plot.left() + chart_w + 6.0, y),
                 Align2::LEFT_CENTER,
-                widgets::fmt_thousands(gp as f64, dp as usize),
+                widgets::fmt_thousands(gp64, dp as usize),
                 grid_font.clone(),
                 theme::cur().text_dim,
             );
         }
-        gp += step as f32;
+        idx += 1;
     }
 
     // ---------- 时间轴 ----------

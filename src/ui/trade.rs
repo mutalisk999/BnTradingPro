@@ -197,7 +197,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     crate::i18n::tr("开空 (SHORT)")
                 };
                 theme::form_row(ui, |ui| {
-                    ui.label(theme::card_label(crate::i18n::tr("持仓方向")));
+                    field_label(ui, crate::i18n::tr("持仓方向"));
                     ui.label(
                         egui::RichText::new(pos_txt)
                             .strong()
@@ -206,14 +206,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 });
             }
             if !dual {
-                ui.checkbox(
-                    &mut app.page.form.reduce_only,
-                    crate::i18n::tr("只减仓 (ReduceOnly)"),
-                );
+                theme::form_row(ui, |ui| {
+                    field_label(ui, crate::i18n::tr("只减仓"));
+                    ui.checkbox(&mut app.page.form.reduce_only, "");
+                });
             }
             // 杠杆
             theme::form_row(ui, |ui| {
-                ui.label(theme::card_label(crate::i18n::tr("杠杆")));
+                field_label(ui, crate::i18n::tr("杠杆"));
                 let lev = state
                     .acct
                     .lock()
@@ -343,7 +343,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     }
     ui.separator();
     theme::form_row(ui, |ui| {
-        ui.label(egui::RichText::new(crate::i18n::tr("预估金额")).color(theme::cur().text_dim));
+        field_label(ui, crate::i18n::tr("预估金额"));
         match total {
             Some(t) => {
                 ui.label(egui::RichText::new(t.normalize().round_dp(8).to_string()).monospace())
@@ -535,14 +535,27 @@ pub fn build_request(app: &BnApp) -> Result<OrderRequest, String> {
                 | UiKind::StopLossMarket
                 | UiKind::TakeProfitMarket
         );
-        let existing = if protective {
-            state
+        let existing: Option<bool> = if protective {
+            // 收集该交易对全部非零仓位：同 symbol 双向持仓时取 find 第一个
+            // 可能平错边（如 SELL+LONG 平掉多头），两个方向都在仓时直接拒绝
+            let longs: Vec<bool> = state
                 .acct
                 .lock()
                 .fut_positions
                 .iter()
-                .find(|p| p.symbol == symbol && p.amt != Decimal::ZERO)
+                .filter(|p| p.symbol == symbol && p.amt != Decimal::ZERO)
                 .map(|p| p.amt > Decimal::ZERO)
+                .collect();
+            match longs.len() {
+                0 => None,
+                1 => Some(longs[0]),
+                _ => {
+                    return Err(crate::i18n::tr(
+                        "该交易对同时存在多空双向持仓，无法确定止盈止损的平仓方向，请先手动平掉一侧",
+                    )
+                    .to_string())
+                }
+            }
         } else {
             None
         };

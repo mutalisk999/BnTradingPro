@@ -160,7 +160,7 @@ pub fn draw_toasts(ctx: &egui::Context, state: &SharedState) {
                         ToastKind::Warn => (theme::cur().warn, "!"),
                         ToastKind::Info => (theme::cur().accent, "i"),
                     };
-                    egui::Frame::default()
+                    let frame_resp = egui::Frame::default()
                         .fill(theme::cur().panel2)
                         .stroke(Stroke::new(1.0_f32, fg.gamma_multiply(0.8)))
                         .corner_radius(6)
@@ -168,9 +168,23 @@ pub fn draw_toasts(ctx: &egui::Context, state: &SharedState) {
                         .show(ui, |ui| {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(egui::RichText::new(icon).color(fg).strong());
-                                ui.label(egui::RichText::new(t.msg).color(theme::cur().text));
+                                ui.label(
+                                    egui::RichText::new(t.msg.as_str()).color(theme::cur().text),
+                                );
                             });
                         });
+                    // 点击即关闭（不等 TTL 自然过期）：按 (内容, 入队时刻) 精确匹配
+                    let clicked = frame_resp
+                        .response
+                        .interact(egui::Sense::click())
+                        .on_hover_text(crate::i18n::tr("点击关闭"))
+                        .clicked();
+                    if clicked {
+                        state
+                            .toasts
+                            .lock()
+                            .retain(|x| !(x.msg == t.msg && x.at == t.at));
+                    }
                 }
             });
         });

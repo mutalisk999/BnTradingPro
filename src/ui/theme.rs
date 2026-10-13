@@ -61,7 +61,9 @@ pub const DARK: Theme = Theme {
     tag_bg: Color32::from_rgb(44, 52, 66),
     row_hover: Color32::from_rgb(38, 46, 60),
     btn_idle: Color32::from_rgb(30, 37, 48),
-    on_fill: Color32::from_rgb(255, 255, 255),
+    // 涨/跌填充上的文字用深色：白色在 up=rgb(14,203,129) 上对比度仅 2.1:1，
+    // 深色对 up 8.1:1、对 down 4.9:1
+    on_fill: Color32::from_rgb(6, 32, 22),
     on_accent: Color32::from_rgb(28, 22, 2),
 };
 
@@ -75,8 +77,9 @@ pub const LIGHT: Theme = Theme {
     border: Color32::from_rgb(216, 222, 231),
     text: Color32::from_rgb(27, 32, 38),
     text_dim: Color32::from_rgb(107, 118, 132),
-    accent: Color32::from_rgb(201, 148, 0),
-    warn: Color32::from_rgb(185, 122, 20),
+    // accent/warn 加深：原色在白底上对比度 2.7:1 / 3.5:1，不满足 4.5:1
+    accent: Color32::from_rgb(140, 102, 0),
+    warn: Color32::from_rgb(146, 96, 8),
     err: Color32::from_rgb(214, 58, 80),
     grid: Color32::from_rgb(223, 228, 236),
     grid_time: Color32::from_rgb(228, 233, 239),
@@ -85,8 +88,11 @@ pub const LIGHT: Theme = Theme {
     tag_bg: Color32::from_rgb(219, 225, 234),
     row_hover: Color32::from_rgb(235, 239, 245),
     btn_idle: Color32::from_rgb(226, 232, 240),
-    on_fill: Color32::from_rgb(255, 255, 255),
-    on_accent: Color32::from_rgb(40, 30, 4),
+    // 彩色填充（up/down）上的文字用黑色：白色对浅色 up 仅 3.5:1；
+    // 黑色对 up 6.1:1、对 down 4.6:1
+    on_fill: Color32::from_rgb(0, 0, 0),
+    // accent 加深后深色字对比度跌至 3.1:1，改白色（5.2:1）
+    on_accent: Color32::from_rgb(255, 255, 255),
 };
 
 static MODE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);

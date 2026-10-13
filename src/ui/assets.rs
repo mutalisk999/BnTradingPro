@@ -49,16 +49,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         // 卡片宽度一次性算好：循环内取 available_width 会随前一张卡片收窄，
         // 四张卡片逐张变矮变窄（原实现的实际 bug）
         let gap = 8.0;
-        let card_w = ((ui.available_width() - 3.0 * gap) / 4.0).max(80.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            let cards: [(&str, f64, bool); 4] = [
-                ("合约钱包余额", f(&a.total_wallet), false),
-                ("未实现盈亏", f(&a.total_unrealized), true),
-                ("保证金余额", f(&a.total_margin), false),
-                ("可用余额", f(&a.available), false),
-            ];
-            for (name, v, colored) in cards {
+        let cards: [(&str, f64, bool); 4] = [
+            ("合约钱包余额", f(&a.total_wallet), false),
+            ("未实现盈亏", f(&a.total_unrealized), true),
+            ("保证金余额", f(&a.total_margin), false),
+            ("可用余额", f(&a.available), false),
+        ];
+        let stat_card =
+            |ui: &mut egui::Ui, card_w: f32, name: &'static str, v: f64, colored: bool| {
                 theme::card(ui, |ui| {
                     // 24 = card 内边距（12×2）：外框总宽恰好 card_w
                     ui.set_min_width((card_w - 24.0).max(0.0));
@@ -78,8 +76,28 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         );
                     });
                 });
+            };
+        let avail_w = ui.available_width();
+        if avail_w < 720.0 {
+            // 窄窗：四张卡片改 2×2 两行，避免单行挤压溢出
+            let card_w = ((avail_w - gap) / 2.0).max(80.0);
+            for row in cards.chunks(2) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = gap;
+                    for &(name, v, colored) in row {
+                        stat_card(ui, card_w, name, v, colored);
+                    }
+                });
             }
-        });
+        } else {
+            let card_w = ((avail_w - 3.0 * gap) / 4.0).max(80.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                for (name, v, colored) in cards {
+                    stat_card(ui, card_w, name, v, colored);
+                }
+            });
+        }
         ui.horizontal(|ui| {
             let dual = state.acct.lock().fut_dual_side;
             ui.label(theme::card_label(if dual {

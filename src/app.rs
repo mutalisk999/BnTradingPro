@@ -139,7 +139,15 @@ impl SettingsDraft {
     pub fn into_cfg(self) -> AppConfig {
         AppConfig {
             testnet: self.testnet,
-            default_symbol: self.default_symbol.trim().to_uppercase(),
+            // trim 后为空会发出非法订阅请求，回退默认交易对
+            default_symbol: {
+                let s = self.default_symbol.trim().to_uppercase();
+                if s.is_empty() {
+                    "BTCUSDT".to_string()
+                } else {
+                    s
+                }
+            },
             default_interval: self.default_interval,
             recv_window_ms: self.recv_window_ms,
             http_timeout_secs: self.http_timeout_secs,
@@ -730,8 +738,12 @@ impl BnApp {
                             submit = true;
                         }
                         let cancel_btn = ui.button(crate::i18n::tr("取消"));
-                        // 初始焦点落在取消上：回车/空格默认走安全路径
-                        cancel_btn.request_focus();
+                        // 初始焦点落在取消上：回车/空格默认走安全路径；
+                        // 仅当前无焦点控件时请求——每帧无条件抢占会让
+                        // Tab 切换与 Enter 提交永远无法离开取消键
+                        if ui.ctx().memory(|m| m.focused().is_none()) {
+                            cancel_btn.request_focus();
+                        }
                         if cancel_btn.clicked() {
                             cancel = true;
                         }

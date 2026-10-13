@@ -64,13 +64,19 @@ async fn proxy_tcp(host: &str, port: u16, proxy: &ProxyConfig) -> Result<TcpStre
     }
     let purl = Url::parse(proxy.url.trim()).map_err(|e| format!("代理地址无效: {e}"))?;
     let scheme = purl.scheme().to_ascii_lowercase();
+    // https:// 代理：WS 侧按明文 CONNECT 处理与 REST 侧 TLS 行为不一致，
+    // 直接拒绝并提示改用 http/socks5，避免"REST 能通、WS 连不上"的静默差异
+    if scheme == "https" {
+        return Err(
+            "暂不支持 https:// 代理，请改用 http:// 或 socks5:// 代理地址".to_string(),
+        );
+    }
     let phost = purl.host_str().ok_or("代理地址缺少主机")?.to_string();
     // 未写端口时按协议补默认端口（与 REST 侧 reqwest 行为一致）
     let pport = purl
         .port()
         .or(match scheme.as_str() {
             "http" => Some(80),
-            "https" => Some(443),
             "socks5" | "socks5h" => Some(1080),
             _ => None,
         })
@@ -99,7 +105,7 @@ async fn proxy_tcp(host: &str, port: u16, proxy: &ProxyConfig) -> Result<TcpStre
             };
             Ok(stream.into_inner())
         }
-        "http" | "https" => {
+        "http" => {
             // HTTP CONNECT 隧道
             let mut tcp = TcpStream::connect((phost.as_str(), pport))
                 .await

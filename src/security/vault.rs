@@ -79,6 +79,12 @@ pub fn save_creds(dir: &Path, password: &str, creds: &Creds) -> Result<(), Strin
     // 先写临时文件再原子替换，避免写入中断留下损坏的凭据库
     let tmp = dir.join(format!("{VAULT_FILE}.tmp"));
     std::fs::write(&tmp, buf).map_err(|e| format!("写入凭据文件失败({}): {e}", tmp.display()))?;
+    // unix 下写入后立即收紧权限（rename 前后都不可被其他用户读取）
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    }
     std::fs::rename(&tmp, &path)
         .map_err(|e| format!("替换凭据文件失败({}): {e}", path.display()))?;
     Ok(())

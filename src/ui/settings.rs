@@ -41,6 +41,13 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 theme::badge(ui, crate::i18n::tr("实盘 · 真实资金"), theme::cur().err);
             }
         });
+        ui.label(
+            egui::RichText::new(crate::i18n::tr(
+                "测试网与实盘的 API 密钥不通用，切换环境后需重新配置密钥",
+            ))
+            .size(11.0)
+            .color(theme::cur().text_dim),
+        );
         if !app.settings.testnet {
             ui.label(
                 egui::RichText::new(crate::i18n::tr(
@@ -119,7 +126,15 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     theme::card(ui, |ui| {
         ui.label(egui::RichText::new(crate::i18n::tr("请求参数")).strong());
         theme::form_row(ui, |ui| {
-            ui.label(crate::i18n::tr("接收窗口 (recvWindow)"));
+            ui.label(crate::i18n::tr("接收窗口"));
+            // 英文界面标签本身就是 "recvWindow"，仅中文界面补英文小字说明
+            if crate::i18n::lang() == crate::i18n::ZH {
+                ui.label(
+                    egui::RichText::new("recvWindow")
+                        .size(10.5)
+                        .color(theme::cur().text_dim),
+                );
+            }
             ui.add(
                 egui::DragValue::new(&mut app.settings.recv_window_ms)
                     .range(1000..=60000)
@@ -350,9 +365,35 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         let cfg: AppConfig = std::mem::take(&mut app.settings).into_cfg();
         // 保留草稿（into_cfg 消耗了草稿），保证继续编辑不丢字段
         app.settings = SettingsDraft::from_cfg(&cfg);
-        // 落盘走引擎命令（update_cfg 只更新内存并触发重连）
-        state.send_cmd(crate::engine::Command::PersistConfig);
+        // 测试网 → 实盘时不沿用端点覆盖：第三方测试网端点会把携带 API Key 的
+        // 实盘签名请求发往该主机，自动清空并提示
+        let was_testnet = state.cfg.read().testnet;
+        let mut cfg = cfg;
+        if was_testnet && !cfg.testnet {
+            let had_override = !cfg.override_spot_rest.trim().is_empty()
+                || !cfg.override_spot_ws.trim().is_empty()
+                || !cfg.override_fut_rest.trim().is_empty()
+                || !cfg.override_fut_ws.trim().is_empty();
+            if had_override {
+                cfg.override_spot_rest.clear();
+                cfg.override_spot_ws.clear();
+                cfg.override_fut_rest.clear();
+                cfg.override_fut_ws.clear();
+                // 草稿同步清空：否则下次点"保存并重连"时 into_cfg 会把旧覆盖
+                // 静默写回（此时已是实盘，清空守卫不再触发）
+                app.settings.override_spot_rest.clear();
+                app.settings.override_spot_ws.clear();
+                app.settings.override_fut_rest.clear();
+                app.settings.override_fut_ws.clear();
+                state.push_toast(
+                    ToastKind::Warn,
+                    crate::i18n::tr("已清空端点覆盖：测试网与实盘端点不通用").to_string(),
+                );
+            }
+        }
+        // 先更新内存（触发重连），再落盘——保证 PersistConfig 持久化的是新配置
         state.update_cfg(cfg);
+        state.send_cmd(crate::engine::Command::PersistConfig);
         state.push_toast(
             ToastKind::Ok,
             crate::i18n::tr("设置已保存，正在重连…").to_string(),

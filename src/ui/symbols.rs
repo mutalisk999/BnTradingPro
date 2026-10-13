@@ -6,13 +6,29 @@ use eframe::egui;
 
 /// 左侧交易对列表：搜索 + 自选置顶 + 全量虚拟化列表
 pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
-    ui.add(
-        egui::TextEdit::singleline(&mut app.page.symbol_filter)
+    // 搜索框 + 非空时的 × 清除按钮（内联，避免占一行）
+    let has_filter = !app.page.symbol_filter.is_empty();
+    ui.horizontal(|ui| {
+        let mut search = egui::TextEdit::singleline(&mut app.page.symbol_filter)
             .id_salt("sidebar_search")
             .hint_text(crate::i18n::tr("搜索交易对…"))
-            .text_color(theme::cur().text)
-            .desired_width(f32::INFINITY),
-    );
+            .text_color(theme::cur().text);
+        search = if has_filter {
+            // 预留 × 按钮宽度，避免文本框被挤压后逐帧抖动
+            search.desired_width(ui.available_width() - 26.0)
+        } else {
+            search.desired_width(f32::INFINITY)
+        };
+        ui.add(search);
+        if has_filter
+            && ui
+                .small_button("×")
+                .on_hover_text(crate::i18n::tr("清空搜索"))
+                .clicked()
+        {
+            app.page.symbol_filter.clear();
+        }
+    });
     ui.add_space(2.0);
 
     let filter = app.page.symbol_filter.trim().to_uppercase();

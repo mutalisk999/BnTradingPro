@@ -119,7 +119,13 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "低于最小名义金额" => "Below min notional",
         "（限价单）" => " (limit order)",
         "提交中…" => "Submitting…",
-        "本地时间与服务器偏差过大，正在自动校时，请重试" => "Clock drift too large — auto resyncing, please retry",
+        "本地时间与服务器偏差过大，已自动校时并重试，请重试" => {
+            "Clock drift too large — time resynced and request retried, please try again"
+        }
+        "IP 已被限频封禁（418），请降低请求频率后重试" => {
+            "IP banned by rate limiting (418) — reduce request frequency and retry later"
+        }
+        "请求频率超限（429），请稍后重试" => "Rate limit exceeded (429) — retry later",
         "API Key 无效或权限不足（检查 Key、IP 白名单、是否用对测试网/实盘）" => {
             "API key invalid or unauthorized (check the key, IP whitelist, testnet vs live)"
         }
@@ -220,6 +226,9 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "测试网密钥在 testnet.binance.vision / testnet.binancefuture.com 申请" => {
             "Get testnet keys at testnet.binance.vision / testnet.binancefuture.com"
         }
+        "测试网与实盘的 API 密钥不通用，切换环境后需重新配置密钥" => {
+            "Testnet and live API keys are not interchangeable — reconfigure keys after switching"
+        }
         "⚠ 实盘模式下下单将使用真实资金，请确认密钥与环境正确！" => {
             "⚠ Live mode places orders with REAL funds — verify your key and environment!"
         }
@@ -227,7 +236,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "启用代理" => "Enable proxy",
         "地址" => "Address",
         "请求参数" => "Request Parameters",
-        "接收窗口 (recvWindow)" => "recvWindow",
+        "接收窗口" => "recvWindow",
         "HTTP 超时" => "HTTP Timeout",
         "日志级别" => "Log Level",
         "默认交易对" => "Default Symbol",
@@ -253,6 +262,9 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "English" => "English",
         "设置已保存，正在重连…" => "Settings saved, reconnecting…",
         "已删除本机凭据库" => "Local vault deleted",
+        "已清空端点覆盖：测试网与实盘端点不通用" => {
+            "Endpoint overrides cleared: testnet and live endpoints are not interchangeable"
+        }
         // ---- 登录页 ----
         "Binance 现货 / U本位合约 交易终端" => "Binance Spot / USDT-M Futures Trading Terminal",
         "解锁" => "Unlock",
@@ -417,6 +429,11 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "做空" => "Short",
         "缺少" => "Missing",
         "加载失败: " => "Failed to load: ",
+        "该交易对同时存在多空双向持仓，无法确定止盈止损的平仓方向，请先手动平掉一侧" => {
+            "Symbol has both long and short positions — cannot determine the stop order's closing side. Close one side first"
+        }
+        "点击关闭" => "Click to dismiss",
+        "清空搜索" => "Clear search",
         _ => return_en_fallback(zh),
     }
 }

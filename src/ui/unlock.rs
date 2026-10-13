@@ -61,17 +61,18 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 theme::cur().text_dim,
             );
 
-            // 卡片垂直位置：以上一帧实测高度在标题以下区域居中；空间不足时
-            // 顶到标题下方，底边永不越过窗口下边缘，超高部分由内部 ScrollArea
-            // 滚动兜底。高度取上一帧测量值（滞后一帧收敛），静止后完全稳定。
+            // 卡片区域 = 标题以下到窗口底部（留 12px 底边距）。内容在该区域内
+            // 垂直居中——不能按整窗居中：标题占掉顶部后整窗居中会让卡片偏上、
+            // 下方留出大片空白。内容放不下时顶到区域顶部、由内部 ScrollArea
+            // 滚动兜底，卡片永不越过窗口底边。高度取上一帧测量值（滞后一帧
+            // 收敛），静止后完全稳定。
             let region_top = title_y + 58.0;
-            let card_top = (avail.center().y - app.auth_card_h * 0.5)
-                .max(region_top)
-                .min((avail.bottom() - 60.0).max(region_top));
+            let region_h = (avail.bottom() - 12.0 - region_top).max(60.0);
+            let card_top = region_top + ((region_h - app.auth_card_h) * 0.5).max(0.0);
             ui.scope_builder(
                 egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
                     Pos2::new(avail.center().x - card_w / 2.0, card_top),
-                    egui::vec2(card_w, (avail.bottom() - card_top).max(60.0)),
+                    egui::vec2(card_w, (region_h - (card_top - region_top)).max(60.0)),
                 )),
                 |ui| {
                     // 仅当上一帧实测高度在当前区域放不下时才启用内部滚动（滚轮才生效）：
@@ -356,7 +357,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
     );
     ui.add_space(4.0);
     ui.label(theme::card_label("API Secret"));
-    ui.add(
+    let secret_resp = ui.add(
         egui::TextEdit::singleline(&mut *app.api_secret)
             .password(true)
             .desired_width(f32::INFINITY)
@@ -376,58 +377,12 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
     if primary_btn(ui, crate::i18n::tr("保存并连接"), can_save) {
         do_save = true;
     }
+    // Secret 是表单最后一项：输入完直接回车保存（与解锁页密码框行为一致）
+    if secret_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && can_save {
+        do_save = true;
+    }
     if do_save {
-        let creds = Creds {
-            api_key: app.api_key.trim().to_string(),
-            api_secret: app.api_secret.trim().to_string(),
-        };
-        let master = app.master.clone().or_else(|| {
-            let m = app.pw1.clone();
-            if m.is_empty() {
-                None
-            } else {
-                Some(m)
-            }
-        });
-        match master {
-            Some(pw) => {
-                // 已有凭据库：先校验主密码
-                if vault_exists {
-                    match vault::load_creds(&dir, &pw) {
-                        Err(vault::VaultError::NotFound) => {}
-                        Err(_) => {
-                            app.keys_err = crate::i18n::tr("主密码错误").to_string();
-                            return;
-                        }
-                        Ok(_) => {}
-                    }
-                } else if pw.len() < 8 {
-                    app.keys_err = crate::i18n::tr("主密码至少 8 位").to_string();
-                    return;
-                } else if pw != app.pw2 {
-                    app.keys_err = crate::i18n::tr("两次输入不一致").to_string();
-                    return;
-                }
-                match vault::save_creds(&dir, &pw, &creds) {
-                    Ok(()) => {
-                        app.state.set_creds(Some(creds));
-                        app.api_key.clear();
-                        app.api_secret.clear();
-                        app.keys_err.clear();
-                        app.master = None;
-                        app.pw1.clear();
-                        app.pw2.clear();
-                        app.state
-                            .push_toast(ToastKind::Ok, crate::i18n::tr("密钥已加密保存并连接"));
-                        app.phase = Phase::Main;
-                    }
-                    Err(e) => app.keys_err = format!("{}{e}", crate::i18n::tr("保存失败: ")),
-                }
-            }
-            None => {
-                app.keys_err = crate::i18n::tr("请输入主密码").to_string();
-            }
-        }
+        save_keys(app, &dir, vault_exists);
     }
     ui.add_space(2.0);
     // 跳过入口两种分支都要有：换钥流程（已有库）也需要能随时退出本页，
@@ -458,4 +413,59 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         )
         .wrap_mode(egui::TextWrapMode::Wrap),
     );
+}
+
+/// 校验主密码并加密保存密钥，成功后进入主界面（保存按钮与 Secret 回车共用）
+fn save_keys(app: &mut BnApp, dir: &std::path::Path, vault_exists: bool) {
+    let creds = Creds {
+        api_key: app.api_key.trim().to_string(),
+        api_secret: app.api_secret.trim().to_string(),
+    };
+    let master = app.master.clone().or_else(|| {
+        let m = app.pw1.clone();
+        if m.is_empty() {
+            None
+        } else {
+            Some(m)
+        }
+    });
+    match master {
+        Some(pw) => {
+            // 已有凭据库：先校验主密码
+            if vault_exists {
+                match vault::load_creds(dir, &pw) {
+                    Err(vault::VaultError::NotFound) => {}
+                    Err(_) => {
+                        app.keys_err = crate::i18n::tr("主密码错误").to_string();
+                        return;
+                    }
+                    Ok(_) => {}
+                }
+            } else if pw.len() < 8 {
+                app.keys_err = crate::i18n::tr("主密码至少 8 位").to_string();
+                return;
+            } else if pw != app.pw2 {
+                app.keys_err = crate::i18n::tr("两次输入不一致").to_string();
+                return;
+            }
+            match vault::save_creds(dir, &pw, &creds) {
+                Ok(()) => {
+                    app.state.set_creds(Some(creds));
+                    app.api_key.clear();
+                    app.api_secret.clear();
+                    app.keys_err.clear();
+                    app.master = None;
+                    app.pw1.clear();
+                    app.pw2.clear();
+                    app.state
+                        .push_toast(ToastKind::Ok, crate::i18n::tr("密钥已加密保存并连接"));
+                    app.phase = Phase::Main;
+                }
+                Err(e) => app.keys_err = format!("{}{e}", crate::i18n::tr("保存失败: ")),
+            }
+        }
+        None => {
+            app.keys_err = crate::i18n::tr("请输入主密码").to_string();
+        }
+    }
 }
