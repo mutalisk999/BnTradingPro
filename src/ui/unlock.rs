@@ -110,7 +110,7 @@ fn card_frame(app: &mut BnApp, ui: &mut egui::Ui, card_w: f32) -> f32 {
         .stroke(Stroke::new(1.0_f32, theme::cur().border))
         .corner_radius(8)
         // 内边距收紧：原 26 四边留白过大，卡片显高、底部空洞
-        .inner_margin(egui::Margin::symmetric(22, 16))
+        .inner_margin(egui::Margin::symmetric(22, 12))
         .show(ui, |ui| {
             ui.set_width(card_w - 44.0);
             match app.phase {
@@ -118,7 +118,7 @@ fn card_frame(app: &mut BnApp, ui: &mut egui::Ui, card_w: f32) -> f32 {
                 Phase::EnterKeys => card_header(ui, crate::i18n::tr("配置 API 密钥")),
                 Phase::Main => {}
             }
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             match app.phase {
                 Phase::Unlock => unlock(app, ui),
                 Phase::EnterKeys => enter_keys(app, ui),
@@ -285,6 +285,8 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
     let dir = config::data_dir();
     let vault_exists = vault::vault_exists(&dir);
     let testnet = app.state.cfg.read().testnet;
+    // 紧凑表单：默认 8px 行间距压到 3px，标签与输入框、按钮与跳过行都更贴近
+    ui.spacing_mut().item_spacing.y = 3.0;
     ui.add(
         egui::Label::new(
             egui::RichText::new(if testnet {
@@ -297,7 +299,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         )
         .wrap_mode(egui::TextWrapMode::Wrap),
     );
-    ui.add_space(6.0);
+    ui.add_space(2.0);
 
     // 主密码：一体设置（无库）或验证（有库）
     let need_master = vault_exists || app.master.is_none();
@@ -315,7 +317,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             if ui.ctx().memory(|m| m.focused().is_none()) {
                 pw_resp.request_focus();
             }
-            ui.add_space(4.0);
+            ui.add_space(2.0);
         } else {
             ui.add(
                 egui::Label::new(
@@ -325,23 +327,25 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
                 )
                 .wrap_mode(egui::TextWrapMode::Wrap),
             );
-            ui.add_space(3.0);
-            ui.label(theme::card_label(crate::i18n::tr("主密码（至少 8 位）")));
-            ui.add(
-                egui::TextEdit::singleline(&mut *app.pw1)
-                    .password(true)
-                    .desired_width(f32::INFINITY)
-                    .font(egui::TextStyle::Monospace),
-            );
-            ui.add_space(3.0);
-            ui.label(theme::card_label(crate::i18n::tr("再输一次")));
-            ui.add(
-                egui::TextEdit::singleline(&mut *app.pw2)
-                    .password(true)
-                    .desired_width(f32::INFINITY)
-                    .font(egui::TextStyle::Monospace),
-            );
-            ui.add_space(4.0);
+            ui.add_space(2.0);
+            // 两个密码框并排一行：省掉一整行高度，卡片更紧凑
+            ui.columns(2, |cols| {
+                cols[0].label(theme::card_label(crate::i18n::tr("主密码（至少 8 位）")));
+                cols[0].add(
+                    egui::TextEdit::singleline(&mut *app.pw1)
+                        .password(true)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace),
+                );
+                cols[1].label(theme::card_label(crate::i18n::tr("再输一次")));
+                cols[1].add(
+                    egui::TextEdit::singleline(&mut *app.pw2)
+                        .password(true)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace),
+                );
+            });
+            ui.add_space(2.0);
         }
     }
 
@@ -355,7 +359,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             .font(egui::TextStyle::Monospace)
             .text_color(theme::cur().text),
     );
-    ui.add_space(4.0);
+    ui.add_space(2.0);
     ui.label(theme::card_label("API Secret"));
     let secret_resp = ui.add(
         egui::TextEdit::singleline(&mut *app.api_secret)
@@ -368,7 +372,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         error_text(ui, &app.keys_err);
     }
-    ui.add_space(8.0);
+    ui.add_space(2.0);
 
     let can_save = !app.api_key.trim().is_empty()
         && !app.api_secret.trim().is_empty()
@@ -384,9 +388,9 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
     if do_save {
         save_keys(app, &dir, vault_exists);
     }
-    ui.add_space(2.0);
     // 跳过入口两种分支都要有：换钥流程（已有库）也需要能随时退出本页，
-    // 否则用户点开"更换密钥"后无路可退
+    // 否则用户点开"更换密钥"后无路可退。提示文字与按钮同行（按钮居右），
+    // 不再单独占一行，底部更紧凑
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         if ui
             .small_button(
@@ -402,17 +406,14 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             app.pw2.clear();
             app.phase = Phase::Main;
         }
-    });
-    ui.add(
-        egui::Label::new(
+        ui.label(
             egui::RichText::new(crate::i18n::tr(
                 "跳过后仍可查看实时行情与 K 线，随时可在设置页配置密钥",
             ))
-            .size(11.0)
+            .size(10.5)
             .color(theme::cur().text_dim.gamma_multiply(0.85)),
-        )
-        .wrap_mode(egui::TextWrapMode::Wrap),
-    );
+        );
+    });
 }
 
 /// 校验主密码并加密保存密钥，成功后进入主界面（保存按钮与 Secret 回车共用）
