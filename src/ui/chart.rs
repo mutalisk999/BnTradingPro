@@ -1,14 +1,18 @@
-//! 自绘蜡烛图：缩放/平移、十字光标、最新价与挂单/持仓叠加线
+//! 自绘蜡烛图：缩放/平移、十字光标、最新价与挂单/持仓叠加线、副图指标
 
 use crate::app::BnApp;
 use crate::binance::model::Candle;
 use crate::binance::Interval;
+use crate::ui::indicators::{self, Role, SubSeries};
 use crate::ui::theme;
 use crate::ui::widgets;
 use chrono::TimeZone;
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 use rust_decimal::Decimal;
+
+// 供 app.rs 以 `chart::SubIndicator` 引用（保持既有导入路径不变）
+pub use crate::ui::indicators::SubIndicator;
 
 /// 均线周期（MA5/MA10/MA20/MA60）；配色见 `theme::ma_colors()`（随主题切换）
 pub const MA_PERIODS: [usize; 4] = [5, 10, 20, 60];
@@ -27,6 +31,9 @@ pub struct ChartState {
     /// 收盘价前缀和（长度 = closes.len()+1）：所有周期 SMA 共用，
     /// 查询 (prefix[gi+1]-prefix[gi+1-period])/period
     cache_prefix: Vec<f64>,
+    /// 副图指标序列缓存：按 (市场, 交易对, 周期, kline_version, 指标) 失效
+    sub_key: Option<(crate::binance::Market, String, Interval, u64, SubIndicator)>,
+    sub_series: Option<SubSeries>,
 }
 
 impl Default for ChartState {
@@ -39,6 +46,8 @@ impl Default for ChartState {
             cache_klines: Vec::new(),
             cache_closes: Vec::new(),
             cache_prefix: Vec::new(),
+            sub_key: None,
+            sub_series: None,
         }
     }
 }
@@ -55,12 +64,12 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         r.map(|x| x.price_dp()).unwrap_or(2)
     });
 
-    // ---------- 头部工具行：MA 开关（24h 统计已移至页头） ----------
+    // ---------- 头部工具行：MA 开关 | 副图指标切换 + 最大化 ----------
     let ma_colors = theme::ma_colors();
     ui.horizontal(|ui| {
         for (i, &period) in MA_PERIODS.iter().enumerate() {
             let label = egui::RichText::new(format!("MA{period}"))
-                .size(11.5)
+                .size(theme::FONT_SM)
                 .strong();
             let label = if app.page.chart.ma[i] {
                 label.color(ma_colors[i])
@@ -77,6 +86,26 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 app.page.chart.ma[i] = !app.page.chart.ma[i];
             }
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // 最大化/还原：文字按钮（⛶ 字形在等宽字体优先下有缺字风险）
+            let max_txt = if app.chart_maximized {
+                crate::i18n::tr("还原")
+            } else {
+                crate::i18n::tr("全屏")
+            };
+            if theme::btn_default(ui, max_txt, true).clicked() {
+                app.chart_maximized = !app.chart_maximized;
+            }
+            // 副图指标切换（标签中英文一致，无需 i18n）
+            egui::ComboBox::from_id_salt("sub_indicator")
+                .selected_text(app.page.sub_indicator.label())
+                .width(74.0)
+                .show_ui(ui, |ui| {
+                    for ind in SubIndicator::ALL {
+                        ui.selectable_value(&mut app.page.sub_indicator, ind, ind.label());
+                    }
+                });
+        });
     });
     ui.separator();
 
@@ -152,6 +181,23 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             app.page.chart.cache_prefix = prefix;
             app.page.chart.cache_key = Some(key);
         }
+        // 副图指标序列：仅在 (数据版本, 指标) 变化时重算一次（与 K 线缓存同粒度）
+        let ind = app.page.sub_indicator;
+        let skey = (
+            app.market,
+            app.page.symbol.clone(),
+            md.interval,
+            md.kline_version,
+            ind,
+        );
+        if app.page.chart.sub_key.as_ref() != Some(&skey) {
+            app.page.chart.sub_series = if ind == SubIndicator::Vol {
+                None
+            } else {
+                Some(indicators::compute(ind, &md.klines))
+            };
+            app.page.chart.sub_key = Some(skey);
+        }
         interval = md.interval;
     }
     if app.page.chart.cache_klines.is_empty() {
@@ -169,16 +215,25 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         std::mem::take(&mut app.page.chart.cache_closes),
         std::mem::take(&mut app.page.chart.cache_prefix),
     );
-    draw(ui, app, &kls, &prefix, interval, dp, &overlays);
+    let sub = if app.page.sub_indicator == SubIndicator::Vol {
+        None
+    } else {
+        Some(std::mem::take(&mut app.page.chart.sub_series).unwrap_or_default())
+    };
+    draw(ui, app, &kls, &prefix, interval, dp, &overlays, sub.as_ref());
     app.page.chart.cache_klines = kls;
     app.page.chart.cache_closes = closes;
     app.page.chart.cache_prefix = prefix;
+    if let Some(s) = sub {
+        app.page.chart.sub_series = Some(s);
+    }
 }
 
 fn fmt_norm(d: &Decimal) -> String {
     d.normalize().to_string()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw(
     ui: &mut egui::Ui,
     app: &mut BnApp,
@@ -187,6 +242,7 @@ fn draw(
     interval: Interval,
     dp: u32,
     overlays: &[Overlay],
+    sub: Option<&SubSeries>,
 ) {
     // 取光标之后的剩余矩形：max_rect 会把全高控件分配在工具行之下，
     // 响应矩形向下溢出面板、抢走下方订单区的点击/拖拽
@@ -312,10 +368,15 @@ fn draw(
     let p_of = |y: f32| hi - (y - plot.top()) / price_h * span;
     let bar_w = chart_w / bars;
     let x_of = |i: usize| plot.left() + (i as f32 + 0.5) * bar_w;
+    // 副图区域（成交量或技术指标共用同一块空间）
+    let sub_rect = Rect::from_min_max(
+        Pos2::new(plot.left(), plot.top() + price_h),
+        Pos2::new(plot.left() + chart_w, plot.top() + price_h + vol_h),
+    );
 
     // ---------- 网格与价格轴 ----------
     let step = nice_step(span as f64, 6);
-    let grid_font = FontId::monospace(11.0);
+    let grid_font = FontId::monospace(theme::FONT_SM);
     // 网格点用整数索引计算（gp = idx * step）：f32 累加在 step 极小（横盘品种
     // span 收缩到 ULP 量级）时会低于 ULP 不再前进，循环永不终止冻结 UI
     let mut idx = (lo as f64 / step).floor() as i64;
@@ -357,7 +418,7 @@ fn draw(
             Pos2::new(x, plot.bottom() - 2.0),
             Align2::CENTER_BOTTOM,
             label,
-            FontId::proportional(10.5),
+            FontId::proportional(theme::FONT_SM),
             theme::cur().text_dim,
         );
         painter.line_segment(
@@ -366,30 +427,40 @@ fn draw(
         );
     }
 
-    // ---------- 成交量 ----------
-    for (idx, _) in visible.iter().enumerate() {
-        let v = vis_vol[idx];
-        if max_vol <= 0.0 {
-            continue;
+    // ---------- 成交量 / 副图指标 ----------
+    // VOL 走原生成交量路径（保持既有渲染不变）；其余指标在副图区域绘制
+    match sub {
+        None => {
+            for (idx, _) in visible.iter().enumerate() {
+                let v = vis_vol[idx];
+                if max_vol <= 0.0 {
+                    continue;
+                }
+                let vh = (v / max_vol * vol_h as f64) as f32;
+                let o = vis_ohlc[idx][0];
+                let close = vis_ohlc[idx][3];
+                let col = if close >= o {
+                    theme::cur().up.gamma_multiply(0.45)
+                } else {
+                    theme::cur().down.gamma_multiply(0.45)
+                };
+                let x = x_of(idx);
+                let w = (bar_w * 0.7).max(1.0);
+                painter.rect_filled(
+                    Rect::from_center_size(
+                        Pos2::new(x, plot.top() + price_h + vol_h - vh / 2.0),
+                        Vec2::new(w, vh),
+                    ),
+                    0.0,
+                    col,
+                );
+            }
         }
-        let vh = (v / max_vol * vol_h as f64) as f32;
-        let o = vis_ohlc[idx][0];
-        let close = vis_ohlc[idx][3];
-        let col = if close >= o {
-            theme::cur().up.gamma_multiply(0.45)
-        } else {
-            theme::cur().down.gamma_multiply(0.45)
-        };
-        let x = x_of(idx);
-        let w = (bar_w * 0.7).max(1.0);
-        painter.rect_filled(
-            Rect::from_center_size(
-                Pos2::new(x, plot.top() + price_h + vol_h - vh / 2.0),
-                Vec2::new(w, vh),
-            ),
-            0.0,
-            col,
-        );
+        Some(s) => {
+            let start_us = start.max(0) as usize;
+            let end_us = end.max(0) as usize;
+            draw_sub_panel(&painter, sub_rect, s, start_us, end_us, bar_w, &x_of);
+        }
     }
 
     // ---------- MA 均线 ----------
@@ -469,7 +540,7 @@ fn draw(
         Pos2::new(plot.left() + chart_w + 4.0 + tag_size.x / 2.0, yl),
         Align2::CENTER_CENTER,
         tag,
-        FontId::monospace(11.0),
+        FontId::monospace(theme::FONT_SM),
         theme::cur().on_fill,
     );
 
@@ -495,7 +566,7 @@ fn draw(
             Pos2::new(plot.left() + 6.0, y - 8.0),
             Align2::LEFT_CENTER,
             &ov.label,
-            FontId::proportional(10.5),
+            FontId::proportional(theme::FONT_SM),
             ov.color,
         );
     }
@@ -504,8 +575,12 @@ fn draw(
     if let Some(hp) = resp.hover_pos() {
         if plot.contains(hp) && hp.x < plot.left() + chart_w {
             let cross = Stroke::new(0.7_f32, t.crosshair);
+            // 定位 K 线：x 吸附到最近蜡烛中心（竖线与底部时间标签随之对齐）
+            let idx = ((((hp.x - plot.left()) / bar_w).round().max(0.0)) as usize)
+                .min(visible.len() - 1);
+            let cx = x_of(idx);
             painter.extend(Shape::dashed_line(
-                &[Pos2::new(hp.x, plot.top()), Pos2::new(hp.x, plot.bottom())],
+                &[Pos2::new(cx, plot.top()), Pos2::new(cx, plot.bottom())],
                 cross,
                 4.0,
                 3.0,
@@ -519,16 +594,16 @@ fn draw(
                 4.0,
                 3.0,
             ));
-            // 悬停价格
-            painter.text(
-                Pos2::new(plot.left() + chart_w + 6.0, hp.y),
-                Align2::LEFT_CENTER,
-                widgets::fmt_thousands(p_of(hp.y) as f64, dp as usize),
-                grid_font.clone(),
-                theme::cur().text,
+            // 悬停价格：tag_bg 圆角小贴片（与底部时间标签同款，比裸文字醒目）
+            let ptxt = widgets::fmt_thousands(p_of(hp.y) as f64, dp as usize);
+            let pgal = painter.layout_no_wrap(ptxt, grid_font.clone(), theme::cur().text);
+            let psz = pgal.size() + Vec2::new(8.0, 4.0);
+            let prect = Rect::from_min_size(
+                Pos2::new(plot.left() + chart_w + 4.0, hp.y - psz.y / 2.0),
+                psz,
             );
-            // 定位 K 线
-            let idx = (((hp.x - plot.left()) / bar_w) as usize).min(visible.len() - 1);
+            painter.rect_filled(prect, 3.0, t.tag_bg);
+            painter.galley(prect.min + Vec2::new(4.0, 2.0), pgal, theme::cur().text);
             let c = &visible[idx];
             let [o, h, l, close] = vis_ohlc[idx];
             let chg = if o != 0.0 {
@@ -552,7 +627,7 @@ fn draw(
                 if chg >= 0.0 { "+" } else { "" },
                 chg
             );
-            let font = FontId::monospace(12.0);
+            let font = FontId::monospace(theme::FONT_MD);
             let galley = painter.layout_no_wrap(lines.clone(), font.clone(), theme::cur().text);
             let mut pos = hp + Vec2::new(14.0, 14.0);
             let sz = galley.size() + Vec2::new(16.0, 12.0);
@@ -583,9 +658,9 @@ fn draw(
             // 底部时间标签
             let t_txt = time_label_full(c.t);
             let t_galley =
-                painter.layout_no_wrap(t_txt.clone(), FontId::monospace(11.0), theme::cur().text);
+                painter.layout_no_wrap(t_txt.clone(), FontId::monospace(theme::FONT_SM), theme::cur().text);
             let tsz = t_galley.size() + Vec2::new(10.0, 4.0);
-            let tx = (hp.x - tsz.x / 2.0).clamp(plot.left(), plot.left() + chart_w - tsz.x);
+            let tx = (cx - tsz.x / 2.0).clamp(plot.left(), plot.left() + chart_w - tsz.x);
             painter.rect_filled(
                 Rect::from_min_size(Pos2::new(tx, plot.bottom() - tsz.y), tsz),
                 2.0,
@@ -595,7 +670,7 @@ fn draw(
                 Pos2::new(tx + tsz.x / 2.0, plot.bottom() - tsz.y / 2.0),
                 Align2::CENTER_CENTER,
                 t_txt,
-                FontId::monospace(11.0),
+                FontId::monospace(theme::FONT_SM),
                 theme::cur().text,
             );
         }
@@ -606,7 +681,7 @@ fn draw(
         Pos2::new(plot.left() + chart_w - 8.0, plot.top() + 8.0),
         Align2::RIGHT_TOP,
         crate::i18n::tr("滚轮缩放 · 拖动平移 · 双击回最新"),
-        FontId::proportional(10.5),
+        FontId::proportional(theme::FONT_SM),
         theme::cur().text_dim.gamma_multiply(0.8),
     );
 
@@ -617,7 +692,7 @@ fn draw(
         Pos2::new(plot.left() + 8.0, legend_y),
         Align2::LEFT_TOP,
         format!("{} · {}", app.page.symbol, interval.label()),
-        FontId::proportional(11.5),
+        FontId::proportional(theme::FONT_SM),
         theme::cur().text_dim,
     );
     legend_y += 16.0;
@@ -632,10 +707,202 @@ fn draw(
             Pos2::new(plot.left() + 8.0, legend_y),
             Align2::LEFT_TOP,
             format!("MA{period} {val}"),
-            FontId::monospace(11.0),
+            FontId::monospace(theme::FONT_SM),
             ma_colors[k],
         );
         legend_y += 14.0;
+    }
+}
+
+fn role_color(r: Role) -> Color32 {
+    let t = theme::cur();
+    match r {
+        Role::Accent => t.accent,
+        Role::Warn => t.warn,
+        Role::Up => t.up,
+        Role::Down => t.down,
+        Role::Dim => t.text_dim,
+    }
+}
+
+/// 副图指标面板：在 rect 上绘制 [start, end) 范围内的线/柱/点/参考线。
+/// 序列可能比 K 线短（预热段 NaN / unwrap_or_default 空值），统一按最小长度钳制防越界。
+fn draw_sub_panel(
+    painter: &egui::Painter,
+    rect: Rect,
+    sub: &SubSeries,
+    start: usize,
+    end: usize,
+    bar_w: f32,
+    x_of: &impl Fn(usize) -> f32,
+) {
+    // 全部序列的公共有效长度
+    let mut len = usize::MAX;
+    for (_, _, arr) in &sub.lines {
+        len = len.min(arr.len());
+    }
+    if let Some(b) = &sub.bars {
+        len = len.min(b.len());
+    }
+    for d in [&sub.dots_up, &sub.dots_down].into_iter().flatten() {
+        len = len.min(d.len());
+    }
+    if len == usize::MAX {
+        return; // 没有任何序列，无可绘制内容
+    }
+    let start = start.min(len);
+    let end = end.min(len);
+    if start >= end {
+        return;
+    }
+
+    let t = theme::cur();
+
+    // 面板上下边界线（与主图分隔）
+    painter.line_segment(
+        [Pos2::new(rect.left(), rect.top()), Pos2::new(rect.right(), rect.top())],
+        Stroke::new(0.5_f32, t.grid),
+    );
+    painter.line_segment(
+        [
+            Pos2::new(rect.left(), rect.bottom()),
+            Pos2::new(rect.right(), rect.bottom()),
+        ],
+        Stroke::new(0.5_f32, t.grid),
+    );
+
+    // 范围：扫描可见段（跳过 NaN），合并参考线与零轴
+    let mut lo = f64::MAX;
+    let mut hi = f64::MIN;
+    let mut scan = |arr: &[f64]| {
+        for &v in &arr[start..end] {
+            if v.is_nan() {
+                continue;
+            }
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+    };
+    for (_, _, arr) in &sub.lines {
+        scan(arr);
+    }
+    if let Some(b) = &sub.bars {
+        scan(b);
+    }
+    for d in [&sub.dots_up, &sub.dots_down].into_iter().flatten() {
+        scan(d);
+    }
+    if sub.zero_based {
+        lo = lo.min(0.0);
+        hi = hi.max(0.0);
+    }
+    for &g in &sub.guides {
+        lo = lo.min(g);
+        hi = hi.max(g);
+    }
+    if lo > hi {
+        return; // 可见段全为 NaN（预热中）
+    }
+    if hi - lo < 1e-12 {
+        hi += 1e-12;
+        lo -= 1e-12;
+    }
+    let span = (hi - lo) * 1.0 / 0.84; // 8% 上下留白
+    let mid = (hi + lo) / 2.0;
+    let lo = mid - span / 2.0;
+    let y_of = |v: f64| rect.bottom() - ((v - lo) / span) as f32 * rect.height();
+    let y0 = y_of(0.0);
+
+    // 参考线：虚线 + 右侧数值
+    for &g in &sub.guides {
+        let y = y_of(g);
+        if y < rect.top() || y > rect.bottom() {
+            continue;
+        }
+        painter.extend(Shape::dashed_line(
+            &[Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)],
+            Stroke::new(0.5_f32, t.grid),
+            4.0,
+            3.0,
+        ));
+        painter.text(
+            Pos2::new(rect.right() + 4.0, y),
+            Align2::LEFT_CENTER,
+            format!("{g:.0}"),
+            FontId::monospace(theme::FONT_SM),
+            t.text_dim,
+        );
+    }
+
+    // 柱状序列（MACD 快慢差），正负分色，自零轴起画
+    if let Some(b) = &sub.bars {
+        for i in start..end {
+            let v = b[i];
+            if v.is_nan() {
+                continue;
+            }
+            let col = if v >= 0.0 {
+                t.up.gamma_multiply(0.45)
+            } else {
+                t.down.gamma_multiply(0.45)
+            };
+            let y = y_of(v);
+            let top = y.min(y0);
+            let h = (y.max(y0) - top).max(1.0);
+            let x = x_of(i);
+            let w = (bar_w * 0.7).max(1.0);
+            painter.rect_filled(
+                Rect::from_min_max(Pos2::new(x - w / 2.0, top), Pos2::new(x + w / 2.0, top + h)),
+                0.0,
+                col,
+            );
+        }
+    }
+
+    // 折线序列（NaN 断点分段），1.2px
+    for (_name, role, arr) in &sub.lines {
+        let col = role_color(*role);
+        let mut pts: Vec<Pos2> = Vec::new();
+        for i in start..end {
+            let v = arr[i];
+            if v.is_nan() {
+                if pts.len() > 1 {
+                    painter.add(Shape::line(std::mem::take(&mut pts), Stroke::new(1.2_f32, col)));
+                } else {
+                    pts.clear();
+                }
+                continue;
+            }
+            pts.push(Pos2::new(x_of(i), y_of(v)));
+        }
+        if pts.len() > 1 {
+            painter.add(Shape::line(pts, Stroke::new(1.2_f32, col)));
+        }
+    }
+
+    // 点序列（SAR 趋势点），按多空分色
+    for (dots, col) in [(&sub.dots_up, t.up), (&sub.dots_down, t.down)] {
+        let Some(d) = dots else { continue };
+        for i in start..end {
+            let v = d[i];
+            if v.is_nan() {
+                continue;
+            }
+            painter.circle_filled(Pos2::new(x_of(i), y_of(v)), 1.6, col);
+        }
+    }
+
+    // 图例：线名横排于面板左上角
+    let mut lx = rect.left() + 8.0;
+    for (name, role, _) in &sub.lines {
+        let col = role_color(*role);
+        let gal = painter.layout_no_wrap(
+            (*name).to_string(),
+            FontId::monospace(theme::FONT_SM),
+            col,
+        );
+        painter.galley(Pos2::new(lx, rect.top() + 2.0), gal.clone(), col);
+        lx += gal.size().x + 10.0;
     }
 }
 

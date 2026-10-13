@@ -70,6 +70,8 @@ pub struct TradingPage {
     pub chart: chart::ChartState,
     pub sub_tab: SubTab,
     pub leverage_input: String,
+    /// 图表副图指标（成交量/MACD/RSI…，随交易页镜像保存）
+    pub sub_indicator: chart::SubIndicator,
 }
 
 impl TradingPage {
@@ -82,6 +84,7 @@ impl TradingPage {
             chart: chart::ChartState::default(),
             sub_tab: SubTab::Open,
             leverage_input: String::new(),
+            sub_indicator: chart::SubIndicator::Vol,
         }
     }
 }
@@ -209,6 +212,10 @@ pub struct BnApp {
     pub vault_delete_armed: bool,
     /// 认证卡片上一帧实测高度（矮窗口下卡片居中/顶置的布局依据，滞后一帧收敛）
     pub auth_card_h: f32,
+    /// 左侧交易对列表折叠（折叠后仅剩展开按钮，中央区扩大）
+    pub sidebar_collapsed: bool,
+    /// 图表最大化（隐藏右侧下单/盘口面板，仅保留页头 + 图表）
+    pub chart_maximized: bool,
 }
 
 impl BnApp {
@@ -264,6 +271,8 @@ impl BnApp {
             // 首帧定位用：收紧内边距后 EnterKeys 表单实测约 340，Unlock 约 240。
             // 首帧用两页的中间值，第二帧起由实测值收敛，避免开场跳一下
             auth_card_h: 300.0,
+            sidebar_collapsed: false,
+            chart_maximized: false,
         }
     }
 
@@ -275,6 +284,9 @@ impl BnApp {
         }
         self.save_active_page();
         self.tab = tab;
+        // 切换顶层页签退出图表最大化：资产/设置页没有图表，残留状态会让
+        // 交易页在下次进入时仍处于全屏、找不到还原按钮以外的面板
+        self.chart_maximized = false;
         self.load_active_page();
     }
 
@@ -292,6 +304,7 @@ impl BnApp {
         page.chart = self.page.chart.clone();
         page.sub_tab = self.page.sub_tab;
         page.leverage_input = self.page.leverage_input.clone();
+        page.sub_indicator = self.page.sub_indicator;
     }
 
     /// 从目标页恢复镜像（仅交易页）
@@ -312,6 +325,7 @@ impl BnApp {
         self.page.chart = page.chart;
         self.page.sub_tab = page.sub_tab;
         self.page.leverage_input = page.leverage_input;
+        self.page.sub_indicator = page.sub_indicator;
 
         self.subscribe(m, self.page.symbol.clone(), self.page.interval);
         if self.state.has_creds() {
@@ -437,7 +451,7 @@ impl BnApp {
                 egui::RichText::new("BnTradingPro")
                     .strong()
                     .color(theme::cur().accent)
-                    .size(16.0),
+                    .size(theme::FONT_LG),
             );
             ui.add_space(10.0);
 
@@ -457,14 +471,19 @@ impl BnApp {
                 // 主题 / 语言快捷切换
                 // 语言按钮显示"目标语言"，只随语言状态变，与主题无关
                 // （此前两个文字捆在同一个主题分支里，切主题时中/EN 会跟着翻转）
-                let theme_txt = if theme::is_light() { "🌙" } else { "☀" };
+                // 主题按钮用文字（显示目标主题）：🌙/☀ 属 emoji，等宽字体优先时缺字风险高
+                let theme_txt = if theme::is_light() {
+                    crate::i18n::tr("深色")
+                } else {
+                    crate::i18n::tr("浅色")
+                };
                 let lang_txt = if self.state.cfg.read().lang == "en" {
                     "中"
                 } else {
                     "EN"
                 };
                 if ui
-                    .small_button(theme_txt)
+                    .small_button(egui::RichText::new(theme_txt).size(theme::FONT_MD))
                     .on_hover_text(crate::i18n::tr("切换主题"))
                     .clicked()
                 {
@@ -485,7 +504,7 @@ impl BnApp {
                     self.state.send_cmd(Command::PersistConfig);
                 }
                 if ui
-                    .small_button(egui::RichText::new(lang_txt).size(12.0))
+                    .small_button(egui::RichText::new(lang_txt).size(theme::FONT_MD))
                     .on_hover_text(crate::i18n::tr("切换语言"))
                     .clicked()
                 {
@@ -514,7 +533,7 @@ impl BnApp {
                 ui.separator();
                 ui.label(
                     egui::RichText::new(crate::i18n::tr("REST"))
-                        .size(10.5)
+                        .size(theme::FONT_SM)
                         .color(theme::cur().text_dim),
                 );
                 let rest_ok = self
@@ -525,14 +544,14 @@ impl BnApp {
                 if let Some(m) = self.tab.market() {
                     ui.label(
                         egui::RichText::new(crate::i18n::tr("行情"))
-                            .size(10.5)
+                            .size(theme::FONT_SM)
                             .color(theme::cur().text_dim),
                     );
                     let mws = self.state.md.lock().market_ws(m).clone();
                     widgets::status_dot(ui, &mws);
                     ui.label(
                         egui::RichText::new(crate::i18n::tr("账户"))
-                            .size(10.5)
+                            .size(theme::FONT_SM)
                             .color(theme::cur().text_dim),
                     );
                     if self.state.has_creds() {
@@ -541,7 +560,7 @@ impl BnApp {
                     } else {
                         ui.label(
                             egui::RichText::new(crate::i18n::tr("未配置密钥"))
-                                .size(10.5)
+                                .size(theme::FONT_SM)
                                 .color(theme::cur().warn),
                         );
                     }
@@ -552,65 +571,103 @@ impl BnApp {
 
     /// 交易页：左侧交易对列表 + 页头 + 图表 | 盘口+成交 | 下单面板 + 底部订单区
     fn trading_ui(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::left("symbols_panel")
-            .resizable(true)
-            .default_size(185.0)
-            .min_size(140.0)
-            .max_size(320.0)
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::cur().panel)
-                    .inner_margin(8),
-            )
-            .show(ui, |ui| {
-                // 列表自身用 show_rows 虚拟化滚动，外层不再包 ScrollArea
-                crate::ui::symbols::show(self, ui);
-            });
-
-        egui::Panel::right("trade_panel")
-            .resizable(true)
-            .default_size(300.0)
-            .min_size(250.0)
-            .max_size(420.0)
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::cur().panel)
-                    .inner_margin(8),
-            )
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| trade::show(self, ui));
-            });
-
-        egui::Panel::right("book_panel")
-            .resizable(true)
-            .default_size(230.0)
-            .min_size(180.0)
-            .max_size(340.0)
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::cur().panel)
-                    .inner_margin(8),
-            )
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    crate::ui::market::show_book(self, ui);
-                    ui.add_space(8.0);
-                    crate::ui::market::show_trades(self, ui);
+        if self.sidebar_collapsed {
+            // 折叠态：窄条面板只放展开按钮，中央区随之扩大
+            egui::Panel::left("symbols_panel")
+                .resizable(false)
+                .exact_size(36.0)
+                .frame(
+                    egui::Frame::default()
+                        .fill(theme::cur().panel)
+                        .inner_margin(4),
+                )
+                .show(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        if ui
+                            .small_button("»")
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(crate::i18n::tr("展开侧边栏"))
+                            .clicked()
+                        {
+                            self.sidebar_collapsed = false;
+                        }
+                    });
                 });
-            });
+        } else {
+            egui::Panel::left("symbols_panel")
+                .resizable(true)
+                .default_size(185.0)
+                .min_size(140.0)
+                .max_size(320.0)
+                .frame(
+                    egui::Frame::default()
+                        .fill(theme::cur().panel)
+                        .inner_margin(8),
+                )
+                .show(ui, |ui| {
+                    // 收起按钮固定在列表顶部；symbol_filter 在 app.page 上，折叠不丢状态
+                    ui.horizontal(|ui| {
+                        if ui
+                            .small_button("«")
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(crate::i18n::tr("收起侧边栏"))
+                            .clicked()
+                        {
+                            self.sidebar_collapsed = true;
+                        }
+                    });
+                    // 列表自身用 show_rows 虚拟化滚动，外层不再包 ScrollArea
+                    crate::ui::symbols::show(self, ui);
+                });
+        }
 
-        // 底部订单区（顶层面板，横贯全宽）
-        egui::Panel::bottom("orders_panel")
-            .resizable(true)
-            .default_size(240.0)
-            .min_size(120.0)
-            .max_size(500.0)
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::cur().panel)
-                    .inner_margin(8.0),
-            )
-            .show(ui, |ui| self.sub_tabs(ui));
+        // 图表最大化：右侧下单/盘口/成交与底部订单区全部隐藏，图表占满中央区
+        if !self.chart_maximized {
+            egui::Panel::right("trade_panel")
+                .resizable(true)
+                .default_size(300.0)
+                .min_size(250.0)
+                .max_size(420.0)
+                .frame(
+                    egui::Frame::default()
+                        .fill(theme::cur().panel)
+                        .inner_margin(8),
+                )
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| trade::show(self, ui));
+                });
+
+            egui::Panel::right("book_panel")
+                .resizable(true)
+                .default_size(230.0)
+                .min_size(180.0)
+                .max_size(340.0)
+                .frame(
+                    egui::Frame::default()
+                        .fill(theme::cur().panel)
+                        .inner_margin(8),
+                )
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        crate::ui::market::show_book(self, ui);
+                        ui.add_space(8.0);
+                        crate::ui::market::show_trades(self, ui);
+                    });
+                });
+
+            // 底部订单区（顶层面板，横贯全宽）
+            egui::Panel::bottom("orders_panel")
+                .resizable(true)
+                .default_size(240.0)
+                .min_size(120.0)
+                .max_size(500.0)
+                .frame(
+                    egui::Frame::default()
+                        .fill(theme::cur().panel)
+                        .inner_margin(8.0),
+                )
+                .show(ui, |ui| self.sub_tabs(ui));
+        }
 
         // 中央：页头 + 图表
         egui::CentralPanel::default()
@@ -639,7 +696,7 @@ impl BnApp {
         ui.horizontal(|ui| {
             ui.add_space(2.0);
             for (t, label) in tabs {
-                if ui.selectable_label(self.page.sub_tab == t, label).clicked() {
+                if theme::pill_tab(ui, label, self.page.sub_tab == t).clicked() {
                     self.page.sub_tab = t;
                 }
             }
@@ -647,7 +704,7 @@ impl BnApp {
                 let open_n = self.state.orders.lock().open(self.market).len();
                 ui.label(
                     egui::RichText::new(format!("{}{}", open_n, crate::i18n::tr("笔挂单")))
-                        .size(11.5)
+                        .size(theme::FONT_SM)
                         .color(theme::cur().text_dim),
                 );
             });

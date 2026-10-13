@@ -1,7 +1,7 @@
 //! 左侧交易对列表：搜索 + 自选置顶 + 全量虚拟化列表
 
 use crate::app::BnApp;
-use crate::ui::theme;
+use crate::ui::{theme, widgets};
 use eframe::egui;
 
 /// 左侧交易对列表：搜索 + 自选置顶 + 全量虚拟化列表
@@ -59,7 +59,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     if !rules_loaded {
         ui.label(
             egui::RichText::new(crate::i18n::tr("交易规则加载中，请检查网络与代理"))
-                .size(12.0)
+                .size(theme::FONT_MD)
                 .color(theme::cur().text_dim),
         );
         return;
@@ -94,6 +94,17 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     theme::section(ui, crate::i18n::tr("全部"));
     // 槽位高度 ≥ 行内控件自然高度（星标按钮约 24px），避免行间点击区重叠
     const SYMBOL_ROW_H: f32 = 24.0;
+    // 空态放在 ScrollArea 之前：auto_shrink(false) 的滚动区会占满剩余空间，
+    // 放在其后面的空态提示永远在视口外
+    if all_syms.is_empty() && favs.is_empty() {
+        widgets::empty_state(
+            ui,
+            "◎",
+            crate::i18n::tr("无匹配交易对"),
+            crate::i18n::tr("尝试其他关键词"),
+        );
+        return;
+    }
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show_rows(ui, SYMBOL_ROW_H, all_syms.len(), |ui, range| {
@@ -117,14 +128,6 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 });
             }
         });
-    if all_syms.is_empty() && favs.is_empty() {
-        ui.label(
-            egui::RichText::new(crate::i18n::tr("无匹配交易对"))
-                .size(12.0)
-                .color(theme::cur().text_dim),
-        );
-    }
-
     if let Some(sym) = toggled {
         app.state.toggle_favorite(app.market, &sym);
     }
@@ -144,17 +147,32 @@ fn symbol_row(
     toggled: &mut Option<String>,
 ) {
     let selected = *sym == app.page.symbol;
-    // 行悬停高亮：先在控件下层铺底色，再放按钮
+    // 行悬停高亮：先在控件下层铺底色，再放按钮。
+    // 悬停用 animate_bool 渐变（进/出淡入淡出）；选中行常亮 + 左侧 3px accent 条
     let row_rect =
         egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 22.0));
     let hovered = ui.rect_contains_pointer(row_rect);
-    if hovered && !selected {
-        ui.painter()
-            .rect_filled(row_rect, 3.0, theme::cur().row_hover);
+    let anim = ui
+        .ctx()
+        .animate_bool(egui::Id::new("symrow").with(sym), hovered && !selected);
+    let painter = ui.painter();
+    if selected {
+        painter.rect_filled(row_rect, 3.0, theme::cur().row_hover);
+        painter.rect_filled(
+            egui::Rect::from_min_size(row_rect.min, egui::vec2(3.0, row_rect.height())),
+            2.0,
+            theme::cur().accent,
+        );
+    } else if anim > 0.0 {
+        painter.rect_filled(
+            row_rect,
+            3.0,
+            theme::cur().row_hover.gamma_multiply(anim),
+        );
     }
     ui.horizontal(|ui| {
         let name_txt = {
-            let t = egui::RichText::new(sym).size(12.5).color(if selected {
+            let t = egui::RichText::new(sym).size(theme::FONT_MD).color(if selected {
                 theme::cur().accent
             } else {
                 theme::cur().text
@@ -182,7 +200,7 @@ fn symbol_row(
             *switched = Some(sym.to_string());
         }
         let star = if is_fav { "★" } else { "☆" };
-        let star_txt = egui::RichText::new(star).size(13.0).color(if is_fav {
+        let star_txt = egui::RichText::new(star).size(theme::FONT_BODY).color(if is_fav {
             theme::cur().accent
         } else {
             theme::cur().text_dim

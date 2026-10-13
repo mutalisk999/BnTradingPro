@@ -41,6 +41,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("BnTradingPro")
+            .with_icon(app_icon())
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([1100.0, 680.0]),
         ..Default::default()
@@ -51,6 +52,18 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| Ok(Box::new(app::BnApp::new(cc, cfg)))),
     )
+}
+
+/// 窗口/任务栏图标：解码内嵌 PNG（与 build.rs 嵌入 exe 资源的 ico 同一素材）
+fn app_icon() -> egui::IconData {
+    const PNG: &[u8] = include_bytes!("../assets/binance-icon.png");
+    let img = image::load_from_memory(PNG).expect("解析内置图标失败");
+    let rgba = img.to_rgba8();
+    egui::IconData {
+        width: rgba.width(),
+        height: rgba.height(),
+        rgba: rgba.into_raw(),
+    }
 }
 
 /// 启动时清理 7 天前的滚动日志（app.log / app.log.YYYY-MM-DD）

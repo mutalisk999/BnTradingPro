@@ -76,15 +76,31 @@ pub fn save_creds(dir: &Path, password: &str, creds: &Creds) -> Result<(), Strin
 
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir.join(VAULT_FILE);
-    // 先写临时文件再原子替换，避免写入中断留下损坏的凭据库
+    // 先写临时文件再原子替换，避免写入中断留下损坏的凭据库。
+    // unix 下用 OpenOptions.mode(0o600) 直接以受限权限创建 tmp：先按默认
+    // 0644 落盘再 chmod 存在权限时窗，且 chmod 失败不可忽略（否则 rename
+    // 后凭据库长期可被同机其他用户读取，密文可被离线爆破主密码）
     let tmp = dir.join(format!("{VAULT_FILE}.tmp"));
-    std::fs::write(&tmp, buf).map_err(|e| format!("写入凭据文件失败({}): {e}", tmp.display()))?;
-    // unix 下写入后立即收紧权限（rename 前后都不可被其他用户读取）
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| format!("写入凭据文件失败({}): {e}", tmp.display()))?;
+        f.write_all(&buf).map_err(|e| format!("写入凭据文件失败({}): {e}", tmp.display()))?;
+        // 兜底：文件已存在等异常路径下 mode 不生效，rename 前再校验一次
+        if let Err(e) = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("收紧凭据文件权限失败({}): {e}", tmp.display()));
+        }
     }
+    #[cfg(not(unix))]
+    std::fs::write(&tmp, &buf).map_err(|e| format!("写入凭据文件失败({}): {e}", tmp.display()))?;
     std::fs::rename(&tmp, &path)
         .map_err(|e| format!("替换凭据文件失败({}): {e}", path.display()))?;
     Ok(())

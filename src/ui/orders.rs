@@ -43,6 +43,17 @@ fn type_cn(s: &str) -> &'static str {
     crate::i18n::tr(zh)
 }
 
+/// 表头单元格：数值列（right=true）右对齐，与数据列对齐方式保持一致
+fn head_cell(ui: &mut egui::Ui, t: &str, right: bool) {
+    if right {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(theme::card_label(t));
+        });
+    } else {
+        ui.label(theme::card_label(t));
+    }
+}
+
 /// 当前挂单
 pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
@@ -62,7 +73,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                 list.len(),
                 crate::i18n::tr("笔挂单")
             ))
-            .size(12.5),
+            .size(theme::FONT_MD),
         );
         if ui.small_button(crate::i18n::tr("刷新")).clicked() {
             state.send_cmd(Command::RefreshOpenOrders { market });
@@ -71,17 +82,12 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
             let sym = app.page.symbol.clone();
             let sym_open = list.iter().filter(|o| o.symbol == sym).count();
             // 当前交易对没有挂单时禁用，避免"点了没反应"的静默空操作
-            let cancel_all = ui
-                .add_enabled(
-                    sym_open > 0,
-                    egui::Button::new(egui::RichText::new(format!(
-                        "{} {}({sym_open})",
-                        crate::i18n::tr("撤销全部"),
-                        sym
-                    ))),
-                )
-                .on_disabled_hover_text(crate::i18n::tr("该交易对无挂单"))
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            let cancel_all = theme::btn_danger(
+                ui,
+                &format!("{} {}({sym_open})", crate::i18n::tr("撤销全部"), sym),
+                sym_open > 0,
+            )
+            .on_disabled_hover_text(crate::i18n::tr("该交易对无挂单"));
             if cancel_all.clicked() {
                 state.send_cmd(Command::CancelAll {
                     market,
@@ -93,24 +99,14 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.separator();
 
     if list.is_empty() {
-        widgets::placeholder(
+        widgets::empty_state(
             ui,
-            egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 40.0)),
+            "◎",
             crate::i18n::tr("暂无挂单"),
+            crate::i18n::tr("下单后将显示在这里"),
         );
         return;
     }
-    // 只读借用规则取精度，避免每行深克隆整条 SymbolRules
-    let dp_of = |sym: &str| {
-        state
-            .with_rule(market, sym, |r| r.map(|x| x.price_dp() as usize))
-            .unwrap_or(2)
-    };
-    let qdp_of = |sym: &str| {
-        state
-            .with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize))
-            .unwrap_or(4)
-    };
 
     let mut cancel_id: Option<i64> = None;
     let mut cancel_sym = String::new();
@@ -127,36 +123,34 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::auto().at_least(70.0)) // 状态
         .column(Column::remainder()) // 操作
         .header(22.0, |mut h| {
-            for t in [
-                crate::i18n::tr("时间"),
-                crate::i18n::tr("交易对"),
-                crate::i18n::tr("方向"),
-                crate::i18n::tr("类型"),
-                crate::i18n::tr("价格"),
-                crate::i18n::tr("数量"),
-                crate::i18n::tr("已成交"),
-                crate::i18n::tr("状态"),
-                crate::i18n::tr("操作"),
-            ] {
-                h.col(|ui| {
-                    ui.label(
-                        egui::RichText::new(t)
-                            .size(11.5)
-                            .color(theme::cur().text_dim),
-                    );
-                });
+            for (i, t) in [
+                "时间",
+                "交易对",
+                "方向",
+                "类型",
+                "价格",
+                "数量",
+                "已成交",
+                "状态",
+                "操作",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                h.col(|ui| head_cell(ui, crate::i18n::tr(t), (4..=6).contains(&i)));
             }
         })
         .body(|mut body| {
             for o in &list {
-                body.row(22.0, |mut row| {
-                    let dp = dp_of(&o.symbol);
-                    let qdp = qdp_of(&o.symbol);
+                // 行高 28：容纳 btn_danger（BTN_H）按钮
+                body.row(28.0, |mut row| {
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(widgets::fmt_time(o.time)).size(11.5));
+                        ui.label(
+                            egui::RichText::new(widgets::fmt_time(o.time)).size(theme::FONT_SM),
+                        );
                     });
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(&o.symbol).strong().size(11.5));
+                        ui.label(egui::RichText::new(&o.symbol).strong().size(theme::FONT_SM));
                     });
                     row.col(|ui| {
                         let c = if o.side == "BUY" {
@@ -169,7 +163,12 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             crate::i18n::tr("卖出")
                         };
-                        ui.label(egui::RichText::new(txt).size(11.5).color(c).strong());
+                        ui.label(
+                            egui::RichText::new(txt)
+                                .size(theme::FONT_SM)
+                                .color(c)
+                                .strong(),
+                        );
                     });
                     row.col(|ui| {
                         let extra = if o.reduce_only {
@@ -179,56 +178,39 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         };
                         ui.label(
                             egui::RichText::new(format!("{}{extra}", type_cn(&o.order_type)))
-                                .size(11.5),
+                                .size(theme::FONT_SM),
                         );
                     });
                     row.col(|ui| {
                         // 止损/止盈市价单 price 为 0，真实价格在 stopPrice
                         let p = match o.price.filter(|p| !p.is_zero()) {
-                            Some(p) => format!("{:.*}", dp, crate::ui::widgets::f64_decimal(&p)),
+                            Some(p) => widgets::fmt_dec_grouped(&p),
                             None => match o.stop_price.filter(|s| !s.is_zero()) {
                                 Some(s) => format!(
-                                    "{} {:.*}",
+                                    "{} {}",
                                     crate::i18n::tr("触发"),
-                                    dp,
-                                    crate::ui::widgets::f64_decimal(&s)
+                                    widgets::fmt_dec_grouped(&s)
                                 ),
                                 None => crate::i18n::tr("市价").into(),
                             },
                         };
-                        ui.label(egui::RichText::new(p).monospace().size(11.5));
+                        widgets::num_cell(ui, p, None);
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{:.*}",
-                                qdp,
-                                crate::ui::widgets::f64_decimal(&o.orig_qty)
-                            ))
-                            .monospace()
-                            .size(11.5),
-                        );
+                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&o.orig_qty), None);
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{:.*}",
-                                qdp,
-                                crate::ui::widgets::f64_decimal(&o.executed_qty)
-                            ))
-                            .monospace()
-                            .size(11.5),
-                        );
+                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&o.executed_qty), None);
                     });
                     row.col(|ui| {
                         ui.label(
                             egui::RichText::new(status_cn(&o.status))
-                                .size(11.5)
+                                .size(theme::FONT_SM)
                                 .color(theme::cur().accent),
                         );
                     });
                     row.col(|ui| {
-                        if ui.small_button(crate::i18n::tr("撤销")).clicked() {
+                        if theme::btn_danger(ui, crate::i18n::tr("撤销"), true).clicked() {
                             cancel_id = Some(o.order_id);
                             cancel_sym = o.symbol.clone();
                         }
@@ -274,7 +256,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                 positions.len(),
                 crate::i18n::tr("个持仓")
             ))
-            .size(12.5),
+            .size(theme::FONT_MD),
         );
         if ui.small_button(crate::i18n::tr("刷新")).clicked() {
             state.send_cmd(Command::RefreshAccount);
@@ -292,10 +274,11 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
     });
     ui.separator();
     if positions.is_empty() {
-        widgets::placeholder(
+        widgets::empty_state(
             ui,
-            egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 40.0)),
+            "◎",
             crate::i18n::tr("暂无持仓"),
+            crate::i18n::tr("下单后将显示在这里"),
         );
         return;
     }
@@ -315,34 +298,30 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::auto().at_least(55.0))
         .column(Column::remainder())
         .header(22.0, |mut h| {
-            for t in [
-                crate::i18n::tr("交易对"),
-                crate::i18n::tr("方向"),
-                crate::i18n::tr("数量"),
-                crate::i18n::tr("开仓价"),
-                crate::i18n::tr("标记价"),
-                crate::i18n::tr("未实现盈亏"),
-                crate::i18n::tr("强平价"),
-                crate::i18n::tr("杠杆"),
-                crate::i18n::tr("操作"),
-            ] {
-                h.col(|ui| {
-                    ui.label(
-                        egui::RichText::new(t)
-                            .size(11.5)
-                            .color(theme::cur().text_dim),
-                    );
-                });
+            for (i, t) in [
+                "交易对",
+                "方向",
+                "数量",
+                "开仓价",
+                "标记价",
+                "未实现盈亏",
+                "强平价",
+                "杠杆",
+                "操作",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                h.col(|ui| head_cell(ui, crate::i18n::tr(t), (2..=7).contains(&i)));
             }
         })
         .body(|mut body| {
             for p in &positions {
-                body.row(22.0, |mut row| {
+                // 行高 28：容纳 btn_danger（BTN_H）按钮
+                body.row(28.0, |mut row| {
                     let long = p.amt > Decimal::ZERO;
-                    // 价格/盈亏用 normalize 全精度展示：固定 {:.4} 会把
-                    // 低价币（<0.0001）的开仓价、盈亏、强平价全部显示成 0
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(&p.symbol).strong().size(11.5));
+                        ui.label(egui::RichText::new(&p.symbol).strong().size(theme::FONT_SM));
                     });
                     row.col(|ui| {
                         let (txt, c) = if long {
@@ -350,28 +329,21 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             (crate::i18n::tr("空"), theme::cur().down)
                         };
-                        ui.label(egui::RichText::new(txt).color(c).strong().size(11.5));
-                    });
-                    row.col(|ui| {
                         ui.label(
-                            egui::RichText::new(format!("{}", p.amt.abs().normalize()))
-                                .monospace()
-                                .size(11.5),
+                            egui::RichText::new(txt)
+                                .color(c)
+                                .strong()
+                                .size(theme::FONT_SM),
                         );
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(p.entry_price.normalize().to_string())
-                                .monospace()
-                                .size(11.5),
-                        );
+                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.amt.abs()), None);
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(p.mark_price.normalize().to_string())
-                                .monospace()
-                                .size(11.5),
-                        );
+                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.entry_price), None);
+                    });
+                    row.col(|ui| {
+                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.mark_price), None);
                     });
                     row.col(|ui| {
                         let c = if p.unrealized >= Decimal::ZERO {
@@ -379,35 +351,30 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             theme::cur().down
                         };
-                        ui.label(
-                            egui::RichText::new(format!("{:+}", p.unrealized.normalize()))
-                                .monospace()
-                                .color(c)
-                                .size(11.5),
-                        );
+                        let s = widgets::fmt_dec_grouped(&p.unrealized);
+                        let sign = if p.unrealized >= Decimal::ZERO { "+" } else { "" };
+                        widgets::num_cell(ui, format!("{sign}{s}"), Some(c));
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(if p.liquidation_price.is_zero() {
-                                "—".into()
-                            } else {
-                                p.liquidation_price.normalize().to_string()
-                            })
-                            .monospace()
-                            .size(11.5),
-                        );
+                        let liq = if p.liquidation_price.is_zero() {
+                            "—".to_string()
+                        } else {
+                            widgets::fmt_dec_grouped(&p.liquidation_price)
+                        };
+                        widgets::num_cell(ui, liq, None);
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!(
+                        widgets::num_cell(
+                            ui,
+                            format!(
                                 "{}x",
                                 crate::ui::widgets::f64_decimal(&p.leverage) as i64
-                            ))
-                            .size(11.5),
+                            ),
+                            None,
                         );
                     });
                     row.col(|ui| {
-                        if ui.small_button(crate::i18n::tr("市价平仓")).clicked() {
+                        if theme::btn_danger(ui, crate::i18n::tr("市价平仓"), true).clicked() {
                             let side = if long { Side::Sell } else { Side::Buy };
                             let pos_side = FutPosSide::parse(&p.side);
                             close_req = Some((p.symbol.clone(), side, p.amt.abs(), pos_side));
@@ -444,11 +411,11 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     s,
                     crate::i18n::tr("最近 100 笔")
                 ))
-                .size(12.5),
+                .size(theme::FONT_MD),
             ),
             None => ui.label(
                 egui::RichText::new(crate::i18n::tr("切换交易对后自动加载"))
-                    .size(12.5)
+                    .size(theme::FONT_MD)
                     .color(theme::cur().text_dim),
             ),
         };
@@ -463,10 +430,11 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
     });
     ui.separator();
     if hist.is_empty() {
-        widgets::placeholder(
+        widgets::empty_state(
             ui,
-            egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 40.0)),
+            "◎",
             crate::i18n::tr("暂无订单历史"),
+            crate::i18n::tr("下单后将显示在这里"),
         );
         return;
     }
@@ -482,33 +450,32 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::auto().at_least(95.0))
         .column(Column::remainder())
         .header(22.0, |mut h| {
-            for t in [
-                crate::i18n::tr("时间"),
-                crate::i18n::tr("交易对"),
-                crate::i18n::tr("方向"),
-                crate::i18n::tr("类型"),
-                crate::i18n::tr("价格"),
-                crate::i18n::tr("数量"),
-                crate::i18n::tr("已成交"),
-                crate::i18n::tr("状态"),
-            ] {
-                h.col(|ui| {
-                    ui.label(
-                        egui::RichText::new(t)
-                            .size(11.5)
-                            .color(theme::cur().text_dim),
-                    );
-                });
+            for (i, t) in [
+                "时间",
+                "交易对",
+                "方向",
+                "类型",
+                "价格",
+                "数量",
+                "已成交",
+                "状态",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                h.col(|ui| head_cell(ui, crate::i18n::tr(t), (4..=6).contains(&i)));
             }
         })
         .body(|mut body| {
             for o in &hist {
                 body.row(22.0, |mut row| {
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(widgets::fmt_time(o.time)).size(11.5));
+                        ui.label(
+                            egui::RichText::new(widgets::fmt_time(o.time)).size(theme::FONT_SM),
+                        );
                     });
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(&o.symbol).size(11.5));
+                        ui.label(egui::RichText::new(&o.symbol).size(theme::FONT_SM));
                     });
                     row.col(|ui| {
                         let c = if o.side == "BUY" {
@@ -521,37 +488,31 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             crate::i18n::tr("卖出")
                         };
-                        ui.label(egui::RichText::new(word).color(c).size(11.5));
+                        ui.label(egui::RichText::new(word).color(c).size(theme::FONT_SM));
                     });
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(type_cn(&o.order_type)).size(11.5));
+                        ui.label(egui::RichText::new(type_cn(&o.order_type)).size(theme::FONT_SM));
                     });
                     row.col(|ui| {
                         // 止损/止盈单 price 为 0 时展示触发价
                         let p = match o.price.filter(|p| !p.is_zero()) {
-                            Some(p) => p.normalize().to_string(),
+                            Some(p) => widgets::fmt_dec_grouped(&p),
                             None => match o.stop_price.filter(|s| !s.is_zero()) {
-                                Some(s) => {
-                                    format!("{} {}", crate::i18n::tr("触发"), s.normalize())
-                                }
+                                Some(s) => format!(
+                                    "{} {}",
+                                    crate::i18n::tr("触发"),
+                                    widgets::fmt_dec_grouped(&s)
+                                ),
                                 None => crate::i18n::tr("市价").into(),
                             },
                         };
-                        ui.label(egui::RichText::new(p).monospace().size(11.5));
+                        widgets::num_cell(ui, p, None);
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(o.orig_qty.normalize().to_string())
-                                .monospace()
-                                .size(11.5),
-                        );
+                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&o.orig_qty), None);
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(o.executed_qty.normalize().to_string())
-                                .monospace()
-                                .size(11.5),
-                        );
+                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&o.executed_qty), None);
                     });
                     row.col(|ui| {
                         let c = match o.status.as_str() {
@@ -562,7 +523,7 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         ui.label(
                             egui::RichText::new(status_cn(&o.status))
                                 .color(c)
-                                .size(11.5),
+                                .size(theme::FONT_SM),
                         );
                     });
                 });
@@ -591,7 +552,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 trades.len(),
                 crate::i18n::tr("笔成交")
             ))
-            .size(12.5),
+            .size(theme::FONT_MD),
         );
         let resp = ui.add_enabled(
             hist_key.is_some(),
@@ -610,10 +571,11 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
     });
     ui.separator();
     if trades.is_empty() {
-        widgets::placeholder(
+        widgets::empty_state(
             ui,
-            egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 40.0)),
+            "◎",
             crate::i18n::tr("暂无成交"),
+            crate::i18n::tr("下单后将显示在这里"),
         );
         return;
     }
@@ -629,33 +591,32 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::auto().at_least(90.0))
         .column(Column::remainder())
         .header(22.0, |mut h| {
-            for t in [
-                crate::i18n::tr("时间"),
-                crate::i18n::tr("交易对"),
-                crate::i18n::tr("方向"),
-                crate::i18n::tr("价格"),
-                crate::i18n::tr("数量"),
-                crate::i18n::tr("金额"),
-                crate::i18n::tr("手续费"),
-                crate::i18n::tr("角色"),
-            ] {
-                h.col(|ui| {
-                    ui.label(
-                        egui::RichText::new(t)
-                            .size(11.5)
-                            .color(theme::cur().text_dim),
-                    );
-                });
+            for (i, t) in [
+                "时间",
+                "交易对",
+                "方向",
+                "价格",
+                "数量",
+                "金额",
+                "手续费",
+                "角色",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                h.col(|ui| head_cell(ui, crate::i18n::tr(t), (3..=6).contains(&i)));
             }
         })
         .body(|mut body| {
             for t in &trades {
                 body.row(22.0, |mut row| {
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(widgets::fmt_time(t.time)).size(11.5));
+                        ui.label(
+                            egui::RichText::new(widgets::fmt_time(t.time)).size(theme::FONT_SM),
+                        );
                     });
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(&t.symbol).size(11.5));
+                        ui.label(egui::RichText::new(&t.symbol).size(theme::FONT_SM));
                     });
                     row.col(|ui| {
                         let (txt, c) = if t.is_buyer {
@@ -663,21 +624,13 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             (crate::i18n::tr("卖出"), theme::cur().down)
                         };
-                        ui.label(egui::RichText::new(txt).color(c).size(11.5));
+                        ui.label(egui::RichText::new(txt).color(c).size(theme::FONT_SM));
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(t.price.normalize().to_string())
-                                .monospace()
-                                .size(11.5),
-                        );
+                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&t.price), None);
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(t.qty.normalize().to_string())
-                                .monospace()
-                                .size(11.5),
-                        );
+                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&t.qty), None);
                     });
                     row.col(|ui| {
                         let q = if t.quote_qty.is_zero() {
@@ -685,28 +638,27 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             t.quote_qty
                         };
-                        ui.label(
-                            egui::RichText::new(q.normalize().round_dp(8).to_string())
-                                .monospace()
-                                .size(11.5),
+                        widgets::num_cell(
+                            ui,
+                            widgets::fmt_dec_grouped(&q.normalize().round_dp(8)),
+                            None,
                         );
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!(
+                        widgets::num_cell(
+                            ui,
+                            format!(
                                 "{} {}",
-                                t.commission.normalize(),
+                                widgets::fmt_dec_grouped(&t.commission),
                                 t.commission_asset
-                            ))
-                            .monospace()
-                            .size(11.5)
-                            .color(theme::cur().text_dim),
+                            ),
+                            Some(theme::cur().text_dim),
                         );
                     });
                     row.col(|ui| {
                         ui.label(
                             egui::RichText::new(if t.is_maker { "maker" } else { "taker" })
-                                .size(11.5)
+                                .size(theme::FONT_SM)
                                 .color(theme::cur().text_dim),
                         );
                     });

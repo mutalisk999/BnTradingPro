@@ -4,7 +4,7 @@ use crate::engine::state::{ConnState, SharedState, Toast, ToastKind};
 use crate::ui::theme;
 use chrono::{Local, TimeZone};
 use eframe::egui;
-use egui::{Align2, FontId, Id, Stroke};
+use egui::{Align2, Color32, FontId, Id, Rect, Stroke};
 use rust_decimal::Decimal;
 
 pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
@@ -47,7 +47,7 @@ pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
     }
     ui.label(
         egui::RichText::new(label)
-            .size(11.5)
+            .size(theme::FONT_SM)
             .color(theme::cur().text_dim),
     );
 }
@@ -79,6 +79,18 @@ pub fn f64_decimal(d: &Decimal) -> f64 {
     d.to_f64().unwrap_or(0.0)
 }
 
+/// 展示层千分位分组：绝对值 ≥1000 时按 Decimal 自身小数位分组（不丢失精度语境），
+/// 其余保持 Decimal 全精度原文。价格不被四舍五入，仅加千分位分隔。
+pub fn fmt_dec_grouped(d: &Decimal) -> String {
+    let f = f64_decimal(d);
+    if f.abs() >= 1000.0 {
+        let dp = (d.scale() as usize).min(8);
+        fmt_thousands(f, dp)
+    } else {
+        d.normalize().to_string()
+    }
+}
+
 /// 千分位分组格式化（用于展示层；精确值仍走 Decimal）
 pub fn fmt_thousands(v: f64, dp: usize) -> String {
     let s = format!("{:.*}", dp, v);
@@ -101,6 +113,17 @@ pub fn fmt_thousands(v: f64, dp: usize) -> String {
         Some(f) => format!("{sign}{grouped}.{f}"),
         None => format!("{sign}{grouped}"),
     }
+}
+
+/// 表格数值单元格：右对齐 + 等宽字体（价格/数量/金额/盈亏列通用）
+pub fn num_cell(ui: &mut egui::Ui, txt: String, color: Option<Color32>) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let mut rt = egui::RichText::new(txt).monospace().size(theme::FONT_MD);
+        if let Some(c) = color {
+            rt = rt.color(c);
+        }
+        ui.label(rt);
+    });
 }
 
 /// 大数缩写（成交额）：中文 1.2亿 / 34.5万；英文 1.2B / 34.5K
@@ -153,41 +176,103 @@ pub fn draw_toasts(ctx: &egui::Context, state: &SharedState) {
             ui.set_max_width(420.0);
             ui.with_layout(egui::Layout::top_down_justified(egui::Align::RIGHT), |ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
-                for t in toasts {
-                    let (fg, icon) = match t.kind {
-                        ToastKind::Ok => (theme::cur().up, "✓"),
-                        ToastKind::Err => (theme::cur().err, "✗"),
-                        ToastKind::Warn => (theme::cur().warn, "!"),
-                        ToastKind::Info => (theme::cur().accent, "i"),
-                    };
-                    let frame_resp = egui::Frame::default()
-                        .fill(theme::cur().panel2)
-                        .stroke(Stroke::new(1.0_f32, fg.gamma_multiply(0.8)))
-                        .corner_radius(6)
-                        .inner_margin(egui::Margin::symmetric(12, 9))
-                        .show(ui, |ui| {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(egui::RichText::new(icon).color(fg).strong());
-                                ui.label(
-                                    egui::RichText::new(t.msg.as_str()).color(theme::cur().text),
-                                );
-                            });
-                        });
-                    // 点击即关闭（不等 TTL 自然过期）：按 (内容, 入队时刻) 精确匹配
-                    let clicked = frame_resp
-                        .response
-                        .interact(egui::Sense::click())
-                        .on_hover_text(crate::i18n::tr("点击关闭"))
-                        .clicked();
-                    if clicked {
-                        state
-                            .toasts
-                            .lock()
-                            .retain(|x| !(x.msg == t.msg && x.at == t.at));
-                    }
+                for (i, t) in toasts.iter().enumerate() {
+                    draw_toast(ui, ctx, state, i, t);
                 }
             });
         });
+}
+
+/// 单条 Toast：投影 + 圆角卡片 + 左侧 kind 色条 + 圆形图标 + TTL 进度条，
+/// 入场 250ms 滑入淡入
+fn draw_toast(ui: &mut egui::Ui, ctx: &egui::Context, state: &SharedState, i: usize, t: &Toast) {
+    let kind_color = match t.kind {
+        ToastKind::Ok => theme::cur().up,
+        ToastKind::Err => theme::cur().err,
+        ToastKind::Warn => theme::cur().warn,
+        ToastKind::Info => theme::cur().accent,
+    };
+    // TTL 与 draw_toasts 的 retain 规则保持一致：错误 15s，其余 5s
+    let ttl = match t.kind {
+        ToastKind::Err => 15.0,
+        _ => 5.0,
+    };
+    // 入场动画：仅出现后的 250ms 内推进动画值，之后恒为 1（不再每帧计算）
+    let age_ms = t.at.elapsed().as_secs_f32() * 1000.0;
+    let p = if age_ms < 250.0 {
+        ctx.animate_value_with_time(Id::new("toast_in").with(i as u64).with(t.msg.as_str()), 1.0, 0.25)
+            .clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    let fade = |c: Color32| Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * p) as u8);
+    let fg = fade(kind_color);
+    let txt = fade(theme::cur().text);
+    let bg = fade(theme::cur().panel2);
+    let border = fade(theme::cur().border);
+    let shadow_color = if theme::is_light() {
+        Color32::from_black_alpha((40.0 * p) as u8)
+    } else {
+        Color32::from_black_alpha((90.0 * p) as u8)
+    };
+    let frame = egui::Frame::default()
+        .fill(bg)
+        .stroke(Stroke::new(1.0_f32, border))
+        .shadow(egui::Shadow {
+            offset: [0, 4],
+            blur: 14,
+            spread: 0,
+            color: shadow_color,
+        })
+        .corner_radius(8)
+        .inner_margin(egui::Margin::symmetric(12, 9));
+    let inner = frame.show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            // 圆形图标底 + 内嵌 8px 实心圆点：不用 ✓/✗/! 字形，
+            // 规避等宽字体优先后字形缺字回退成豆腐块的风险
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+            let pr = ui.painter();
+            pr.circle_filled(rect.center(), 9.0, fade(kind_color.gamma_multiply(0.2)));
+            pr.circle_filled(rect.center(), 4.0, fg);
+            ui.label(egui::RichText::new(t.msg.as_str()).size(theme::FONT_MD).color(txt));
+        });
+    });
+    // 左侧 kind 色条（3px）
+    let r = inner.response.rect;
+    ui.painter().rect_filled(
+        Rect::from_min_size(
+            egui::Pos2::new(r.left(), r.top() + 4.0),
+            egui::vec2(3.0, r.height() - 8.0),
+        ),
+        2.0,
+        fg,
+    );
+    // TTL 进度条（底部 2px，kind 色，宽度 = 剩余时间占比；两端内缩避开圆角）
+    let age = t.at.elapsed().as_secs_f64();
+    let remain = ((ttl - age) / ttl).clamp(0.0, 1.0) as f32;
+    if remain > 0.0 {
+        let bar_w = (r.width() - 16.0).max(0.0) * remain;
+        ui.painter().rect_filled(
+            Rect::from_min_size(
+                egui::Pos2::new(r.left() + 8.0, r.bottom() - 2.0),
+                egui::vec2(bar_w, 2.0),
+            ),
+            1.0,
+            fg,
+        );
+    }
+    // 点击即关闭（不等 TTL 自然过期）：按 (内容, 入队时刻) 精确匹配
+    let clicked = inner
+        .response
+        .interact(egui::Sense::click())
+        .on_hover_text(crate::i18n::tr("点击关闭"))
+        .clicked();
+    if clicked {
+        state
+            .toasts
+            .lock()
+            .retain(|x| !(x.msg == t.msg && x.at == t.at));
+    }
 }
 
 pub fn fmt_time(ms: i64) -> String {
@@ -210,9 +295,41 @@ pub fn placeholder(ui: &mut egui::Ui, rect: egui::Rect, text: &str) {
         rect.center(),
         Align2::CENTER_CENTER,
         text,
-        FontId::proportional(15.0),
+        FontId::proportional(theme::FONT_LG),
         theme::cur().text_dim,
     );
+}
+
+/// 空状态：居中的暗色图标 + 标题 + 副标题（subtitle 为空则不渲染）
+pub fn empty_state(ui: &mut egui::Ui, icon: &str, title: &str, subtitle: &str) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(16.0);
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width().max(60.0), 26.0),
+            egui::Sense::hover(),
+        );
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            icon,
+            FontId::proportional(theme::FONT_HERO),
+            theme::cur().text_dim,
+        );
+        ui.add_space(2.0);
+        ui.label(
+            egui::RichText::new(title)
+                .size(theme::FONT_BODY)
+                .color(theme::cur().text_dim),
+        );
+        if !subtitle.is_empty() {
+            ui.label(
+                egui::RichText::new(subtitle)
+                    .size(theme::FONT_MD)
+                    .color(theme::cur().text_dim.gamma_multiply(0.85)),
+            );
+        }
+        ui.add_space(16.0);
+    });
 }
 
 #[cfg(test)]

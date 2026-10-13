@@ -214,8 +214,8 @@ fn en_lookup(zh: &'static str) -> &'static str {
         // ---- 设置 ----
         "交易环境" => "Environment",
         "语言与主题" => "Language & Theme",
-        "保存后生效；顶栏右侧 ☀/🌙 与 中/EN 按钮可即时切换" => {
-            "Takes effect on save; the ☀/🌙 and 中/EN buttons in the top bar switch instantly"
+        "保存后生效；顶栏右侧 深色/浅色 与 中/EN 按钮可即时切换" => {
+            "Takes effect on save; the Dark/Light and 中/EN buttons in the top bar switch instantly"
         }
         "数据目录" => "Data dir:",
         "本工具仅供个人交易辅助与研究，不构成任何投资建议；使用实盘交易产生的一切后果由使用者自行承担。" => {
@@ -434,6 +434,17 @@ fn en_lookup(zh: &'static str) -> &'static str {
         }
         "点击关闭" => "Click to dismiss",
         "清空搜索" => "Clear search",
+        // ---- UI 重构补充（侧栏折叠 / 图表最大化与副图指标 / 空状态 / 步进提示）----
+        "收起侧边栏" => "Collapse sidebar",
+        "展开侧边栏" => "Expand sidebar",
+        "全屏" => "Fullscreen",
+        "还原" => "Restore",
+        "数量已按步进调整" => "Quantity adjusted to step",
+        "下单后将显示在这里" => "Placed orders will appear here",
+        "尝试其他关键词" => "Try another keyword",
+        "余额到账后自动显示" => "Balances appear once credited",
+        "交易规则加载中，请检查网络与代理" => "Loading symbol rules — check network & proxy",
+        "错误" => "Error",
         _ => return_en_fallback(zh),
     }
 }

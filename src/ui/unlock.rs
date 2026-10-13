@@ -57,7 +57,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 Pos2::new(avail.center().x, title_y + 36.0),
                 Align2::CENTER_CENTER,
                 crate::i18n::tr("Binance 现货 / U本位合约 交易终端"),
-                FontId::proportional(13.5),
+                FontId::proportional(theme::FONT_BODY),
                 theme::cur().text_dim,
             );
 
@@ -98,8 +98,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 }
 
 fn card_header(ui: &mut egui::Ui, title: &str) {
-    // 页面标题统一 16.5（egui heading 默认 19px 与其他页不一致）
-    ui.label(egui::RichText::new(title).strong().size(16.5));
+    // 页面标题统一 FONT_LG（egui heading 默认字号与其他页不一致）
+    ui.label(egui::RichText::new(title).strong().size(theme::FONT_LG));
     ui.separator();
 }
 
@@ -150,24 +150,19 @@ fn error_text(ui: &mut egui::Ui, msg: &str) {
             egui::RichText::new("✗")
                 .color(theme::cur().err)
                 .strong()
-                .size(12.5),
+                .size(theme::FONT_MD),
         );
-        ui.label(egui::RichText::new(msg).color(theme::cur().err).size(12.5));
+        ui.label(
+            egui::RichText::new(msg)
+                .color(theme::cur().err)
+                .size(theme::FONT_MD),
+        );
     });
 }
 
-/// 主按钮（全宽、金色底深色字）
+/// 主按钮（全宽、金色底深色字）：统一走 theme::btn_primary
 fn primary_btn(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
-    let btn = egui::Button::new(
-        egui::RichText::new(text)
-            .strong()
-            .size(14.5)
-            .color(theme::cur().on_accent),
-    )
-    .fill(theme::cur().accent)
-    .corner_radius(5)
-    .min_size(egui::vec2(ui.available_width(), 34.0));
-    ui.add_enabled(enabled, btn).clicked()
+    theme::btn_primary(ui, text, enabled).clicked()
 }
 
 /// 解锁已有凭据库
@@ -175,7 +170,7 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.add(
         egui::Label::new(
             egui::RichText::new(crate::i18n::tr("输入主密码以解密本机保存的 API 密钥"))
-                .size(12.0)
+                .size(theme::FONT_MD)
                 .color(theme::cur().text_dim),
         )
         .wrap_mode(egui::TextWrapMode::Wrap),
@@ -208,18 +203,14 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
         let dir = config::data_dir();
         // 破坏性操作两步确认：误点一次不会直接销毁唯一的本地密钥副本
         let armed = app.vault_delete_armed;
-        let reset_btn = ui.small_button(
-            egui::RichText::new(if armed {
+        let reset_btn = theme::btn_danger(
+            ui,
+            if armed {
                 crate::i18n::tr("确认删除凭据库？")
             } else {
                 crate::i18n::tr("重置凭据库")
-            })
-            .size(11.5)
-            .color(if armed {
-                theme::cur().err
-            } else {
-                theme::cur().warn
-            }),
+            },
+            true,
         );
         if reset_btn.clicked() {
             if !armed {
@@ -248,7 +239,7 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
         if ui
             .small_button(
                 egui::RichText::new(crate::i18n::tr("仅看行情，暂不解锁"))
-                    .size(11.5)
+                    .size(theme::FONT_SM)
                     .color(theme::cur().text_dim),
             )
             .clicked()
@@ -294,7 +285,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             } else {
                 crate::i18n::tr("当前环境：实盘（binance.com → API 管理，建议绑定 IP 白名单并只开启现货/合约交易权限）")
             })
-            .size(12.0)
+            .size(theme::FONT_MD)
             .color(if testnet { theme::cur().accent } else { theme::cur().err }),
         )
         .wrap_mode(egui::TextWrapMode::Wrap),
@@ -322,7 +313,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.add(
                 egui::Label::new(
                     egui::RichText::new(crate::i18n::tr("主密码用于加密本机保存的 API Key/Secret（Argon2id + AES-256-GCM）。忘记将无法恢复。"))
-                        .size(12.0)
+                        .size(theme::FONT_MD)
                         .color(theme::cur().text_dim),
                 )
                 .wrap_mode(egui::TextWrapMode::Wrap),
@@ -395,7 +386,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         if ui
             .small_button(
                 egui::RichText::new(crate::i18n::tr("跳过，仅看行情"))
-                    .size(11.5)
+                    .size(theme::FONT_SM)
                     .color(theme::cur().text_dim),
             )
             .clicked()
@@ -410,7 +401,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             egui::RichText::new(crate::i18n::tr(
                 "跳过后仍可查看实时行情与 K 线，随时可在设置页配置密钥",
             ))
-            .size(10.5)
+            .size(theme::FONT_SM)
             .color(theme::cur().text_dim.gamma_multiply(0.85)),
         );
     });

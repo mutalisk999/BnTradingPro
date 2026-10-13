@@ -18,7 +18,7 @@ fn load_failed_row(
         Some(e) => {
             ui.label(
                 egui::RichText::new(format!("{}{e}", crate::i18n::tr("加载失败: ")))
-                    .size(11.5)
+                    .size(theme::FONT_SM)
                     .color(theme::cur().err),
             );
             if ui.small_button(crate::i18n::tr("刷新账户")).clicked() {
@@ -70,7 +70,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         ui.label(
                             egui::RichText::new(widgets::fmt_thousands(v, 4))
                                 .monospace()
-                                .size(16.0)
+                                .size(theme::FONT_LG)
                                 .strong()
                                 .color(c),
                         );
@@ -166,12 +166,17 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
     if !can_trade {
         ui.label(
             egui::RichText::new(crate::i18n::tr("（该 Key 无交易权限）"))
-                .size(11.5)
+                .size(theme::FONT_SM)
                 .color(theme::cur().warn),
         );
     }
     if nonzero.is_empty() {
-        ui.label(egui::RichText::new(crate::i18n::tr("暂无非零资产")).color(theme::cur().text_dim));
+        widgets::empty_state(
+            ui,
+            "◎",
+            crate::i18n::tr("暂无非零资产"),
+            crate::i18n::tr("余额到账后自动显示"),
+        );
         return;
     }
     TableBuilder::new(ui)
@@ -183,7 +188,13 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
         .header(22.0, |mut h| {
             for t in ["资产", "可用", "冻结"] {
                 h.col(|ui| {
-                    ui.label(theme::card_label(crate::i18n::tr(t)));
+                    if t == "资产" {
+                        ui.label(theme::card_label(crate::i18n::tr(t)));
+                    } else {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(theme::card_label(crate::i18n::tr(t)));
+                        });
+                    }
                 });
             }
         })
@@ -191,22 +202,28 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
             for b in &nonzero {
                 body.row(22.0, |mut row| {
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(&b.asset).strong().size(12.0));
-                    });
-                    row.col(|ui| {
                         ui.label(
-                            egui::RichText::new(b.free.normalize().to_string())
-                                .monospace()
-                                .size(12.0),
+                            egui::RichText::new(&b.asset).strong().size(theme::FONT_MD),
                         );
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(b.locked.normalize().to_string())
-                                .monospace()
-                                .size(12.0)
-                                .color(theme::cur().text_dim),
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(widgets::fmt_dec_grouped(&b.free))
+                                    .monospace()
+                                    .size(theme::FONT_MD),
+                            );
+                        });
+                    });
+                    row.col(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(widgets::fmt_dec_grouped(&b.locked))
+                                    .monospace()
+                                    .size(theme::FONT_MD)
+                                    .color(theme::cur().text_dim),
+                            );
+                        });
                     });
                 });
             }
@@ -230,7 +247,12 @@ fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui
             .collect()
     };
     if assets.is_empty() {
-        ui.label(egui::RichText::new(crate::i18n::tr("暂无非零资产")).color(theme::cur().text_dim));
+        widgets::empty_state(
+            ui,
+            "◎",
+            crate::i18n::tr("暂无非零资产"),
+            crate::i18n::tr("余额到账后自动显示"),
+        );
         return;
     }
     let f = |d: &Decimal| widgets::f64_decimal(d);
@@ -244,7 +266,13 @@ fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui
         .header(22.0, |mut h| {
             for t in ["资产", "钱包余额", "可用", "未实现盈亏"] {
                 h.col(|ui| {
-                    ui.label(theme::card_label(crate::i18n::tr(t)));
+                    if t == "资产" {
+                        ui.label(theme::card_label(crate::i18n::tr(t)));
+                    } else {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(theme::card_label(crate::i18n::tr(t)));
+                        });
+                    }
                 });
             }
         })
@@ -252,30 +280,39 @@ fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui
             for b in &assets {
                 body.row(22.0, |mut row| {
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(&b.asset).strong().size(12.0));
-                    });
-                    row.col(|ui| {
                         ui.label(
-                            egui::RichText::new(format!("{:.6}", f(&b.wallet)))
-                                .monospace()
-                                .size(12.0),
+                            egui::RichText::new(&b.asset).strong().size(theme::FONT_MD),
                         );
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!("{:.6}", f(&b.available)))
-                                .monospace()
-                                .size(12.0),
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(widgets::fmt_dec_grouped(&b.wallet))
+                                    .monospace()
+                                    .size(theme::FONT_MD),
+                            );
+                        });
                     });
                     row.col(|ui| {
-                        let up = f(&b.unrealized);
-                        ui.label(
-                            egui::RichText::new(format!("{up:+.6}"))
-                                .monospace()
-                                .size(12.0)
-                                .color(theme::signed_color(up)),
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(widgets::fmt_dec_grouped(&b.available))
+                                    .monospace()
+                                    .size(theme::FONT_MD),
+                            );
+                        });
+                    });
+                    row.col(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let s = widgets::fmt_dec_grouped(&b.unrealized);
+                            let sign = if b.unrealized >= Decimal::ZERO { "+" } else { "" };
+                            ui.label(
+                                egui::RichText::new(format!("{sign}{s}"))
+                                    .monospace()
+                                    .size(theme::FONT_MD)
+                                    .color(theme::signed_color(f(&b.unrealized))),
+                            );
+                        });
                     });
                 });
             }
@@ -293,7 +330,12 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
         .cloned()
         .collect();
     if positions.is_empty() {
-        ui.label(egui::RichText::new(crate::i18n::tr("暂无持仓")).color(theme::cur().text_dim));
+        widgets::empty_state(
+            ui,
+            "◎",
+            crate::i18n::tr("暂无持仓"),
+            crate::i18n::tr("下单后将显示在这里"),
+        );
         return;
     }
     let mut close_req: Option<(
@@ -315,7 +357,7 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::auto().at_least(50.0))
         .column(Column::remainder())
         .header(22.0, |mut h| {
-            for t in [
+            for (i, t) in [
                 "交易对",
                 "方向",
                 "数量",
@@ -325,20 +367,31 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                 "强平价",
                 "杠杆",
                 "操作",
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                // 数值列（数量/开仓价/标记价/盈亏/强平价/杠杆）表头同步右对齐
                 h.col(|ui| {
-                    ui.label(theme::card_label(crate::i18n::tr(t)));
+                    if (2..=7).contains(&i) {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(theme::card_label(crate::i18n::tr(t)));
+                        });
+                    } else {
+                        ui.label(theme::card_label(crate::i18n::tr(t)));
+                    }
                 });
             }
         })
         .body(|mut body| {
             for p in &positions {
-                body.row(22.0, |mut row| {
+                // 行高 28：容纳 btn_danger（BTN_H）按钮（与订单页持仓表一致）
+                body.row(28.0, |mut row| {
                     let long = p.amt > Decimal::ZERO;
-                    // 价格/盈亏用 normalize 全精度展示：固定 {:.4} 会把
-                    // 低价币（<0.0001）的开仓价、盈亏、强平价全部显示成 0
+                    // 价格/盈亏用 fmt_dec_grouped 全精度展示（≥1000 附千分位）：
+                    // 固定 {:.4} 会把低价币（<0.0001）的开仓价、盈亏、强平价全部显示成 0
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(&p.symbol).strong().size(12.0));
+                        ui.label(egui::RichText::new(&p.symbol).strong().size(theme::FONT_MD));
                     });
                     row.col(|ui| {
                         let (txt, c) = if long {
@@ -346,61 +399,44 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             (crate::i18n::tr("空"), theme::cur().down)
                         };
-                        ui.label(egui::RichText::new(txt).color(c).strong().size(12.0));
+                        ui.label(egui::RichText::new(txt).color(c).strong().size(theme::FONT_MD));
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!("{}", p.amt.abs().normalize()))
-                                .monospace()
-                                .size(12.0),
+                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.amt.abs()), None);
+                    });
+                    row.col(|ui| {
+                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.entry_price), None);
+                    });
+                    row.col(|ui| {
+                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.mark_price), None);
+                    });
+                    row.col(|ui| {
+                        let s = widgets::fmt_dec_grouped(&p.unrealized);
+                        let sign = if p.unrealized >= Decimal::ZERO { "+" } else { "" };
+                        widgets::num_cell(
+                            ui,
+                            format!("{sign}{s}"),
+                            Some(theme::signed_color(widgets::f64_decimal(&p.unrealized))),
                         );
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(p.entry_price.normalize().to_string())
-                                .monospace()
-                                .size(12.0),
+                        let liq = if p.liquidation_price.is_zero() {
+                            "—".to_string()
+                        } else {
+                            widgets::fmt_dec_grouped(&p.liquidation_price)
+                        };
+                        widgets::num_cell(ui, liq, None);
+                    });
+                    row.col(|ui| {
+                        widgets::num_cell(
+                            ui,
+                            format!("{}x", widgets::f64_decimal(&p.leverage) as i64),
+                            None,
                         );
                     });
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(p.mark_price.normalize().to_string())
-                                .monospace()
-                                .size(12.0),
-                        );
-                    });
-                    row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!("{:+}", p.unrealized.normalize()))
-                                .monospace()
-                                .size(12.0)
-                                .color(theme::signed_color(widgets::f64_decimal(
-                                    &p.unrealized,
-                                ))),
-                        );
-                    });
-                    row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(if p.liquidation_price.is_zero() {
-                                "—".into()
-                            } else {
-                                p.liquidation_price.normalize().to_string()
-                            })
-                            .monospace()
-                            .size(12.0),
-                        );
-                    });
-                    row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{}x",
-                                widgets::f64_decimal(&p.leverage) as i64
-                            ))
-                            .size(12.0),
-                        );
-                    });
-                    row.col(|ui| {
-                        if ui.small_button(crate::i18n::tr("平仓")).clicked() {
+                        // 破坏性操作统一危险按钮样式（与订单页市价平仓一致）
+                        if theme::btn_danger(ui, crate::i18n::tr("平仓"), true).clicked() {
                             let side = if long {
                                 crate::binance::Side::Sell
                             } else {
