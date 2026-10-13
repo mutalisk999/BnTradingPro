@@ -49,7 +49,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         // ---- 页头 ----
         "搜索交易对…" => "Search symbols…",
         "无匹配交易对" => "No matching symbols",
-        "⭐ 自选" => "★ Favorites",
+        "自选" => "Favorites",
         "全部" => "All",
         "加入自选" => "Add to favorites",
         "取消自选" => "Remove from favorites",

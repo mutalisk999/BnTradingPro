@@ -1,8 +1,20 @@
-//! 左侧交易对列表：搜索 + 自选置顶 + 全量虚拟化列表
+//! 左侧交易对列表：搜索 + 自选置顶 + 全量虚拟化列表（自选/全部同构渲染）
 
 use crate::app::BnApp;
 use crate::ui::{theme, widgets};
 use eframe::egui;
+
+/// 统一行高：小节标题与交易对行共用同一滚动列表、同一槽位高度
+const SYMBOL_ROW_H: f32 = 24.0;
+/// 星标按钮固定宽度：不依赖字形自然宽度（等宽字体优先下 "☆" 可能回落到
+/// 全角字形），确保星标永远落在行槽裁剪区内、热区完整可点击
+const STAR_W: f32 = 24.0;
+
+/// 虚拟化列表的行模型：小节标题或交易对行（bool = 是否已自选）
+enum Row<'a> {
+    Section(&'static str),
+    Sym(&'a str, bool),
+}
 
 /// 左侧交易对列表：搜索 + 自选置顶 + 全量虚拟化列表
 pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
@@ -32,45 +44,47 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.add_space(2.0);
 
     let filter = app.page.symbol_filter.trim().to_uppercase();
-    let favs_all = app.state.favorites(app.market);
+    let favs: Vec<String> = app
+        .state
+        .favorites(app.market)
+        .into_iter()
+        .filter(|s| filter.is_empty() || s.contains(&filter))
+        .collect();
+
     let mut switched: Option<String> = None;
     let mut toggled: Option<String> = None;
 
-    // 自选区（置顶）
-    let favs: Vec<String> = favs_all
-        .iter()
-        .filter(|s| filter.is_empty() || s.contains(&filter))
-        .cloned()
-        .collect();
-    if !favs.is_empty() {
-        theme::section(ui, crate::i18n::tr("⭐ 自选"));
-        for sym in &favs {
-            symbol_row(ui, app, sym, true, &mut switched, &mut toggled);
-        }
-        ui.add_space(2.0);
-    }
-
-    // 规则簿为空说明 exchangeInfo 尚未加载（网络/代理问题），
-    // 与"搜索无结果"是两回事，必须区分提示
+    // 规则簿为空说明 exchangeInfo 尚未加载（网络/代理问题），与"搜索无结果"
+    // 是两回事。自选列表来自本地配置可照常显示，全部区给出加载提示
     let rules_loaded = {
         let rules = app.state.rules.read();
         !rules[app.market as usize].symbols.is_empty()
     };
     if !rules_loaded {
+        if !favs.is_empty() {
+            theme::section(ui, crate::i18n::tr("自选"));
+            for sym in &favs {
+                symbol_row(ui, app, sym, true, &mut switched, &mut toggled);
+            }
+            ui.add_space(2.0);
+        }
         ui.label(
             egui::RichText::new(crate::i18n::tr("交易规则加载中，请检查网络与代理"))
                 .size(theme::FONT_MD)
                 .color(theme::cur().text_dim),
         );
+        apply_actions(app, switched, toggled);
         return;
     }
 
     // 全部交易对：过滤结果按 (市场, 过滤词) 缓存，避免每帧从规则簿克隆
-    // ~2600 个符号字符串；favs 排除是少量 contains 检查，逐帧做成本低。
-    // 列表用 show_rows 虚拟化——每帧只构造可见行的控件
-    let cached = app.symbols_cache.as_ref().filter(|(m, f, _)| {
-        *m == app.market && *f == filter
-    });
+    // ~2600 个符号字符串；行数据每帧只构造引用视图（favs 排除是少量
+    // contains 检查，逐帧做成本低）。列表面板自身的 show_rows 虚拟化——
+    // 每帧只构造可见行的控件
+    let cached = app
+        .symbols_cache
+        .as_ref()
+        .filter(|(m, f, _)| *m == app.market && *f == filter);
     let all_filtered = match cached {
         Some((_, _, list)) => std::sync::Arc::clone(list),
         None => {
@@ -87,16 +101,11 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             list
         }
     };
-    let all_syms: Vec<&String> = all_filtered
-        .iter()
-        .filter(|s| !favs.contains(s))
-        .collect();
-    theme::section(ui, crate::i18n::tr("全部"));
-    // 槽位高度 ≥ 行内控件自然高度（星标按钮约 24px），避免行间点击区重叠
-    const SYMBOL_ROW_H: f32 = 24.0;
-    // 空态放在 ScrollArea 之前：auto_shrink(false) 的滚动区会占满剩余空间，
-    // 放在其后面的空态提示永远在视口外
-    if all_syms.is_empty() && favs.is_empty() {
+    let all_syms: Vec<&String> = all_filtered.iter().filter(|s| !favs.contains(s)).collect();
+
+    if favs.is_empty() && all_syms.is_empty() {
+        // 空态放在 ScrollArea 之前：auto_shrink(false) 的滚动区会占满剩余空间，
+        // 放在其后面的空态提示永远在视口外
         widgets::empty_state(
             ui,
             "◎",
@@ -105,9 +114,27 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         );
         return;
     }
+
+    // 统一行模型：自选置顶 + 全部进同一个滚动列表，同一行高、同一行渲染，
+    // 两个分区风格完全一致（此前自选区直接渲染、全部区走行槽虚拟化，
+    // 行距与悬停热区都不一致）
+    let mut rows: Vec<Row> = Vec::with_capacity(favs.len() + all_syms.len() + 2);
+    if !favs.is_empty() {
+        rows.push(Row::Section("自选"));
+        for s in &favs {
+            rows.push(Row::Sym(s, true));
+        }
+    }
+    if !all_syms.is_empty() {
+        rows.push(Row::Section("全部"));
+        for s in &all_syms {
+            rows.push(Row::Sym(s, false));
+        }
+    }
+
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .show_rows(ui, SYMBOL_ROW_H, all_syms.len(), |ui, range| {
+        .show_rows(ui, SYMBOL_ROW_H, rows.len(), |ui, range| {
             // 每行放进精确槽位：不依赖控件自然高度（声明行距与实际行距
             // 不一致时，内容会随滚动深度漂移、与滚动条错位）
             let x_range = ui.max_rect().x_range();
@@ -117,17 +144,20 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 let y0 = top + (i - start) as f32 * SYMBOL_ROW_H;
                 let rect = egui::Rect::from_x_y_ranges(x_range, y0..=(y0 + SYMBOL_ROW_H));
                 ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |row_ui| {
-                    symbol_row(
-                        row_ui,
-                        app,
-                        all_syms[i],
-                        false,
-                        &mut switched,
-                        &mut toggled,
-                    );
+                    match &rows[i] {
+                        Row::Section(title) => section_row(row_ui, title),
+                        Row::Sym(sym, is_fav) => {
+                            symbol_row(row_ui, app, sym, *is_fav, &mut switched, &mut toggled);
+                        }
+                    }
                 });
             }
         });
+    apply_actions(app, switched, toggled);
+}
+
+/// 统一处理行内点击结果：加/取自选、切换交易对
+fn apply_actions(app: &mut BnApp, switched: Option<String>, toggled: Option<String>) {
     if let Some(sym) = toggled {
         app.state.toggle_favorite(app.market, &sym);
     }
@@ -136,6 +166,13 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     }
 }
 
+/// 小节标题行：与交易对行同槽高、垂直居中，风格与行一致
+fn section_row(ui: &mut egui::Ui, title: &str) {
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.add_space(1.0);
+        theme::section(ui, title);
+    });
+}
 
 /// 侧边栏交易对行：名称（点击切换）+ 星标（点击加/取自选）
 fn symbol_row(
@@ -149,8 +186,10 @@ fn symbol_row(
     let selected = *sym == app.page.symbol;
     // 行悬停高亮：先在控件下层铺底色，再放按钮。
     // 悬停用 animate_bool 渐变（进/出淡入淡出）；选中行常亮 + 左侧 3px accent 条
-    let row_rect =
-        egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 22.0));
+    let row_rect = egui::Rect::from_min_size(
+        ui.cursor().min,
+        egui::vec2(ui.available_width(), SYMBOL_ROW_H - 2.0),
+    );
     let hovered = ui.rect_contains_pointer(row_rect);
     let anim = ui
         .ctx()
@@ -171,6 +210,11 @@ fn symbol_row(
         );
     }
     ui.horizontal(|ui| {
+        // 星标固定宽 + 固定 4px 间距，名称按钮宽度由此推算：
+        // 星标不再依赖字形自然宽度，行槽裁剪下热区始终完整——
+        // 此前"全部"列表的星标被推出行槽右边界而无法点击
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let name_w = ui.available_width() - STAR_W - 4.0;
         let name_txt = {
             let t = egui::RichText::new(sym).size(theme::FONT_MD).color(if selected {
                 theme::cur().accent
@@ -191,7 +235,7 @@ fn symbol_row(
             })
             .stroke(egui::Stroke::NONE)
             .corner_radius(3)
-            .min_size(egui::vec2(ui.available_width() - 26.0, 20.0));
+            .min_size(egui::vec2(name_w, 20.0));
         if ui
             .add(name_btn)
             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -209,7 +253,8 @@ fn symbol_row(
             .add(
                 egui::Button::new(star_txt)
                     .fill(egui::Color32::TRANSPARENT)
-                    .corner_radius(3),
+                    .corner_radius(3)
+                    .min_size(egui::vec2(STAR_W, 20.0)),
             )
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(if is_fav {
@@ -223,4 +268,3 @@ fn symbol_row(
         }
     });
 }
-

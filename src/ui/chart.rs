@@ -41,7 +41,7 @@ impl Default for ChartState {
         Self {
             bars_visible: 120.0,
             right_off: 0.0,
-            ma: [true, true, true, false],
+            ma: [true, true, true, true],
             cache_key: None,
             cache_klines: Vec::new(),
             cache_closes: Vec::new(),
@@ -79,7 +79,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             if ui
                 .add(
                     egui::Button::selectable(app.page.chart.ma[i], label)
-                        .min_size(egui::vec2(0.0, 24.0)),
+                        .min_size(egui::vec2(0.0, theme::BTN_H)),
                 )
                 .clicked()
             {
@@ -87,6 +87,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // ComboBox 按钮高度取 spacing.interact_size.y（默认 18 < BTN_H=28），
+            // 显式抬到 BTN_H 与全屏按钮等高（行内布局已是 Align::Center 居中对齐）
+            ui.spacing_mut().interact_size.y = theme::BTN_H;
             // 最大化/还原：文字按钮（⛶ 字形在等宽字体优先下有缺字风险）
             let max_txt = if app.chart_maximized {
                 crate::i18n::tr("还原")
@@ -727,6 +730,8 @@ fn role_color(r: Role) -> Color32 {
 
 /// 副图指标面板：在 rect 上绘制 [start, end) 范围内的线/柱/点/参考线。
 /// 序列可能比 K 线短（预热段 NaN / unwrap_or_default 空值），统一按最小长度钳制防越界。
+/// 注意：start/end 是全局 K 线下标（序列对齐用），x_of 只接收可见区局部下标，
+/// 绘制前必须做 `i - start` 转换，否则画到裁剪区外（表现为副图一片空白）。
 fn draw_sub_panel(
     painter: &egui::Painter,
     rect: Rect,
@@ -849,7 +854,7 @@ fn draw_sub_panel(
             let y = y_of(v);
             let top = y.min(y0);
             let h = (y.max(y0) - top).max(1.0);
-            let x = x_of(i);
+            let x = x_of(i - start);
             let w = (bar_w * 0.7).max(1.0);
             painter.rect_filled(
                 Rect::from_min_max(Pos2::new(x - w / 2.0, top), Pos2::new(x + w / 2.0, top + h)),
@@ -873,7 +878,7 @@ fn draw_sub_panel(
                 }
                 continue;
             }
-            pts.push(Pos2::new(x_of(i), y_of(v)));
+            pts.push(Pos2::new(x_of(i - start), y_of(v)));
         }
         if pts.len() > 1 {
             painter.add(Shape::line(pts, Stroke::new(1.2_f32, col)));
@@ -888,7 +893,7 @@ fn draw_sub_panel(
             if v.is_nan() {
                 continue;
             }
-            painter.circle_filled(Pos2::new(x_of(i), y_of(v)), 1.6, col);
+            painter.circle_filled(Pos2::new(x_of(i - start), y_of(v)), 1.6, col);
         }
     }
 
