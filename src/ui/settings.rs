@@ -71,10 +71,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.checkbox(&mut app.settings.proxy_enabled, crate::i18n::tr("启用代理"));
         theme::form_row(ui, |ui| {
             theme::row_label(ui, crate::i18n::tr("地址"), 40.0);
-            // 遮蔽显示：代理地址常含 user:pass@ 凭据，明文回显有录屏/窥屏暴露风险
+            // 明文显示：便于核对代理主机与端口（凭据泄露风险已由
+            // ProxyConfig 的 Debug 脱敏与 config.toml 权限约束兜底）
             ui.add(
                 egui::TextEdit::singleline(&mut app.settings.proxy_url)
-                    .password(true)
                     .text_color(theme::cur().text)
                     .desired_width(320.0)
                     .min_size(egui::vec2(0.0, theme::CONTROL_H))
