@@ -102,7 +102,11 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 
     // ---------- 买/卖切换 ----------
     // 双向持仓模式下买卖即决定开多/开空，持仓方向随方向按钮联动（见 build_request）
-    ui.columns(2, |cols| {
+    // 两钮之间留 8px 间隙：columns(2) 无间距，选中态色块会连成一条
+    let side_gap = 8.0;
+    let side_w = ((ui.available_width() - side_gap) / 2.0).max(60.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = side_gap;
         // 未选中侧用主题文字色：浅色主题下 btn_idle 底近白，白字对比度不足
         let buy_txt_color = if app.page.form.side == Side::Buy {
             theme::cur().on_fill
@@ -124,8 +128,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 theme::cur().btn_idle
             })
             .corner_radius(5);
-        if cols[0]
-            .add_sized([cols[0].available_width(), 36.0], buy)
+        if ui
+            .add_sized([side_w, 36.0], buy)
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
             app.page.form.side = Side::Buy;
@@ -150,8 +155,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 theme::cur().btn_idle
             })
             .corner_radius(5);
-        if cols[1]
-            .add_sized([cols[1].available_width(), 36.0], sell)
+        if ui
+            .add_sized([side_w, 36.0], sell)
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
             app.page.form.side = Side::Sell;
@@ -161,8 +167,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 
     // ---------- 订单类型 ----------
     theme::card(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(theme::card_label(crate::i18n::tr("类型")));
+        theme::form_row(ui, |ui| {
+            field_label(ui, crate::i18n::tr("类型"));
             let kinds = UiKind::available(market);
             let cur = if kinds.contains(&app.page.form.kind) {
                 app.page.form.kind
@@ -190,7 +196,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 } else {
                     crate::i18n::tr("开空 (SHORT)")
                 };
-                ui.horizontal(|ui| {
+                theme::form_row(ui, |ui| {
                     ui.label(theme::card_label(crate::i18n::tr("持仓方向")));
                     ui.label(
                         egui::RichText::new(pos_txt)
@@ -206,7 +212,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 );
             }
             // 杠杆
-            ui.horizontal(|ui| {
+            theme::form_row(ui, |ui| {
                 ui.label(theme::card_label(crate::i18n::tr("杠杆")));
                 let lev = state
                     .acct
@@ -251,8 +257,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // ---------- 价格 / 触发价 / 数量 ----------
     theme::card(ui, |ui| {
         if app.page.form.kind != UiKind::Market {
-            ui.horizontal(|ui| {
-                ui.label(theme::card_label(crate::i18n::tr("价格")));
+            theme::form_row(ui, |ui| {
+                field_label(ui, crate::i18n::tr("价格"));
                 widgets::num_field(ui, "price_in", &mut app.page.form.price, crate::i18n::tr("价格"));
                 if ui.button(crate::i18n::tr("市价")).clicked() {
                     let last = state
@@ -273,8 +279,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 | UiKind::StopLossMarket
                 | UiKind::TakeProfitMarket
         ) {
-            ui.horizontal(|ui| {
-                ui.label(theme::card_label(crate::i18n::tr("触发价")));
+            theme::form_row(ui, |ui| {
+                field_label(ui, crate::i18n::tr("触发价"));
                 widgets::num_field(
                     ui,
                     "trig_in",
@@ -283,8 +289,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 );
             });
         }
-        ui.horizontal(|ui| {
-            ui.label(crate::i18n::tr("数量"));
+        theme::form_row(ui, |ui| {
+            field_label(ui, crate::i18n::tr("数量"));
             widgets::num_field(ui, "qty_in", &mut app.page.form.qty, crate::i18n::tr("数量"));
             if let Some(r) = &rule {
                 ui.label(
@@ -300,11 +306,11 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         });
 
         // ---------- 百分比快捷填充 ----------
-        ui.horizontal(|ui| {
-            ui.label(theme::card_label(crate::i18n::tr("比例")));
+        theme::form_row(ui, |ui| {
+            field_label(ui, crate::i18n::tr("比例"));
             for pct in [25.0, 50.0, 75.0, 100.0] {
                 if ui
-                    .button(format!("{}%", pct as i32))
+                    .small_button(format!("{}%", pct as i32))
                     .on_hover_text(crate::i18n::tr("按可用余额估算"))
                     .clicked()
                 {
@@ -336,7 +342,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         total = q.checked_mul(p);
     }
     ui.separator();
-    ui.horizontal(|ui| {
+    theme::form_row(ui, |ui| {
         ui.label(egui::RichText::new(crate::i18n::tr("预估金额")).color(theme::cur().text_dim));
         match total {
             Some(t) => {
@@ -419,13 +425,18 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     .fill(color)
     .corner_radius(5)
     .min_size(egui::vec2(ui.available_width(), 38.0));
-    let resp = ui.add_enabled(!busy && state.has_creds(), btn);
+    let resp = ui
+        .add_enabled(!busy && state.has_creds(), btn)
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     if busy {
-        ui.label(
-            egui::RichText::new(crate::i18n::tr("提交中…"))
-                .size(11.5)
-                .color(theme::cur().text_dim),
-        );
+        ui.horizontal(|ui| {
+            ui.add(egui::Spinner::new().size(13.0));
+            ui.label(
+                egui::RichText::new(crate::i18n::tr("提交中…"))
+                    .size(11.5)
+                    .color(theme::cur().text_dim),
+            );
+        });
     }
     if resp.clicked() {
         match build_request(app) {
@@ -451,6 +462,12 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             }
         }
     }
+}
+
+/// 表单行标签：固定宽度，让价格/触发价/数量等输入框左缘对齐；
+/// 行高与 form_row 一致，文字垂直居中
+fn field_label(ui: &mut egui::Ui, text: &str) {
+    theme::row_label(ui, theme::card_label(text), 46.0);
 }
 
 /// 从 UI 状态构建订单请求（量化后），供提交与确认弹窗使用

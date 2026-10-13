@@ -227,6 +227,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "启用代理" => "Enable proxy",
         "地址" => "Address",
         "请求参数" => "Request Parameters",
+        "接收窗口 (recvWindow)" => "recvWindow",
         "HTTP 超时" => "HTTP Timeout",
         "日志级别" => "Log Level",
         "默认交易对" => "Default Symbol",

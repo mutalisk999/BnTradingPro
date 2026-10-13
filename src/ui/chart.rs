@@ -195,6 +195,17 @@ fn draw(
     let plot = resp.rect.shrink(4.0);
     let t = theme::cur();
 
+    // ---------- 品牌水印（先画，沉在所有元素底下） ----------
+    let wm_alpha = if theme::is_light() { 6 } else { 9 };
+    let txt = theme::cur().text;
+    painter.text(
+        plot.center() - Vec2::new(0.0, plot.height() * 0.10),
+        Align2::CENTER_CENTER,
+        &app.page.symbol,
+        FontId::proportional(58.0),
+        Color32::from_rgba_unmultiplied(txt.r(), txt.g(), txt.b(), wm_alpha),
+    );
+
     // ---------- 交互 ----------
     if resp.hovered() {
         let scroll = ui.input(|i| i.smooth_scroll_delta).y;

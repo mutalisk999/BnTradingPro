@@ -46,8 +46,12 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let fut = state.acct.lock().fut.clone();
     if let Some(a) = &fut {
         let f = |d: &Decimal| widgets::f64_decimal(d);
+        // 卡片宽度一次性算好：循环内取 available_width 会随前一张卡片收窄，
+        // 四张卡片逐张变矮变窄（原实现的实际 bug）
+        let gap = 8.0;
+        let card_w = ((ui.available_width() - 3.0 * gap) / 4.0).max(80.0);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.spacing_mut().item_spacing.x = gap;
             let cards: [(&str, f64, bool); 4] = [
                 ("合约钱包余额", f(&a.total_wallet), false),
                 ("未实现盈亏", f(&a.total_unrealized), true),
@@ -56,7 +60,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             ];
             for (name, v, colored) in cards {
                 theme::card(ui, |ui| {
-                    ui.set_min_width(ui.available_width() / 4.2);
+                    // 24 = card 内边距（12×2）：外框总宽恰好 card_w
+                    ui.set_min_width((card_w - 24.0).max(0.0));
                     ui.vertical(|ui| {
                         ui.label(theme::card_label(crate::i18n::tr(name)));
                         let c = if colored {
@@ -65,7 +70,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                             theme::cur().text
                         };
                         ui.label(
-                            egui::RichText::new(format!("{v:.4}"))
+                            egui::RichText::new(widgets::fmt_thousands(v, 4))
                                 .monospace()
                                 .size(16.0)
                                 .strong()
@@ -77,10 +82,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         });
         ui.horizontal(|ui| {
             let dual = state.acct.lock().fut_dual_side;
-            ui.label(theme::card_label(&if state.acct.lock().fut_dual_side {
-                crate::i18n::tr("持仓模式：双向").to_string()
+            ui.label(theme::card_label(if dual {
+                crate::i18n::tr("持仓模式：双向")
             } else {
-                crate::i18n::tr("持仓模式：单向").to_string()
+                crate::i18n::tr("持仓模式：单向")
             }));
             if ui.small_button(crate::i18n::tr("切换")).clicked() {
                 state.send_cmd(Command::SetDualSide { dual: !dual });

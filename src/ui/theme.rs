@@ -327,6 +327,45 @@ pub fn card<R>(
         .show(ui, add_contents)
 }
 
+// ---------- 表单行 ----------
+
+/// 表单行内输入控件（TextEdit/DragValue）统一最小高
+pub const CONTROL_H: f32 = 26.0;
+/// 表单行标准高度（≥ 控件高，留少量呼吸空间）
+pub const ROW_H: f32 = 30.0;
+
+/// 固定高度表单行。
+///
+/// `ui.horizontal` 的行高初始只有 `interact_size.y`（18px），行内后置的高控件
+/// （ComboBox/按钮 ≈28px）会把行撑高，而先放置的标签不会随之重新居中，
+/// 造成"标签偏高、控件偏矮"的逐项错位。这里预分配 ROW_H 并统一控件高度，
+/// 行内所有元素以同一基线垂直居中，行高不再中途变化。
+pub fn form_row<R>(
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let w = ui.available_width();
+    ui.allocate_ui(egui::vec2(w, ROW_H), |ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            // 按钮高度 = 文本 + 2×button_padding.y（下拉框同理），压到 4 使其
+            // 与 interact_size.y 撑起的输入控件同为 CONTROL_H
+            ui.spacing_mut().button_padding.y = 4.0;
+            ui.spacing_mut().interact_size.y = CONTROL_H;
+            add_contents(ui)
+        })
+    })
+    .inner
+}
+
+/// 表单行标签：固定宽度保证后续控件左缘对齐，行高保证文字垂直居中
+pub fn row_label(ui: &mut egui::Ui, text: impl Into<egui::RichText>, w: f32) {
+    ui.allocate_ui(egui::vec2(w, ROW_H), |ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.label(text.into());
+        });
+    });
+}
+
 /// 顶部导航页签（激活态金色文字 + 边框）
 pub fn nav_tab(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
     let txt = if active {
@@ -346,7 +385,10 @@ pub fn nav_tab(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
         })
         .corner_radius(3)
         .min_size(egui::vec2(0.0, 28.0));
-    ui.add(btn).clicked()
+    // 页签是可点击导航：透明填充覆盖了默认 hover 反馈，至少给指针光标
+    ui.add(btn)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
 }
 
 /// 区块小标题

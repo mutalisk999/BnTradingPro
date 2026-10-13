@@ -19,9 +19,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.separator();
 
     // ---------- 环境 ----------
-    ui.group(|ui| {
+    theme::card(ui, |ui| {
         ui.label(egui::RichText::new(crate::i18n::tr("交易环境")).strong());
-        ui.horizontal(|ui| {
+        theme::form_row(ui, |ui| {
             ui.selectable_value(
                 &mut app.settings.testnet,
                 true,
@@ -53,17 +53,18 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     });
 
     // ---------- 代理 ----------
-    ui.group(|ui| {
+    theme::card(ui, |ui| {
         ui.label(
             egui::RichText::new(crate::i18n::tr("网络代理（REST 与 WebSocket 均生效）")).strong(),
         );
         ui.checkbox(&mut app.settings.proxy_enabled, crate::i18n::tr("启用代理"));
-        ui.horizontal(|ui| {
-            ui.label(crate::i18n::tr("地址"));
+        theme::form_row(ui, |ui| {
+            theme::row_label(ui, crate::i18n::tr("地址"), 40.0);
             ui.add(
                 egui::TextEdit::singleline(&mut app.settings.proxy_url)
                     .text_color(theme::cur().text)
                     .desired_width(320.0)
+                    .min_size(egui::vec2(0.0, theme::CONTROL_H))
                     .hint_text(
                         "http://127.0.0.1:7890 或 socks5://127.0.0.1:7890（支持 user:pass@）",
                     ),
@@ -72,10 +73,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     });
 
     // ---------- 外观与语言 ----------
-    ui.group(|ui| {
+    theme::card(ui, |ui| {
         ui.label(egui::RichText::new(crate::i18n::tr("语言与主题")).strong());
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(crate::i18n::tr("语言")).strong());
+        theme::form_row(ui, |ui| {
+            theme::row_label(ui, crate::i18n::tr("语言"), 40.0);
             let mut lang = app.settings.lang.clone();
             egui::ComboBox::from_id_salt("lang_cb")
                 .selected_text(if lang == "en" {
@@ -90,7 +91,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 });
             app.settings.lang = lang;
             ui.separator();
-            ui.label(egui::RichText::new(crate::i18n::tr("主题")).strong());
+            theme::row_label(ui, crate::i18n::tr("主题"), 40.0);
             let mut mode = app.settings.theme_mode.clone();
             egui::ComboBox::from_id_salt("theme_cb")
                 .selected_text(if mode == "light" {
@@ -115,10 +116,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     });
 
     // ---------- 参数 ----------
-    ui.group(|ui| {
+    theme::card(ui, |ui| {
         ui.label(egui::RichText::new(crate::i18n::tr("请求参数")).strong());
-        ui.horizontal(|ui| {
-            ui.label("recvWindow");
+        theme::form_row(ui, |ui| {
+            ui.label(crate::i18n::tr("接收窗口 (recvWindow)"));
             ui.add(
                 egui::DragValue::new(&mut app.settings.recv_window_ms)
                     .range(1000..=60000)
@@ -142,12 +143,13 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     }
                 });
         });
-        ui.horizontal(|ui| {
+        theme::form_row(ui, |ui| {
             ui.label(crate::i18n::tr("默认交易对"));
             ui.add(
                 egui::TextEdit::singleline(&mut app.settings.default_symbol)
                     .text_color(theme::cur().text)
                     .desired_width(110.0)
+                    .min_size(egui::vec2(0.0, theme::CONTROL_H))
                     .hint_text("BTCUSDT"),
             );
             ui.label(crate::i18n::tr("默认K线周期"));
@@ -167,7 +169,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     });
 
     // ---------- 端点覆盖 ----------
-    ui.group(|ui| {
+    theme::card(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(crate::i18n::tr("端点覆盖（留空使用内置默认）")).strong());
             let overridden = [
@@ -223,11 +225,19 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     });
 
     // ---------- 应用 ----------
+    // 主操作按钮用 accent 填充（与解锁页主按钮一致），视觉层级高于普通按钮
     if ui
         .add(
-            egui::Button::new(egui::RichText::new(crate::i18n::tr("保存并重连")).strong())
-                .min_size(egui::vec2(140.0, 28.0)),
+            egui::Button::new(
+                egui::RichText::new(crate::i18n::tr("保存并重连"))
+                    .strong()
+                    .color(theme::cur().on_accent),
+            )
+            .fill(theme::cur().accent)
+            .corner_radius(5)
+            .min_size(egui::vec2(140.0, 30.0)),
         )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
     {
         apply = true;
@@ -237,9 +247,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.separator();
 
     // ---------- 密钥管理 ----------
-    ui.group(|ui| {
+    theme::card(ui, |ui| {
         ui.label(egui::RichText::new(crate::i18n::tr("API 密钥")).strong());
-        ui.horizontal(|ui| {
+        theme::form_row(ui, |ui| {
             if state.has_creds() {
                 theme::badge(ui, crate::i18n::tr("已配置"), theme::cur().up);
             } else {
@@ -307,7 +317,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     });
 
     // ---------- 关于 ----------
-    ui.group(|ui| {
+    theme::card(ui, |ui| {
         ui.label(egui::RichText::new(crate::i18n::tr("关于")).strong());
         ui.label(
             egui::RichText::new(format!(

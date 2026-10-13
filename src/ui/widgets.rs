@@ -57,6 +57,8 @@ pub fn num_field(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str) {
     egui::TextEdit::singleline(text)
         .id_salt(id)
         .desired_width(120.0)
+        // 与 form_row 内的下拉框/按钮统一高度（26），消除行内高低错落
+        .min_size(egui::vec2(0.0, theme::CONTROL_H))
         .font(egui::TextStyle::Monospace)
         .text_color(theme::cur().text)
         .hint_text(hint)
