@@ -205,6 +205,18 @@ pub fn btn_default(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respon
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// 次按钮：全宽、金色描边 —— 认证页的替代路径（跳过 / 仅看行情）。
+/// small_button 的默认底色与卡片底色几乎相同，辨识度太差
+pub fn btn_secondary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
+    let btn = egui::Button::new(egui::RichText::new(text).size(FONT_MD).color(cur().text))
+        .fill(cur().panel2)
+        .stroke(Stroke::new(1.0_f32, cur().accent.gamma_multiply(0.55)))
+        .corner_radius(5)
+        .min_size(egui::vec2(ui.available_width(), BTN_LG));
+    ui.add_enabled(enabled, btn)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// 危险按钮：红色淡填充 + 红字（撤销/平仓/删除凭据库等破坏性操作）
 pub fn btn_danger(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
     // 用半透明红叠加：gamma_multiply 在浅色主题下会变成近黑色块

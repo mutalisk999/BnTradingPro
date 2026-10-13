@@ -198,7 +198,13 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
     if primary_btn(ui, crate::i18n::tr("解锁"), true) {
         try_unlock(app);
     }
-    ui.add_space(2.0);
+    // 仅看行情：与主按钮同宽的次按钮（之前是弱化小按钮，几乎看不见）
+    ui.add_space(4.0);
+    if theme::btn_secondary(ui, crate::i18n::tr("仅看行情，暂不解锁"), true).clicked() {
+        app.vault_delete_armed = false;
+        app.phase = Phase::Main;
+    }
+    ui.add_space(4.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let dir = config::data_dir();
         // 破坏性操作两步确认：误点一次不会直接销毁唯一的本地密钥副本
@@ -236,17 +242,6 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
             app.vault_delete_armed = false;
         }
         reset_btn.on_hover_text(crate::i18n::tr("删除本机加密凭据库，重新开始设置"));
-        if ui
-            .small_button(
-                egui::RichText::new(crate::i18n::tr("仅看行情，暂不解锁"))
-                    .size(theme::FONT_SM)
-                    .color(theme::cur().text_dim),
-            )
-            .clicked()
-        {
-            app.vault_delete_armed = false;
-            app.phase = Phase::Main;
-        }
     });
 }
 
@@ -380,31 +375,30 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         save_keys(app, &dir, vault_exists);
     }
     // 跳过入口两种分支都要有：换钥流程（已有库）也需要能随时退出本页，
-    // 否则用户点开"更换密钥"后无路可退。提示文字与按钮同行（按钮居右），
-    // 不再单独占一行，底部更紧凑
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if ui
-            .small_button(
-                egui::RichText::new(crate::i18n::tr("跳过，仅看行情"))
-                    .size(theme::FONT_SM)
-                    .color(theme::cur().text_dim),
-            )
-            .clicked()
-        {
-            app.api_key.clear();
-            app.api_secret.clear();
-            app.pw1.clear();
-            app.pw2.clear();
-            app.phase = Phase::Main;
-        }
-        ui.label(
+    // 否则用户点开"更换密钥"后无路可退。
+    // 布局：说明文案在上、按钮独占下一行（之前同行居右且按钮为弱化小按钮，
+    // 底色与卡片几乎相同，非常不显眼）
+    ui.add_space(4.0);
+    ui.separator();
+    ui.add_space(8.0);
+    ui.add(
+        egui::Label::new(
             egui::RichText::new(crate::i18n::tr(
                 "跳过后仍可查看实时行情与 K 线，随时可在设置页配置密钥",
             ))
             .size(theme::FONT_SM)
-            .color(theme::cur().text_dim.gamma_multiply(0.85)),
-        );
-    });
+            .color(theme::cur().text_dim),
+        )
+        .wrap_mode(egui::TextWrapMode::Wrap),
+    );
+    ui.add_space(6.0);
+    if theme::btn_secondary(ui, crate::i18n::tr("跳过，仅看行情"), true).clicked() {
+        app.api_key.clear();
+        app.api_secret.clear();
+        app.pw1.clear();
+        app.pw2.clear();
+        app.phase = Phase::Main;
+    }
 }
 
 /// 校验主密码并加密保存密钥，成功后进入主界面（保存按钮与 Secret 回车共用）
