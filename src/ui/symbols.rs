@@ -18,6 +18,12 @@ enum Row<'a> {
 
 /// 左侧交易对列表：搜索 + 自选置顶 + 全量虚拟化列表
 pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
+    // 实体滚动条（非悬浮）：悬浮条不占布局宽度却会把子控件的可用区撑宽约一个
+    // 条宽，行尾的星标因此被推出面板裁剪区（只露出半颗），还压住面板拖拽把手；
+    // 实体条真实占位，星标永远完整地停在内容区最右侧
+    ui.style_mut().spacing.scroll.floating = false;
+    // 滚动条与面板内缘留出间距：轨道贴边会盖住面板拖拽把手，把手拖不动
+    ui.style_mut().spacing.scroll.bar_outer_margin = 6.0;
     // 搜索框 + 非空时的 × 清除按钮（内联，避免占一行）
     let has_filter = !app.page.symbol_filter.is_empty();
     ui.horizontal(|ui| {
@@ -26,8 +32,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             .hint_text(crate::i18n::tr("搜索交易对…"))
             .text_color(theme::cur().text);
         search = if has_filter {
-            // 预留 × 按钮宽度，避免文本框被挤压后逐帧抖动
-            search.desired_width(ui.available_width() - 26.0)
+            // 预留 × 按钮宽度 + 间距余量，避免文本框/按钮贴到面板边被裁
+            search.desired_width(ui.available_width() - 34.0)
         } else {
             search.desired_width(f32::INFINITY)
         };
