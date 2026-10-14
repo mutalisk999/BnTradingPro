@@ -551,6 +551,9 @@ pub fn apply(ctx: &egui::Context) {
     style.spacing.button_padding = egui::vec2(12.0, 5.0);
     style.spacing.menu_margin = egui::Margin::symmetric(6, 4);
     style.spacing.combo_width = 90.0;
+    // 实体滚动条（非悬浮）：悬浮条盖在内容上层，会挡住最右侧的列
+    // （如成交明细的时间列）；实体条真实占位，任何滚动区的内容都完整可见
+    style.spacing.scroll.floating = false;
     style.text_styles = [
         (
             egui::TextStyle::Heading,
