@@ -98,7 +98,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 }
             });
         }
-        ui.horizontal(|ui| {
+        // form_row：固定行高 + 垂直居中（horizontal 里标签先放置会贴顶错位）
+        theme::form_row(ui, |ui| {
             let dual = state.acct.lock().fut_dual_side;
             ui.label(theme::card_label(if dual {
                 crate::i18n::tr("持仓模式：双向")

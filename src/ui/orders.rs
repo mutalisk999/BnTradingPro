@@ -68,7 +68,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
         return;
     }
     let list = state.orders.lock().open(market).clone();
-    ui.horizontal(|ui| {
+    theme::form_row(ui, |ui| {
         ui.label(
             egui::RichText::new(format!(
                 "{} · {}{}",
@@ -254,7 +254,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
             a.fut_dual_side,
         )
     };
-    ui.horizontal(|ui| {
+    theme::form_row(ui, |ui| {
         ui.label(
             egui::RichText::new(format!(
                 "{} · {}{}",
@@ -415,7 +415,7 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
         let o = state.orders.lock();
         (o.history.clone(), o.history_symbol.clone())
     };
-    ui.horizontal(|ui| {
+    theme::form_row(ui, |ui| {
         match &key {
             Some((m, s)) => ui.label(
                 egui::RichText::new(format!(
@@ -566,7 +566,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
         let o = state.orders.lock();
         (o.trades.clone(), o.history_symbol.clone())
     };
-    ui.horizontal(|ui| {
+    theme::form_row(ui, |ui| {
         ui.label(
             egui::RichText::new(format!(
                 "{} {}{}",
