@@ -116,14 +116,14 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
     TableBuilder::new(ui)
         .striped(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::auto().at_least(105.0)) // 时间
-        .column(Column::auto().at_least(85.0)) // 交易对
-        .column(Column::auto().at_least(55.0)) // 方向
-        .column(Column::auto().at_least(75.0)) // 类型
-        .column(Column::auto().at_least(95.0)) // 价格
-        .column(Column::auto().at_least(95.0)) // 数量
-        .column(Column::auto().at_least(95.0)) // 已成交
-        .column(Column::auto().at_least(70.0)) // 状态
+        .column(Column::auto().at_least(78.0)) // 时间
+        .column(Column::auto().at_least(72.0)) // 交易对
+        .column(Column::auto().at_least(36.0)) // 方向
+        .column(Column::auto().at_least(50.0)) // 类型
+        .column(Column::auto().at_least(70.0)) // 价格
+        .column(Column::auto().at_least(70.0)) // 数量
+        .column(Column::auto().at_least(70.0)) // 已成交
+        .column(Column::auto().at_least(44.0)) // 状态
         .column(Column::remainder()) // 操作
         .header(22.0, |mut h| {
             for (i, t) in [
@@ -297,14 +297,14 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
     TableBuilder::new(ui)
         .striped(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::auto().at_least(85.0))
-        .column(Column::auto().at_least(55.0))
-        .column(Column::auto().at_least(90.0))
-        .column(Column::auto().at_least(95.0))
-        .column(Column::auto().at_least(95.0))
-        .column(Column::auto().at_least(100.0))
-        .column(Column::auto().at_least(95.0))
-        .column(Column::auto().at_least(55.0))
+        .column(Column::auto().at_least(72.0))
+        .column(Column::auto().at_least(36.0))
+        .column(Column::auto().at_least(66.0))
+        .column(Column::auto().at_least(70.0))
+        .column(Column::auto().at_least(70.0))
+        .column(Column::auto().at_least(70.0))
+        .column(Column::auto().at_least(70.0))
+        .column(Column::auto().at_least(34.0))
         .column(Column::remainder())
         .header(22.0, |mut h| {
             for (i, t) in [
@@ -460,13 +460,13 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
     TableBuilder::new(ui)
         .striped(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::auto().at_least(105.0))
-        .column(Column::auto().at_least(85.0))
+        .column(Column::auto().at_least(78.0))
+        .column(Column::auto().at_least(72.0))
+        .column(Column::auto().at_least(36.0))
         .column(Column::auto().at_least(50.0))
-        .column(Column::auto().at_least(75.0))
-        .column(Column::auto().at_least(95.0))
-        .column(Column::auto().at_least(95.0))
-        .column(Column::auto().at_least(95.0))
+        .column(Column::auto().at_least(70.0))
+        .column(Column::auto().at_least(70.0))
+        .column(Column::auto().at_least(70.0))
         .column(Column::remainder())
         .header(22.0, |mut h| {
             for (i, t) in [
@@ -605,13 +605,13 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
     TableBuilder::new(ui)
         .striped(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::auto().at_least(105.0))
-        .column(Column::auto().at_least(85.0))
-        .column(Column::auto().at_least(50.0))
-        .column(Column::auto().at_least(95.0))
-        .column(Column::auto().at_least(95.0))
-        .column(Column::auto().at_least(110.0))
-        .column(Column::auto().at_least(90.0))
+        .column(Column::auto().at_least(78.0))
+        .column(Column::auto().at_least(72.0))
+        .column(Column::auto().at_least(36.0))
+        .column(Column::auto().at_least(70.0))
+        .column(Column::auto().at_least(70.0))
+        .column(Column::auto().at_least(80.0))
+        .column(Column::auto().at_least(60.0))
         .column(Column::remainder())
         .header(22.0, |mut h| {
             for (i, t) in [

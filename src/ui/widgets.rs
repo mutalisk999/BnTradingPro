@@ -48,13 +48,12 @@ pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
     );
 }
 
-/// 数字输入框：等宽字体 + 提示
-pub fn num_field(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str) {
+/// 数字输入框：等宽字体 + 提示；h = 控件高度（标准行 CONTROL_H，下单面板压到 22）
+pub fn num_field_h(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str, h: f32) {
     egui::TextEdit::singleline(text)
         .id_salt(id)
         .desired_width(120.0)
-        // 与 form_row 内的下拉框/按钮统一高度（26），消除行内高低错落
-        .min_size(egui::vec2(0.0, theme::CONTROL_H))
+        .min_size(egui::vec2(0.0, h))
         .font(egui::TextStyle::Monospace)
         .text_color(theme::cur().text)
         .hint_text(hint)
