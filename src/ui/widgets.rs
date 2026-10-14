@@ -10,11 +10,7 @@ use rust_decimal::Decimal;
 pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
     // 失败态只显示短标签，完整错误放悬停提示：长错误串会撑爆顶栏布局
     let (c, label, hover) = match st {
-        ConnState::Connected => (
-            theme::cur().up,
-            crate::i18n::tr("已连接").to_string(),
-            None,
-        ),
+        ConnState::Connected => (theme::cur().up, crate::i18n::tr("已连接").to_string(), None),
         ConnState::Connecting => (
             theme::cur().accent,
             crate::i18n::tr("连接中").to_string(),
@@ -200,12 +196,17 @@ fn draw_toast(ui: &mut egui::Ui, ctx: &egui::Context, state: &SharedState, i: us
     // 入场动画：仅出现后的 250ms 内推进动画值，之后恒为 1（不再每帧计算）
     let age_ms = t.at.elapsed().as_secs_f32() * 1000.0;
     let p = if age_ms < 250.0 {
-        ctx.animate_value_with_time(Id::new("toast_in").with(i as u64).with(t.msg.as_str()), 1.0, 0.25)
-            .clamp(0.0, 1.0)
+        ctx.animate_value_with_time(
+            Id::new("toast_in").with(i as u64).with(t.msg.as_str()),
+            1.0,
+            0.25,
+        )
+        .clamp(0.0, 1.0)
     } else {
         1.0
     };
-    let fade = |c: Color32| Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * p) as u8);
+    let fade =
+        |c: Color32| Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * p) as u8);
     let fg = fade(kind_color);
     let txt = fade(theme::cur().text);
     let bg = fade(theme::cur().panel2);
@@ -234,7 +235,11 @@ fn draw_toast(ui: &mut egui::Ui, ctx: &egui::Context, state: &SharedState, i: us
             let pr = ui.painter();
             pr.circle_filled(rect.center(), 9.0, fade(kind_color.gamma_multiply(0.2)));
             pr.circle_filled(rect.center(), 4.0, fg);
-            ui.label(egui::RichText::new(t.msg.as_str()).size(theme::FONT_MD).color(txt));
+            ui.label(
+                egui::RichText::new(t.msg.as_str())
+                    .size(theme::FONT_MD)
+                    .color(txt),
+            );
         });
     });
     // 左侧 kind 色条（3px）
@@ -265,6 +270,7 @@ fn draw_toast(ui: &mut egui::Ui, ctx: &egui::Context, state: &SharedState, i: us
     let clicked = inner
         .response
         .interact(egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(crate::i18n::tr("点击关闭"))
         .clicked();
     if clicked {
@@ -316,10 +322,12 @@ pub fn empty_state(ui: &mut egui::Ui, icon: &str, title: &str, subtitle: &str) {
             theme::cur().text_dim,
         );
         ui.add_space(2.0);
+        // 标题用正文色加粗压过副标题：空态也要有信息层级
         ui.label(
             egui::RichText::new(title)
                 .size(theme::FONT_BODY)
-                .color(theme::cur().text_dim),
+                .strong()
+                .color(theme::cur().text),
         );
         if !subtitle.is_empty() {
             ui.label(
@@ -329,6 +337,23 @@ pub fn empty_state(ui: &mut egui::Ui, icon: &str, title: &str, subtitle: &str) {
             );
         }
         ui.add_space(16.0);
+    });
+}
+
+/// 加载态：spinner + 暗字说明，并预留最小高度——数据到达后不从一行字
+/// 跳成整表（盘口/成交/资产等首帧加载共用）
+pub fn loading_state(ui: &mut egui::Ui, msg: &str) {
+    ui.allocate_ui(egui::vec2(ui.available_width(), 120.0), |ui| {
+        ui.vertical_centered(|ui| {
+            ui.add_space(28.0);
+            theme::spinner(ui);
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(msg)
+                    .size(theme::FONT_MD)
+                    .color(theme::cur().text_dim),
+            );
+        });
     });
 }
 

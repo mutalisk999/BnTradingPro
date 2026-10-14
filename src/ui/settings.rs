@@ -23,16 +23,26 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.separator();
 
     // ---------- 环境 ----------
-    theme::card_with_header(ui, crate::i18n::tr("交易环境"), |_| {}, |ui| {
-        theme::form_row(ui, |ui| {
-            ui.selectable_value(
-                &mut app.settings.testnet,
-                true,
-                crate::i18n::tr("测试网 (Testnet)"),
-            );
-            ui.selectable_value(&mut app.settings.testnet, false, crate::i18n::tr("实盘"));
+    theme::card_with_header(
+        ui,
+        crate::i18n::tr("交易环境"),
+        |_| {},
+        |ui| {
+            theme::form_row(ui, |ui| {
+                ui.selectable_value(
+                    &mut app.settings.testnet,
+                    true,
+                    crate::i18n::tr("测试网 (Testnet)"),
+                );
+                ui.selectable_value(&mut app.settings.testnet, false, crate::i18n::tr("实盘"));
+                if app.settings.testnet {
+                    theme::badge(ui, "TESTNET", theme::cur().accent);
+                } else {
+                    theme::badge(ui, crate::i18n::tr("实盘 · 真实资金"), theme::cur().err);
+                }
+            });
+            // 长提示放在行外独立换行：固定行高的 form_row 不换行，塞进来窄窗必截断
             if app.settings.testnet {
-                theme::badge(ui, "TESTNET", theme::cur().accent);
                 ui.label(
                     egui::RichText::new(crate::i18n::tr(
                         "测试网密钥在 testnet.binance.vision / testnet.binancefuture.com 申请",
@@ -40,27 +50,25 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     .size(theme::FONT_SM)
                     .color(theme::cur().text_dim),
                 );
-            } else {
-                theme::badge(ui, crate::i18n::tr("实盘 · 真实资金"), theme::cur().err);
             }
-        });
-        ui.label(
-            egui::RichText::new(crate::i18n::tr(
-                "测试网与实盘的 API 密钥不通用，切换环境后需重新配置密钥",
-            ))
-            .size(theme::FONT_SM)
-            .color(theme::cur().text_dim),
-        );
-        if !app.settings.testnet {
             ui.label(
                 egui::RichText::new(crate::i18n::tr(
-                    "⚠ 实盘模式下下单将使用真实资金，请确认密钥与环境正确！",
+                    "测试网与实盘的 API 密钥不通用，切换环境后需重新配置密钥",
                 ))
-                .size(theme::FONT_MD)
-                .color(theme::cur().err),
+                .size(theme::FONT_SM)
+                .color(theme::cur().text_dim),
             );
-        }
-    });
+            if !app.settings.testnet {
+                ui.label(
+                    egui::RichText::new(crate::i18n::tr(
+                        "⚠ 实盘模式下下单将使用真实资金，请确认密钥与环境正确！",
+                    ))
+                    .size(theme::FONT_MD)
+                    .color(theme::cur().err),
+                );
+            }
+        },
+    );
 
     // ---------- 代理 ----------
     theme::card_with_header(
@@ -68,145 +76,170 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         crate::i18n::tr("网络代理（REST 与 WebSocket 均生效）"),
         |_| {},
         |ui| {
-            ui.checkbox(&mut app.settings.proxy_enabled, crate::i18n::tr("启用代理"));
-        theme::form_row(ui, |ui| {
-            theme::row_label(ui, crate::i18n::tr("地址"), 40.0);
-            // 明文显示：便于核对代理主机与端口（凭据泄露风险已由
-            // ProxyConfig 的 Debug 脱敏与 config.toml 权限约束兜底）
-            ui.add(
-                egui::TextEdit::singleline(&mut app.settings.proxy_url)
-                    .text_color(theme::cur().text)
-                    .desired_width(320.0)
-                    .min_size(egui::vec2(0.0, theme::CONTROL_H))
-                    .hint_text(
-                        "http://127.0.0.1:7890 或 socks5://127.0.0.1:7890（支持 user:pass@）",
-                    ),
-            );
-        });
-    });
+            theme::form_row(ui, |ui| {
+                ui.checkbox(&mut app.settings.proxy_enabled, crate::i18n::tr("启用代理"));
+            });
+            theme::form_row(ui, |ui| {
+                theme::row_label(ui, crate::i18n::tr("地址"), 40.0);
+                // 明文显示：便于核对代理主机与端口（凭据泄露风险已由
+                // ProxyConfig 的 Debug 脱敏与 config.toml 权限约束兜底）
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.settings.proxy_url)
+                        .text_color(theme::cur().text)
+                        .desired_width(320.0)
+                        .min_size(egui::vec2(0.0, theme::CONTROL_H))
+                        .hint_text(
+                            "http://127.0.0.1:7890 或 socks5://127.0.0.1:7890（支持 user:pass@）",
+                        ),
+                );
+            });
+        },
+    );
 
     // ---------- 外观与语言 ----------
-    theme::card_with_header(ui, crate::i18n::tr("语言与主题"), |_| {}, |ui| {
-        theme::form_row(ui, |ui| {
-            theme::row_label(ui, crate::i18n::tr("语言"), 40.0);
-            let mut lang = app.settings.lang.clone();
-            egui::ComboBox::from_id_salt("lang_cb")
-                .selected_text(if lang == "en" {
-                    "English".to_string()
-                } else {
-                    "中文".to_string()
-                })
-                .width(90.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut lang, "zh".to_string(), "中文");
-                    ui.selectable_value(&mut lang, "en".to_string(), "English");
-                });
-            app.settings.lang = lang;
-            ui.separator();
-            theme::row_label(ui, crate::i18n::tr("主题"), 40.0);
-            let mut mode = app.settings.theme_mode.clone();
-            egui::ComboBox::from_id_salt("theme_cb")
-                .selected_text(if mode == "light" {
-                    crate::i18n::tr("浅色").to_string()
-                } else {
-                    crate::i18n::tr("深色").to_string()
-                })
-                .width(90.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut mode, "dark".to_string(), crate::i18n::tr("深色"));
-                    ui.selectable_value(&mut mode, "light".to_string(), crate::i18n::tr("浅色"));
-                });
-            app.settings.theme_mode = mode;
-            ui.separator();
-            // 涨跌方向：仅改全局色表（signed_color/up_color/down_color 即时翻转），
-            // 不涉及 egui Style/字体，无需重新 apply
-            theme::row_label(ui, crate::i18n::tr("涨跌色"), 40.0);
-            let mut dir = theme::PriceDir::from_cfg(&app.settings.price_dir);
-            egui::ComboBox::from_id_salt("price_dir_cb")
-                .selected_text(dir.label())
-                .width(110.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut dir, theme::PriceDir::GreenUp, theme::PriceDir::GreenUp.label());
-                    ui.selectable_value(&mut dir, theme::PriceDir::RedUp, theme::PriceDir::RedUp.label());
-                });
-            if dir.as_cfg() != app.settings.price_dir {
-                app.settings.price_dir = dir.as_cfg().to_string();
-                theme::set_price_dir_str(&app.settings.price_dir);
-                // 同步进运行时配置：顶栏/盘口等直接读 theme::up_color 的区域立即生效
-                let mut cfg = app.state.cfg.read().clone();
-                cfg.price_dir = app.settings.price_dir.clone();
-                *app.state.cfg.write() = cfg;
-                app.state.send_cmd(crate::engine::Command::PersistConfig);
-            }
-        });
-        ui.label(
-            egui::RichText::new(crate::i18n::tr(
-                "保存后生效；顶栏右侧 深色/浅色 与 中/EN 按钮可即时切换",
-            ))
-            .size(theme::FONT_SM)
-            .color(theme::cur().text_dim),
-        );
-    });
+    theme::card_with_header(
+        ui,
+        crate::i18n::tr("语言与主题"),
+        |_| {},
+        |ui| {
+            theme::form_row(ui, |ui| {
+                theme::row_label(ui, crate::i18n::tr("语言"), 40.0);
+                let mut lang = app.settings.lang.clone();
+                egui::ComboBox::from_id_salt("lang_cb")
+                    .selected_text(if lang == "en" {
+                        "English".to_string()
+                    } else {
+                        "中文".to_string()
+                    })
+                    .width(110.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut lang, "zh".to_string(), "中文");
+                        ui.selectable_value(&mut lang, "en".to_string(), "English");
+                    });
+                app.settings.lang = lang;
+                ui.separator();
+                theme::row_label(ui, crate::i18n::tr("主题"), 40.0);
+                let mut mode = app.settings.theme_mode.clone();
+                egui::ComboBox::from_id_salt("theme_cb")
+                    .selected_text(if mode == "light" {
+                        crate::i18n::tr("浅色").to_string()
+                    } else {
+                        crate::i18n::tr("深色").to_string()
+                    })
+                    .width(110.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut mode, "dark".to_string(), crate::i18n::tr("深色"));
+                        ui.selectable_value(
+                            &mut mode,
+                            "light".to_string(),
+                            crate::i18n::tr("浅色"),
+                        );
+                    });
+                app.settings.theme_mode = mode;
+                ui.separator();
+                // 涨跌方向：仅改全局色表（signed_color/up_color/down_color 即时翻转），
+                // 不涉及 egui Style/字体，无需重新 apply
+                theme::row_label(ui, crate::i18n::tr("涨跌色"), 40.0);
+                let mut dir = theme::PriceDir::from_cfg(&app.settings.price_dir);
+                egui::ComboBox::from_id_salt("price_dir_cb")
+                    .selected_text(dir.label())
+                    .width(110.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut dir,
+                            theme::PriceDir::GreenUp,
+                            theme::PriceDir::GreenUp.label(),
+                        );
+                        ui.selectable_value(
+                            &mut dir,
+                            theme::PriceDir::RedUp,
+                            theme::PriceDir::RedUp.label(),
+                        );
+                    });
+                if dir.as_cfg() != app.settings.price_dir {
+                    app.settings.price_dir = dir.as_cfg().to_string();
+                    theme::set_price_dir_str(&app.settings.price_dir);
+                    // 同步进运行时配置：顶栏/盘口等直接读 theme::up_color 的区域立即生效
+                    let mut cfg = app.state.cfg.read().clone();
+                    cfg.price_dir = app.settings.price_dir.clone();
+                    *app.state.cfg.write() = cfg;
+                    app.state.send_cmd(crate::engine::Command::PersistConfig);
+                }
+            });
+            ui.label(
+                egui::RichText::new(crate::i18n::tr(
+                    "保存后生效；顶栏右侧 深色/浅色 与 中/EN 按钮可即时切换",
+                ))
+                .size(theme::FONT_SM)
+                .color(theme::cur().text_dim),
+            );
+        },
+    );
 
     // ---------- 参数 ----------
-    theme::card_with_header(ui, crate::i18n::tr("请求参数"), |_| {}, |ui| {
-        theme::form_row(ui, |ui| {
-            ui.label(crate::i18n::tr("接收窗口"));
-            // 英文界面标签本身就是 "recvWindow"，仅中文界面补英文小字说明
-            if crate::i18n::lang() == crate::i18n::ZH {
-                ui.label(
-                    egui::RichText::new("recvWindow")
-                        .size(theme::FONT_SM)
-                        .color(theme::cur().text_dim),
+    theme::card_with_header(
+        ui,
+        crate::i18n::tr("请求参数"),
+        |_| {},
+        |ui| {
+            theme::form_row(ui, |ui| {
+                ui.label(crate::i18n::tr("接收窗口"));
+                // 英文界面标签本身就是 "recvWindow"，仅中文界面补英文小字说明
+                if crate::i18n::lang() == crate::i18n::ZH {
+                    ui.label(
+                        egui::RichText::new("recvWindow")
+                            .size(theme::FONT_SM)
+                            .color(theme::cur().text_dim),
+                    );
+                }
+                ui.add(
+                    egui::DragValue::new(&mut app.settings.recv_window_ms)
+                        .range(1000..=60000)
+                        .suffix(" ms"),
                 );
-            }
-            ui.add(
-                egui::DragValue::new(&mut app.settings.recv_window_ms)
-                    .range(1000..=60000)
-                    .suffix(" ms"),
-            );
-            ui.separator();
-            ui.label(crate::i18n::tr("HTTP 超时"));
-            ui.add(
-                egui::DragValue::new(&mut app.settings.http_timeout_secs)
-                    .range(3..=120)
-                    .suffix(" s"),
-            );
-            ui.separator();
-            ui.label(crate::i18n::tr("日志级别"));
-            egui::ComboBox::from_id_salt("log_level")
-                .selected_text(app.settings.log_level.clone())
-                .width(90.0)
-                .show_ui(ui, |ui| {
-                    for l in ["trace", "debug", "info", "warn", "error"] {
-                        ui.selectable_value(&mut app.settings.log_level, l.to_string(), l);
-                    }
-                });
-        });
-        theme::form_row(ui, |ui| {
-            ui.label(crate::i18n::tr("默认交易对"));
-            ui.add(
-                egui::TextEdit::singleline(&mut app.settings.default_symbol)
-                    .text_color(theme::cur().text)
-                    .desired_width(110.0)
-                    .min_size(egui::vec2(0.0, theme::CONTROL_H))
-                    .hint_text("BTCUSDT"),
-            );
-            ui.label(crate::i18n::tr("默认K线周期"));
-            egui::ComboBox::from_id_salt("default_iv")
-                .selected_text(app.settings.default_interval.clone())
-                .width(70.0)
-                .show_ui(ui, |ui| {
-                    for iv in crate::binance::Interval::all() {
-                        ui.selectable_value(
-                            &mut app.settings.default_interval,
-                            iv.as_str().to_string(),
-                            iv.label(),
-                        );
-                    }
-                });
-        });
-    });
+                ui.separator();
+                ui.label(crate::i18n::tr("HTTP 超时"));
+                ui.add(
+                    egui::DragValue::new(&mut app.settings.http_timeout_secs)
+                        .range(3..=120)
+                        .suffix(" s"),
+                );
+                ui.separator();
+                ui.label(crate::i18n::tr("日志级别"));
+                egui::ComboBox::from_id_salt("log_level")
+                    .selected_text(app.settings.log_level.clone())
+                    .width(110.0)
+                    .show_ui(ui, |ui| {
+                        for l in ["trace", "debug", "info", "warn", "error"] {
+                            ui.selectable_value(&mut app.settings.log_level, l.to_string(), l);
+                        }
+                    });
+            });
+            theme::form_row(ui, |ui| {
+                ui.label(crate::i18n::tr("默认交易对"));
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.settings.default_symbol)
+                        .text_color(theme::cur().text)
+                        .desired_width(110.0)
+                        .min_size(egui::vec2(0.0, theme::CONTROL_H))
+                        .hint_text("BTCUSDT"),
+                );
+                ui.label(crate::i18n::tr("默认K线周期"));
+                egui::ComboBox::from_id_salt("default_iv")
+                    .selected_text(app.settings.default_interval.clone())
+                    .width(110.0)
+                    .show_ui(ui, |ui| {
+                        for iv in crate::binance::Interval::all() {
+                            ui.selectable_value(
+                                &mut app.settings.default_interval,
+                                iv.as_str().to_string(),
+                                iv.label(),
+                            );
+                        }
+                    });
+            });
+        },
+    );
 
     // ---------- 端点覆盖 ----------
     let overridden = [
@@ -227,44 +260,49 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             }
         },
         |ui| {
-        egui::Grid::new("ep_grid")
-            .num_columns(2)
-            .spacing([10.0, 4.0])
-            .show(ui, |ui| {
-                ui.label(crate::i18n::tr("现货 REST"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.settings.override_spot_rest)
-                        .text_color(theme::cur().text)
-                        .desired_width(360.0)
-                        .hint_text("https://api.binance.com"),
-                );
-                ui.end_row();
-                ui.label(crate::i18n::tr("现货 WS"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.settings.override_spot_ws)
-                        .text_color(theme::cur().text)
-                        .desired_width(360.0)
-                        .hint_text("wss://stream.binance.com:9443"),
-                );
-                ui.end_row();
-                ui.label(crate::i18n::tr("合约 REST"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.settings.override_fut_rest)
-                        .text_color(theme::cur().text)
-                        .desired_width(360.0)
-                        .hint_text("https://fapi.binance.com"),
-                );
-                ui.end_row();
-                ui.label(crate::i18n::tr("合约 WS"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.settings.override_fut_ws)
-                        .text_color(theme::cur().text)
-                        .desired_width(360.0)
-                        .hint_text("wss://fstream.binance.com"),
-                );
-                ui.end_row();
-            });
-    });
+            egui::Grid::new("ep_grid")
+                .num_columns(2)
+                .spacing([10.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label(crate::i18n::tr("现货 REST"));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.settings.override_spot_rest)
+                            .text_color(theme::cur().text)
+                            .desired_width(360.0)
+                            .min_size(egui::vec2(0.0, theme::CONTROL_H))
+                            .hint_text("https://api.binance.com"),
+                    );
+                    ui.end_row();
+                    ui.label(crate::i18n::tr("现货 WS"));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.settings.override_spot_ws)
+                            .text_color(theme::cur().text)
+                            .desired_width(360.0)
+                            .min_size(egui::vec2(0.0, theme::CONTROL_H))
+                            .hint_text("wss://stream.binance.com:9443"),
+                    );
+                    ui.end_row();
+                    ui.label(crate::i18n::tr("合约 REST"));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.settings.override_fut_rest)
+                            .text_color(theme::cur().text)
+                            .desired_width(360.0)
+                            .min_size(egui::vec2(0.0, theme::CONTROL_H))
+                            .hint_text("https://fapi.binance.com"),
+                    );
+                    ui.end_row();
+                    ui.label(crate::i18n::tr("合约 WS"));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.settings.override_fut_ws)
+                            .text_color(theme::cur().text)
+                            .desired_width(360.0)
+                            .min_size(egui::vec2(0.0, theme::CONTROL_H))
+                            .hint_text("wss://fstream.binance.com"),
+                    );
+                    ui.end_row();
+                });
+        },
+    );
 
     // ---------- 应用 ----------
     // 主操作按钮：accent 填充（与解锁页主按钮一致），视觉层级高于普通按钮
@@ -276,91 +314,104 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.separator();
 
     // ---------- 密钥管理 ----------
-    theme::card_with_header(ui, crate::i18n::tr("API 密钥"), |_| {}, |ui| {
-        theme::form_row(ui, |ui| {
-            if state.has_creds() {
-                theme::badge(ui, crate::i18n::tr("已配置"), theme::cur().up);
-            } else {
-                theme::badge(
-                    ui,
-                    crate::i18n::tr("未配置（仅公开行情）"),
-                    theme::cur().warn,
-                );
-            }
-            if ui
-                .small_button(if state.has_creds() {
-                    crate::i18n::tr("更换密钥")
+    theme::card_with_header(
+        ui,
+        crate::i18n::tr("API 密钥"),
+        |_| {},
+        |ui| {
+            theme::form_row(ui, |ui| {
+                if state.has_creds() {
+                    theme::badge(ui, crate::i18n::tr("已配置"), theme::cur().up);
                 } else {
-                    crate::i18n::tr("配置密钥")
-                })
-                .clicked()
-            {
-                app.keys_err.clear();
-                app.api_key.clear();
-                app.api_secret.clear();
-                app.phase = Phase::EnterKeys;
-            }
-            if vault::vault_exists(&dir) {
-                // 破坏性操作两步确认：误点一次不会直接销毁唯一的本地密钥副本
-                let armed = app.vault_delete_armed;
-                let del = theme::btn_danger(
+                    theme::badge(
+                        ui,
+                        crate::i18n::tr("未配置（仅公开行情）"),
+                        theme::cur().warn,
+                    );
+                }
+                if theme::btn_default(
                     ui,
-                    if armed {
-                        crate::i18n::tr("确认删除凭据库？")
+                    if state.has_creds() {
+                        crate::i18n::tr("更换密钥")
                     } else {
-                        crate::i18n::tr("删除凭据库")
+                        crate::i18n::tr("配置密钥")
                     },
                     true,
-                );
-                if del.clicked() {
-                    if !armed {
-                        app.vault_delete_armed = true;
-                    } else {
-                        app.vault_delete_armed = false;
-                        let gone = match std::fs::remove_file(dir.join(vault::VAULT_FILE)) {
-                            Ok(()) => true,
-                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
-                            Err(_) => false,
-                        };
-                        if gone {
-                            state.set_creds(None);
-                            state.push_toast(
-                                ToastKind::Info,
-                                crate::i18n::tr("已删除本机凭据库").to_string(),
-                            );
-                            app.phase = Phase::EnterKeys;
+                )
+                .clicked()
+                {
+                    app.keys_err.clear();
+                    app.api_key.clear();
+                    app.api_secret.clear();
+                    app.phase = Phase::EnterKeys;
+                }
+                if vault::vault_exists(&dir) {
+                    // 破坏性操作两步确认：误点一次不会直接销毁唯一的本地密钥副本
+                    let armed = app.vault_delete_armed;
+                    let del = theme::btn_danger(
+                        ui,
+                        if armed {
+                            crate::i18n::tr("确认删除凭据库？")
                         } else {
-                            state.push_toast(
-                                ToastKind::Err,
-                                crate::i18n::tr("删除凭据库失败").to_string(),
-                            );
+                            crate::i18n::tr("删除凭据库")
+                        },
+                        true,
+                    );
+                    if del.clicked() {
+                        if !armed {
+                            app.vault_delete_armed = true;
+                        } else {
+                            app.vault_delete_armed = false;
+                            let gone = match std::fs::remove_file(dir.join(vault::VAULT_FILE)) {
+                                Ok(()) => true,
+                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                                Err(_) => false,
+                            };
+                            if gone {
+                                state.set_creds(None);
+                                state.push_toast(
+                                    ToastKind::Info,
+                                    crate::i18n::tr("已删除本机凭据库").to_string(),
+                                );
+                                app.phase = Phase::EnterKeys;
+                            } else {
+                                state.push_toast(
+                                    ToastKind::Err,
+                                    crate::i18n::tr("删除凭据库失败").to_string(),
+                                );
+                            }
                         }
                     }
                 }
-            }
-        });
-    });
+            });
+        },
+    );
 
     // ---------- 关于 ----------
-    theme::card_with_header(ui, crate::i18n::tr("关于"), |_| {}, |ui| {
-        ui.label(
-            egui::RichText::new(format!(
-                "BnTradingPro v{} · {} {}",
-                env!("CARGO_PKG_VERSION"),
-                crate::i18n::tr("数据目录"),
-                dir.display()
-            ))
-            .size(theme::FONT_SM)
-            .color(theme::cur().text_dim),
-        );
-        ui.label(
+    theme::card_with_header(
+        ui,
+        crate::i18n::tr("关于"),
+        |_| {},
+        |ui| {
+            ui.label(
+                egui::RichText::new(format!(
+                    "BnTradingPro v{} · {} {}",
+                    env!("CARGO_PKG_VERSION"),
+                    crate::i18n::tr("数据目录"),
+                    dir.display()
+                ))
+                .size(theme::FONT_SM)
+                .color(theme::cur().text_dim),
+            );
+            ui.label(
             egui::RichText::new(crate::i18n::tr(
                 "本工具仅供个人交易辅助与研究，不构成任何投资建议；使用实盘交易产生的一切后果由使用者自行承担。",
             ))
             .size(theme::FONT_SM)
             .color(theme::cur().text_dim),
         );
-    });
+        },
+    );
 
     if apply {
         // 自选列表不在设置页编辑（由侧栏星标实时修改 state.cfg），必须以 live

@@ -152,9 +152,9 @@ mod tests {
             symbol: "BTCUSDT".into(),
             base: "BTC".into(),
             quote: "USDT".into(),
-            tick: Decimal::new(1, 2),    // 0.01
-            step: Decimal::new(1, 5),    // 0.00001
-            min_qty: Decimal::new(1, 5), // 0.00001
+            tick: Decimal::new(1, 2),           // 0.01
+            step: Decimal::new(1, 5),           // 0.00001
+            min_qty: Decimal::new(1, 5),        // 0.00001
             min_notional: Decimal::new(500, 2), // 5.00
         }
     }

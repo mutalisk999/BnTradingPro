@@ -6,11 +6,11 @@ use crate::config::{self, AppConfig};
 use crate::engine::state::SharedState;
 use crate::engine::{Command, Engine};
 use crate::security::vault;
-use zeroize::Zeroizing;
 use crate::ui::{chart, orders, settings, theme, trade, unlock, widgets};
 use eframe::egui;
 use std::sync::Arc;
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -341,7 +341,8 @@ impl BnApp {
     fn refresh_account_data(&mut self, m: Market) {
         self.subscribe(m, self.page.symbol.clone(), self.page.interval);
         if self.state.has_creds() {
-            self.state.send_cmd(Command::RefreshOpenOrders { market: m });
+            self.state
+                .send_cmd(Command::RefreshOpenOrders { market: m });
             self.state.send_cmd(Command::RefreshHistory {
                 market: m,
                 symbol: self.page.symbol.clone(),
@@ -505,8 +506,7 @@ impl BnApp {
                 } else {
                     "EN"
                 };
-                if ui
-                    .small_button(egui::RichText::new(theme_txt).size(theme::FONT_MD))
+                if theme::btn_default(ui, theme_txt, true)
                     .on_hover_text(crate::i18n::tr("切换主题"))
                     .clicked()
                 {
@@ -526,8 +526,7 @@ impl BnApp {
                     *self.state.cfg.write() = cfg;
                     self.state.send_cmd(Command::PersistConfig);
                 }
-                if ui
-                    .small_button(egui::RichText::new(lang_txt).size(theme::FONT_MD))
+                if theme::btn_default(ui, lang_txt, true)
                     .on_hover_text(crate::i18n::tr("切换语言"))
                     .clicked()
                 {
@@ -811,15 +810,21 @@ impl BnApp {
                             crate::i18n::tr("确认 · 真实资金！")
                         )
                     };
-                    ui.label(egui::RichText::new(header).strong().color(if testnet {
-                        theme::cur().accent
-                    } else {
-                        theme::cur().err
-                    }));
+                    // 警示行是弹窗真正的信息核心，层级必须压过装饰性标题
+                    ui.label(
+                        egui::RichText::new(header)
+                            .strong()
+                            .size(theme::FONT_LG)
+                            .color(if testnet {
+                                theme::cur().accent
+                            } else {
+                                theme::cur().err
+                            }),
+                    );
                     ui.separator();
                     egui::Grid::new("confirm_grid")
                         .num_columns(2)
-                        .spacing([16.0, 5.0])
+                        .spacing([16.0, 8.0])
                         .show(ui, |ui| {
                             for (k, v) in &c.rows {
                                 ui.label(egui::RichText::new(k).color(theme::cur().text_dim));
@@ -831,16 +836,21 @@ impl BnApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // busy（含入队未执行）时禁用提交：防止重复点击发出双倍订单
                         let placing = self.state.is_busy("place");
-                        let submit_btn = ui.add_enabled(
-                            !placing,
-                            egui::Button::new(
-                                egui::RichText::new(crate::i18n::tr("确认提交")).strong(),
-                            ),
-                        );
+                        let (submit_fill, submit_txt) = if c.side == Side::Buy {
+                            (theme::cur().up, crate::i18n::tr("确认买入"))
+                        } else {
+                            (theme::cur().down, crate::i18n::tr("确认卖出"))
+                        };
+                        let submit_btn = theme::btn_solid(ui, submit_txt, submit_fill, !placing);
+                        let submit_btn = if placing {
+                            submit_btn.on_disabled_hover_text(crate::i18n::tr("上一笔请求处理中…"))
+                        } else {
+                            submit_btn
+                        };
                         if submit_btn.clicked() {
                             submit = true;
                         }
-                        let cancel_btn = ui.button(crate::i18n::tr("取消"));
+                        let cancel_btn = theme::btn_default(ui, crate::i18n::tr("取消"), true);
                         // 初始焦点落在取消上：回车/空格默认走安全路径；
                         // 仅当前无焦点控件时请求——每帧无条件抢占会让
                         // Tab 切换与 Enter 提交永远无法离开取消键
@@ -887,10 +897,10 @@ fn status_dot_bare(ui: &mut egui::Ui, ok: bool) {
 impl eframe::App for BnApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone(); // Context 内部是 Arc，克隆廉价；避免与 ui 的可变借用冲突
-        // 响应式等比缩放（防抖）：最大化/恢复会产生一串 resize 事件，在过渡帧
-        // （窗口高度骤减）应用 zoom 曾引发 chart 绘制的 clamp panic（已单独修复）；
-        // 仍保留防抖：仅当窗口物理尺寸稳定 ≥0.25s 后才应用 zoom，使缩放切换
-        // 与 resize 事件流错开，避免过渡帧下二次布局抖动
+                                    // 响应式等比缩放（防抖）：最大化/恢复会产生一串 resize 事件，在过渡帧
+                                    // （窗口高度骤减）应用 zoom 曾引发 chart 绘制的 clamp panic（已单独修复）；
+                                    // 仍保留防抖：仅当窗口物理尺寸稳定 ≥0.25s 后才应用 zoom，使缩放切换
+                                    // 与 resize 事件流错开，避免过渡帧下二次布局抖动
         {
             let rect = ctx.input(|i| i.raw.screen_rect).unwrap_or(egui::Rect::ZERO);
             let size = rect.size() * ctx.pixels_per_point();
@@ -931,9 +941,7 @@ impl eframe::App for BnApp {
         }
         // 开发辅助：BTP_DEMO=1 跳过解锁直接进主界面，便于无凭据调试/截图（仅 debug 构建编译）
         #[cfg(debug_assertions)]
-        if self.phase != Phase::Main
-            && std::env::var("BTP_DEMO").ok().as_deref() == Some("1")
-        {
+        if self.phase != Phase::Main && std::env::var("BTP_DEMO").ok().as_deref() == Some("1") {
             self.phase = Phase::Main;
         }
         if !matches!(self.phase, Phase::Main) {

@@ -195,11 +195,7 @@ fn macd(c: &[f64]) -> SubSeries {
     let e26 = ema(c, 26);
     let dif: Vec<f64> = e12.iter().zip(&e26).map(|(&a, &b)| a - b).collect();
     let dea = ema(&dif, 9);
-    let hist: Vec<f64> = dif
-        .iter()
-        .zip(&dea)
-        .map(|(&a, &b)| 2.0 * (a - b))
-        .collect();
+    let hist: Vec<f64> = dif.iter().zip(&dea).map(|(&a, &b)| 2.0 * (a - b)).collect();
     SubSeries {
         lines: vec![("DIF", Role::Accent, dif), ("DEA", Role::Warn, dea)],
         bars: Some(hist),

@@ -146,12 +146,12 @@ fn draw_env_hint(ctx: &egui::Context, app: &BnApp) {
 
 fn error_text(ui: &mut egui::Ui, msg: &str) {
     ui.horizontal_wrapped(|ui| {
-        ui.label(
-            egui::RichText::new("✗")
-                .color(theme::cur().err)
-                .strong()
-                .size(theme::FONT_MD),
-        );
+        // 图标与 toast 同款画法（圆形底 + 实心圆点）：✗ 字形在等宽字体优先
+        // 的字体栈下有缺字回退成豆腐块的风险
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+        let pr = ui.painter();
+        pr.circle_filled(rect.center(), 8.0, theme::cur().err.gamma_multiply(0.2));
+        pr.circle_filled(rect.center(), 3.5, theme::cur().err);
         ui.label(
             egui::RichText::new(msg)
                 .color(theme::cur().err)
@@ -293,7 +293,9 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         if vault_exists {
             // 已有凭据库时也必须能输入主密码（用于验证），否则 can_save 永远为
             // false，"更换密钥"流程会困死在本页
-            ui.label(theme::card_label(crate::i18n::tr("主密码（验证现有主密码）")));
+            ui.label(theme::card_label(crate::i18n::tr(
+                "主密码（验证现有主密码）",
+            )));
             let pw_resp = ui.add(
                 egui::TextEdit::singleline(&mut *app.pw1)
                     .password(true)

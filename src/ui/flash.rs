@@ -49,7 +49,11 @@ impl Flash {
 
     /// f64 观测：0/NaN 统一规整为 0，避免 NaN 比较恒不等导致每帧重复触发
     fn observe_f64(&mut self, now: f64, v: f64) -> (f32, i8) {
-        let bits = if v == 0.0 || v.is_nan() { 0 } else { v.to_bits() };
+        let bits = if v == 0.0 || v.is_nan() {
+            0
+        } else {
+            v.to_bits()
+        };
         self.observe(now, bits)
     }
 }
@@ -71,7 +75,11 @@ pub fn lerp_color(from: egui::Color32, to: egui::Color32, t: f32) -> egui::Color
         let b = b as f32;
         (a + (b - a) * t).round().clamp(0.0, 255.0) as u8
     };
-    egui::Color32::from_rgb(ch(from.r(), to.r()), ch(from.g(), to.g()), ch(from.b(), to.b()))
+    egui::Color32::from_rgb(
+        ch(from.r(), to.r()),
+        ch(from.g(), to.g()),
+        ch(from.b(), to.b()),
+    )
 }
 
 // ---------- 盘口位点集合 ----------

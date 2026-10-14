@@ -21,7 +21,9 @@ impl std::fmt::Debug for ProxyConfig {
                 format!("{scheme}//***@{host}")
             }
             // 无 scheme 但内嵌 userinfo 的写法同样脱敏
-            None if self.url.contains('@') => format!("***@{}", self.url.rsplit('@').next().unwrap_or("")),
+            None if self.url.contains('@') => {
+                format!("***@{}", self.url.rsplit('@').next().unwrap_or(""))
+            }
             None => self.url.clone(),
         };
         f.debug_struct("ProxyConfig")

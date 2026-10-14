@@ -29,10 +29,18 @@ pub fn show_book_panel(app: &mut BnApp, ui: &mut egui::Ui) {
     let prev = app.book_tab;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        if theme::nav_tab(ui, crate::i18n::tr("盘口 10 档"), app.book_tab == BookTab::Book) {
+        if theme::nav_tab(
+            ui,
+            crate::i18n::tr("盘口 10 档"),
+            app.book_tab == BookTab::Book,
+        ) {
             app.book_tab = BookTab::Book;
         }
-        if theme::nav_tab(ui, crate::i18n::tr("成交明细"), app.book_tab == BookTab::Trades) {
+        if theme::nav_tab(
+            ui,
+            crate::i18n::tr("成交明细"),
+            app.book_tab == BookTab::Trades,
+        ) {
             app.book_tab = BookTab::Trades;
         }
     });
@@ -59,20 +67,20 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .unwrap_or(2);
     let qdp = state
-        .with_rule(app.market, &app.page.symbol, |r| r.map(|x| x.qty_dp() as usize))
+        .with_rule(app.market, &app.page.symbol, |r| {
+            r.map(|x| x.qty_dp() as usize)
+        })
         .unwrap_or(4);
 
     // 短锁拷贝（价格, 数量）
     let (asks, bids) = {
         let md = state.md.lock();
         let Some(md) = md.get(app.market, &app.page.symbol) else {
-            ui.label(egui::RichText::new(crate::i18n::tr("加载中…")).color(theme::cur().text_dim));
+            widgets::loading_state(ui, crate::i18n::tr("加载中…"));
             return;
         };
         if md.depth.asks.is_empty() && md.depth.bids.is_empty() {
-            ui.label(
-                egui::RichText::new(crate::i18n::tr("等待深度数据…")).color(theme::cur().text_dim),
-            );
+            widgets::loading_state(ui, crate::i18n::tr("等待深度数据…"));
             return;
         }
         let take = |side: &Vec<crate::binance::model::Level>| {
@@ -142,18 +150,16 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     };
     let mid_f = widgets::f64_decimal(&mid);
     let spread_f = widgets::f64_decimal(&spread);
-    let spread_pct = if mid_f > 0.0 { spread_f / mid_f * 100.0 } else { 0.0 };
+    let spread_pct = if mid_f > 0.0 {
+        spread_f / mid_f * 100.0
+    } else {
+        0.0
+    };
     let one_sided = best_bid.is_none() || best_ask.is_none();
     let spread_txt = if spread.is_zero() && one_sided {
         String::new()
     } else {
-        format!(
-            "{} {:.*} ({:.3}%)",
-            crate::i18n::tr("价差"),
-            dp,
-            spread_f,
-            spread_pct
-        )
+        format!("{:.*} ({:.3}%)", dp, spread_f, spread_pct)
     };
     ui.allocate_ui(egui::vec2(w, 24.0), |ui| {
         ui.horizontal(|ui| {
@@ -165,8 +171,17 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
                     .color(theme::cur().text),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // 数值走等宽 + 正文色（信息数据不用暗色），"价差"标签才是辅助暗字
+                if !spread_txt.is_empty() {
+                    ui.label(
+                        egui::RichText::new(&spread_txt)
+                            .monospace()
+                            .size(theme::FONT_SM)
+                            .color(theme::cur().text),
+                    );
+                }
                 ui.label(
-                    egui::RichText::new(spread_txt)
+                    egui::RichText::new(crate::i18n::tr("价差"))
                         .size(theme::FONT_SM)
                         .color(theme::cur().text_dim),
                 );
@@ -204,7 +219,9 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
         let n = if g.is_ask { asks.len() } else { bids.len() };
         let (i, rect) = if g.is_ask {
             // ask 显示倒序：显示槽位 s ↔ 升序下标 n-1-s
-            let Some(j) = n.checked_sub(1 + g.slot) else { continue };
+            let Some(j) = n.checked_sub(1 + g.slot) else {
+                continue;
+            };
             (j, ask_rects[j])
         } else {
             if g.slot >= n {
@@ -348,13 +365,13 @@ fn book_row(
     let (q_int, _) = app.flash_book(ui.ctx(), site.qty_site(), idx, *qty_f);
     let intensity = p_int.max(q_int);
     if intensity > 0.0 {
-        ui.painter()
-            .rect_filled(rect, 0.0, price_color.gamma_multiply(theme::FLASH_ALPHA * intensity));
+        ui.painter().rect_filled(
+            rect,
+            0.0,
+            price_color.gamma_multiply(theme::FLASH_ALPHA * intensity),
+        );
     }
-    if resp.hovered() {
-        ui.painter().rect_filled(rect, 0.0, theme::cur().row_hover);
-    }
-    // 深度条
+    // 深度条（悬停高亮画在其上层，避免右半区悬停反馈被半透明深度条冲淡）
     let bar_w = (w as f64 * ratio.clamp(0.0, 1.0)) as f32;
     if bar_w > 0.5 {
         ui.painter().rect_filled(
@@ -365,6 +382,9 @@ fn book_row(
             0.0,
             bar_color,
         );
+    }
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, 0.0, theme::cur().row_hover);
     }
     // 价格（左）
     ui.painter().text(
@@ -401,14 +421,16 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .unwrap_or(2);
     let qdp = state
-        .with_rule(app.market, &app.page.symbol, |r| r.map(|x| x.qty_dp() as usize))
+        .with_rule(app.market, &app.page.symbol, |r| {
+            r.map(|x| x.qty_dp() as usize)
+        })
         .unwrap_or(4);
 
     // 短锁拷贝最近 30 笔后绘制
     let trades: Vec<crate::binance::model::TradeTick> = {
         let md = state.md.lock();
         let Some(md) = md.get(app.market, &app.page.symbol) else {
-            ui.label(egui::RichText::new(crate::i18n::tr("加载中…")).color(theme::cur().text_dim));
+            widgets::loading_state(ui, crate::i18n::tr("加载中…"));
             return;
         };
         md.trades.iter().rev().take(30).cloned().collect()
@@ -422,17 +444,34 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.label(text);
         });
     };
+    if trades.is_empty() {
+        widgets::empty_state(ui, "◍", crate::i18n::tr("暂无成交"), "");
+        return;
+    }
     egui::Grid::new("trades_grid")
         .num_columns(3)
         .spacing([12.0, 2.0])
         .show(ui, |ui| {
-            for t in ["价格", "数量", "时间"] {
-                ui.label(
-                    egui::RichText::new(crate::i18n::tr(t))
-                        .size(theme::FONT_SM)
-                        .color(theme::cur().text_dim),
-                );
-            }
+            // 表头与数据同列对齐：价格/数量右对齐（与 num_cell 同宽），时间左对齐
+            num_cell(
+                ui,
+                egui::RichText::new(crate::i18n::tr("价格"))
+                    .size(theme::FONT_SM)
+                    .color(theme::cur().text_dim),
+                72.0,
+            );
+            num_cell(
+                ui,
+                egui::RichText::new(crate::i18n::tr("数量"))
+                    .size(theme::FONT_SM)
+                    .color(theme::cur().text_dim),
+                64.0,
+            );
+            ui.label(
+                egui::RichText::new(crate::i18n::tr("时间"))
+                    .size(theme::FONT_SM)
+                    .color(theme::cur().text_dim),
+            );
             ui.end_row();
 
             for (row, t) in trades.iter().enumerate() {
@@ -455,26 +494,18 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
                 num_cell(
                     ui,
                     // 不做千分位分组，与盘口一致按规则精度定长显示，纵向小数点对齐
-                    egui::RichText::new(format!(
-                        "{:.*}",
-                        dp,
-                        widgets::f64_decimal(&t.price)
-                    ))
-                    .monospace()
-                    .size(theme::FONT_MD)
-                    .color(col),
+                    egui::RichText::new(format!("{:.*}", dp, widgets::f64_decimal(&t.price)))
+                        .monospace()
+                        .size(theme::FONT_MD)
+                        .color(col),
                     72.0,
                 );
                 num_cell(
                     ui,
-                    egui::RichText::new(format!(
-                        "{:.*}",
-                        qdp,
-                        widgets::f64_decimal(&t.qty)
-                    ))
-                    .monospace()
-                    .size(theme::FONT_MD)
-                    .color(theme::cur().text),
+                    egui::RichText::new(format!("{:.*}", qdp, widgets::f64_decimal(&t.qty)))
+                        .monospace()
+                        .size(theme::FONT_MD)
+                        .color(theme::cur().text),
                     64.0,
                 );
                 ui.label(
@@ -585,15 +616,14 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {
         if let Some(t) = &tick {
             // Extend：值标签不在数字内部断行，horizontal_wrapped 会把整个标签挪到下一行
-            let ext = |rt: egui::RichText| egui::Label::new(rt).wrap_mode(egui::TextWrapMode::Extend);
+            let ext =
+                |rt: egui::RichText| egui::Label::new(rt).wrap_mode(egui::TextWrapMode::Extend);
             let stat = |ui: &mut egui::Ui, label: &str, value: String, color: egui::Color32| {
                 ui.add(ext(theme::card_label(label)));
-                ui.add(ext(
-                    egui::RichText::new(value)
-                        .monospace()
-                        .size(theme::FONT_MD)
-                        .color(color),
-                ));
+                ui.add(ext(egui::RichText::new(value)
+                    .monospace()
+                    .size(theme::FONT_MD)
+                    .color(color)));
                 ui.add_space(4.0);
             };
             let o = widgets::fmt_thousands(widgets::f64_decimal(&t.open_price), dp);

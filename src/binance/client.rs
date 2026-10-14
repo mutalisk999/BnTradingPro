@@ -102,8 +102,9 @@ impl BinanceRest {
             .connect_timeout(Duration::from_secs(15))
             .user_agent(concat!("BnTradingPro/", env!("CARGO_PKG_VERSION")));
         if proxy.enabled && !proxy.url.trim().is_empty() {
-            let p = reqwest::Proxy::all(proxy.url.trim())
-                .map_err(|e| BinanceError::Network(format!("{}{e}", crate::i18n::tr("代理配置无效: "))))?;
+            let p = reqwest::Proxy::all(proxy.url.trim()).map_err(|e| {
+                BinanceError::Network(format!("{}{e}", crate::i18n::tr("代理配置无效: ")))
+            })?;
             builder = builder.proxy(p);
         }
         let http = builder

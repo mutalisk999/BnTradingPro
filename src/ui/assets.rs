@@ -21,12 +21,12 @@ fn load_failed_row(
                     .size(theme::FONT_SM)
                     .color(theme::cur().err),
             );
-            if ui.small_button(crate::i18n::tr("刷新账户")).clicked() {
+            if theme::btn_default(ui, crate::i18n::tr("刷新账户"), true).clicked() {
                 state.send_cmd(Command::RefreshAccount);
             }
         }
         None => {
-            ui.label(egui::RichText::new(crate::i18n::tr("加载中…")).color(theme::cur().text_dim));
+            widgets::loading_state(ui, crate::i18n::tr("加载中…"));
         }
     }
 }
@@ -105,21 +105,18 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             } else {
                 crate::i18n::tr("持仓模式：单向")
             }));
-            if ui.small_button(crate::i18n::tr("切换")).clicked() {
+            if theme::btn_default(ui, crate::i18n::tr("切换"), true).clicked() {
                 state.send_cmd(Command::SetDualSide { dual: !dual });
             }
-            if ui.small_button(crate::i18n::tr("刷新账户")).clicked() {
+            if theme::btn_default(ui, crate::i18n::tr("刷新账户"), true).clicked() {
                 state.send_cmd(Command::RefreshAccount);
             }
         });
     } else {
         // 加载失败（如代理/密钥问题）时不能死等：给出显式重试入口
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(crate::i18n::tr("合约账户加载中…"))
-                    .color(theme::cur().text_dim),
-            );
-            if ui.small_button(crate::i18n::tr("刷新账户")).clicked() {
+            widgets::loading_state(ui, crate::i18n::tr("合约账户加载中…"));
+            if theme::btn_default(ui, crate::i18n::tr("刷新账户"), true).clicked() {
                 state.send_cmd(Command::RefreshAccount);
             }
         });
@@ -202,9 +199,7 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
             for b in &nonzero {
                 body.row(22.0, |mut row| {
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(&b.asset).strong().size(theme::FONT_MD),
-                        );
+                        ui.label(egui::RichText::new(&b.asset).strong().size(theme::FONT_MD));
                     });
                     row.col(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -280,9 +275,7 @@ fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui
             for b in &assets {
                 body.row(22.0, |mut row| {
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(&b.asset).strong().size(theme::FONT_MD),
-                        );
+                        ui.label(egui::RichText::new(&b.asset).strong().size(theme::FONT_MD));
                     });
                     row.col(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -305,7 +298,11 @@ fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui
                     row.col(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let s = widgets::fmt_dec_grouped(&b.unrealized);
-                            let sign = if b.unrealized >= Decimal::ZERO { "+" } else { "" };
+                            let sign = if b.unrealized >= Decimal::ZERO {
+                                "+"
+                            } else {
+                                ""
+                            };
                             ui.label(
                                 egui::RichText::new(format!("{sign}{s}"))
                                     .monospace()
@@ -399,7 +396,12 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             (crate::i18n::tr("空"), theme::cur().down)
                         };
-                        ui.label(egui::RichText::new(txt).color(c).strong().size(theme::FONT_MD));
+                        ui.label(
+                            egui::RichText::new(txt)
+                                .color(c)
+                                .strong()
+                                .size(theme::FONT_MD),
+                        );
                     });
                     row.col(|ui| {
                         widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.amt.abs()), None);
@@ -412,7 +414,11 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                     row.col(|ui| {
                         let s = widgets::fmt_dec_grouped(&p.unrealized);
-                        let sign = if p.unrealized >= Decimal::ZERO { "+" } else { "" };
+                        let sign = if p.unrealized >= Decimal::ZERO {
+                            "+"
+                        } else {
+                            ""
+                        };
                         widgets::num_cell(
                             ui,
                             format!("{sign}{s}"),

@@ -68,21 +68,44 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let ma_colors = theme::ma_colors();
     ui.horizontal(|ui| {
         for (i, &period) in MA_PERIODS.iter().enumerate() {
-            let label = egui::RichText::new(format!("MA{period}"))
-                .size(theme::FONT_SM)
-                .strong();
-            let label = if app.page.chart.ma[i] {
-                label.color(ma_colors[i])
-            } else {
-                label.color(theme::cur().text_dim)
-            };
-            if ui
-                .add(
-                    egui::Button::selectable(app.page.chart.ma[i], label)
-                        .min_size(egui::vec2(0.0, theme::BTN_H)),
-                )
-                .clicked()
-            {
+            let on = app.page.chart.ma[i];
+            let label = format!("MA{period}");
+            // 仿 pill_tab 自绘：选中 = MA 专属色淡填充 + 同色文字，
+            // 不吃全局 selection 蓝（与金色 accent + ma_colors 体系冲突）；
+            // 填充透明度随 animate_bool 淡入淡出
+            let galley = ui.painter().layout_no_wrap(
+                label.clone(),
+                egui::FontId::proportional(theme::FONT_SM),
+                if on {
+                    ma_colors[i]
+                } else {
+                    theme::cur().text_dim
+                },
+            );
+            let size = egui::vec2(galley.size().x + 12.0, theme::BTN_H);
+            let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+            let anim = ui
+                .ctx()
+                .animate_bool(egui::Id::new("ma_toggle").with(i), on);
+            let mut fill = ma_colors[i].gamma_multiply(0.14 * anim);
+            if resp.hovered() && !on {
+                fill = theme::cur().row_hover;
+            }
+            ui.painter().rect_filled(rect, 4.0, fill);
+            ui.painter().galley(
+                rect.center() - galley.size() / 2.0,
+                galley,
+                if on {
+                    ma_colors[i]
+                } else {
+                    theme::cur().text_dim
+                },
+            );
+            let mut resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            if i == 0 {
+                resp = resp.on_hover_text(crate::i18n::tr("点按切换均线，图上叠加 MA5/10/20/60"));
+            }
+            if resp.clicked() {
                 app.page.chart.ma[i] = !app.page.chart.ma[i];
             }
         }
@@ -168,7 +191,12 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             widgets::placeholder(ui, ui.max_rect(), crate::i18n::tr("加载行情中…"));
             return;
         };
-        let key = (app.market, app.page.symbol.clone(), md.interval, md.kline_version);
+        let key = (
+            app.market,
+            app.page.symbol.clone(),
+            md.interval,
+            md.kline_version,
+        );
         if app.page.chart.cache_key.as_ref() != Some(&key) {
             app.page.chart.cache_klines = md.klines.clone();
             app.page.chart.cache_closes = md
@@ -223,7 +251,16 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     } else {
         Some(std::mem::take(&mut app.page.chart.sub_series).unwrap_or_default())
     };
-    draw(ui, app, &kls, &prefix, interval, dp, &overlays, sub.as_ref());
+    draw(
+        ui,
+        app,
+        &kls,
+        &prefix,
+        interval,
+        dp,
+        &overlays,
+        sub.as_ref(),
+    );
     app.page.chart.cache_klines = kls;
     app.page.chart.cache_closes = closes;
     app.page.chart.cache_prefix = prefix;
@@ -587,8 +624,8 @@ fn draw(
         if plot.contains(hp) && hp.x < plot.left() + chart_w {
             let cross = Stroke::new(0.7_f32, t.crosshair);
             // 定位 K 线：x 吸附到最近蜡烛中心（竖线与底部时间标签随之对齐）
-            let idx = ((((hp.x - plot.left()) / bar_w).round().max(0.0)) as usize)
-                .min(visible.len() - 1);
+            let idx =
+                ((((hp.x - plot.left()) / bar_w).round().max(0.0)) as usize).min(visible.len() - 1);
             let cx = x_of(idx);
             painter.extend(Shape::dashed_line(
                 &[Pos2::new(cx, plot.top()), Pos2::new(cx, plot.bottom())],
@@ -668,12 +705,15 @@ fn draw(
             );
             // 底部时间标签
             let t_txt = time_label_full(c.t);
-            let t_galley =
-                painter.layout_no_wrap(t_txt.clone(), FontId::monospace(theme::FONT_SM), theme::cur().text);
+            let t_galley = painter.layout_no_wrap(
+                t_txt.clone(),
+                FontId::monospace(theme::FONT_SM),
+                theme::cur().text,
+            );
             let tsz = t_galley.size() + Vec2::new(10.0, 4.0);
             // 标签比图表宽时上界会小于下界：钳非负防 clamp panic
-            let tx = (cx - tsz.x / 2.0)
-                .clamp(plot.left(), plot.left() + (chart_w - tsz.x).max(0.0));
+            let tx =
+                (cx - tsz.x / 2.0).clamp(plot.left(), plot.left() + (chart_w - tsz.x).max(0.0));
             painter.rect_filled(
                 Rect::from_min_size(Pos2::new(tx, plot.bottom() - tsz.y), tsz),
                 2.0,
@@ -699,16 +739,14 @@ fn draw(
     );
 
     // ---------- 左上角图例：交易对 · 周期 + 最新 MA 值 ----------
+    // 先铺 tag_bg 圆角贴片再画文字：图例直接叠在 K 线上时穿越蜡烛可读性差
     let last_gi = end as usize - 1;
     let mut legend_y = plot.top() + 8.0;
-    painter.text(
-        Pos2::new(plot.left() + 8.0, legend_y),
-        Align2::LEFT_TOP,
+    let mut legend_rows: Vec<(String, FontId, Color32)> = vec![(
         format!("{} · {}", app.page.symbol, interval.label()),
         FontId::proportional(theme::FONT_SM),
         theme::cur().text_dim,
-    );
-    legend_y += 16.0;
+    )];
     for (k, &period) in MA_PERIODS.iter().enumerate() {
         if !app.page.chart.ma[k] {
             continue;
@@ -716,14 +754,39 @@ fn draw(
         let val = sma_at(last_gi, period)
             .map(|v| widgets::fmt_thousands(v, dp as usize))
             .unwrap_or_else(|| "—".into());
-        painter.text(
-            Pos2::new(plot.left() + 8.0, legend_y),
-            Align2::LEFT_TOP,
+        legend_rows.push((
             format!("MA{period} {val}"),
             FontId::monospace(theme::FONT_SM),
             ma_colors[k],
+        ));
+    }
+    let legend_w = legend_rows
+        .iter()
+        .map(|(s, f, _)| {
+            painter
+                .layout_no_wrap(s.clone(), f.clone(), Color32::WHITE)
+                .size()
+                .x
+        })
+        .fold(0.0_f32, |a, b| a.max(b));
+    let legend_h = legend_rows.len() as f32 * 14.0 + 4.0;
+    painter.rect_filled(
+        Rect::from_min_size(
+            Pos2::new(plot.left() + 4.0, plot.top() + 4.0),
+            egui::vec2(legend_w + 12.0, legend_h),
+        ),
+        4.0,
+        theme::cur().tag_bg.gamma_multiply(0.75),
+    );
+    for (ri, (txt, font, color)) in legend_rows.iter().enumerate() {
+        painter.text(
+            Pos2::new(plot.left() + 8.0, legend_y),
+            Align2::LEFT_TOP,
+            txt,
+            font.clone(),
+            *color,
         );
-        legend_y += 14.0;
+        legend_y += if ri == 0 { 16.0 } else { 14.0 };
     }
 }
 
@@ -775,7 +838,10 @@ fn draw_sub_panel(
 
     // 面板上下边界线（与主图分隔）
     painter.line_segment(
-        [Pos2::new(rect.left(), rect.top()), Pos2::new(rect.right(), rect.top())],
+        [
+            Pos2::new(rect.left(), rect.top()),
+            Pos2::new(rect.right(), rect.top()),
+        ],
         Stroke::new(0.5_f32, t.grid),
     );
     painter.line_segment(
@@ -882,7 +948,10 @@ fn draw_sub_panel(
             let v = *v;
             if v.is_nan() {
                 if pts.len() > 1 {
-                    painter.add(Shape::line(std::mem::take(&mut pts), Stroke::new(1.2_f32, col)));
+                    painter.add(Shape::line(
+                        std::mem::take(&mut pts),
+                        Stroke::new(1.2_f32, col),
+                    ));
                 } else {
                     pts.clear();
                 }
@@ -911,11 +980,8 @@ fn draw_sub_panel(
     let mut lx = rect.left() + 8.0;
     for (name, role, _) in &sub.lines {
         let col = role_color(*role);
-        let gal = painter.layout_no_wrap(
-            (*name).to_string(),
-            FontId::monospace(theme::FONT_SM),
-            col,
-        );
+        let gal =
+            painter.layout_no_wrap((*name).to_string(), FontId::monospace(theme::FONT_SM), col);
         painter.galley(Pos2::new(lx, rect.top() + 2.0), gal.clone(), col);
         lx += gal.size().x + 10.0;
     }

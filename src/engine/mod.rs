@@ -149,76 +149,106 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) -> Engine {
                     // 配独立监督协程（原先串行 await，先阻塞在永不返回的 cmd
                     // 循环上，WS 任务死亡根本轮不到被观察），保证崩溃可见
                     // （日志 + 错误 toast），WS 循环自动重启（最多 3 次）
-                    let supervise = |name: &'static str,
-                                     h: tokio::task::JoinHandle<()>,
-                                     state: Arc<SharedState>,
-                                     ctx: egui::Context,
-                                     tx: mpsc::UnboundedSender<Command>,
-                                     sub_rx: watch::Receiver<Option<SubSpec>>| {
-                        tokio::spawn(async move {
-                            let result = h.await;
-                            tracing::error!("引擎后台任务退出({name}): {result:?}");
-                            state.push_toast(
-                                ToastKind::Err,
-                                format!("{}{name}", crate::i18n::tr("后台任务异常退出: ")),
-                            );
-                            repaint(&ctx);
-                            // 命令循环持有命令接收端，无法重建，只能提示重启
-                            if name == "cmd" {
+                    let supervise =
+                        |name: &'static str,
+                         h: tokio::task::JoinHandle<()>,
+                         state: Arc<SharedState>,
+                         ctx: egui::Context,
+                         tx: mpsc::UnboundedSender<Command>,
+                         sub_rx: watch::Receiver<Option<SubSpec>>| {
+                            tokio::spawn(async move {
+                                let result = h.await;
+                                tracing::error!("引擎后台任务退出({name}): {result:?}");
                                 state.push_toast(
                                     ToastKind::Err,
-                                    crate::i18n::tr("命令处理任务已停止，请重启应用").to_string(),
+                                    format!("{}{name}", crate::i18n::tr("后台任务异常退出: ")),
                                 );
-                                return;
-                            }
-                            let mut restarts = 0;
-                            loop {
-                                let started = tokio::time::Instant::now();
-                                let h2 = match name {
-                                    "market" => tokio::spawn(market_ws_loop(
-                                        ctx.clone(),
-                                        state.clone(),
-                                        sub_rx.clone(),
-                                    )),
-                                    "user-spot" => tokio::spawn(user_ws_loop(
-                                        ctx.clone(),
-                                        state.clone(),
-                                        Market::Spot,
-                                        tx.clone(),
-                                    )),
-                                    _ => tokio::spawn(user_ws_loop(
-                                        ctx.clone(),
-                                        state.clone(),
-                                        Market::UmFutures,
-                                        tx.clone(),
-                                    )),
-                                };
-                                let res = h2.await;
-                                tracing::error!("引擎后台任务重启后再次退出({name}): {res:?}");
-                                // 稳定运行超过 10min 后再退出视为新的独立故障，
-                                // 重置计数，避免累计 3 次后永久放弃重启
-                                if started.elapsed() > Duration::from_secs(600) {
-                                    restarts = 0;
-                                }
-                                restarts += 1;
-                                if restarts >= 3 {
+                                repaint(&ctx);
+                                // 命令循环持有命令接收端，无法重建，只能提示重启
+                                if name == "cmd" {
                                     state.push_toast(
                                         ToastKind::Err,
-                                        format!(
-                                            "{}{name} ×3",
-                                            crate::i18n::tr("任务反复退出，请重启应用: ")
-                                        ),
+                                        crate::i18n::tr("命令处理任务已停止，请重启应用")
+                                            .to_string(),
                                     );
-                                    break;
+                                    return;
                                 }
-                                tokio::time::sleep(Duration::from_secs(5)).await;
-                            }
-                        });
-                    };
-                    supervise("cmd", h_cmd, state.clone(), ctx.clone(), tx.clone(), sub_rx.clone());
-                    supervise("market", h_market, state.clone(), ctx.clone(), tx.clone(), sub_rx.clone());
-                    supervise("user-spot", h_user_spot, state.clone(), ctx.clone(), tx.clone(), sub_rx.clone());
-                    supervise("user-futures", h_user_fut, state.clone(), ctx.clone(), tx.clone(), sub_rx.clone());
+                                let mut restarts = 0;
+                                loop {
+                                    let started = tokio::time::Instant::now();
+                                    let h2 = match name {
+                                        "market" => tokio::spawn(market_ws_loop(
+                                            ctx.clone(),
+                                            state.clone(),
+                                            sub_rx.clone(),
+                                        )),
+                                        "user-spot" => tokio::spawn(user_ws_loop(
+                                            ctx.clone(),
+                                            state.clone(),
+                                            Market::Spot,
+                                            tx.clone(),
+                                        )),
+                                        _ => tokio::spawn(user_ws_loop(
+                                            ctx.clone(),
+                                            state.clone(),
+                                            Market::UmFutures,
+                                            tx.clone(),
+                                        )),
+                                    };
+                                    let res = h2.await;
+                                    tracing::error!("引擎后台任务重启后再次退出({name}): {res:?}");
+                                    // 稳定运行超过 10min 后再退出视为新的独立故障，
+                                    // 重置计数，避免累计 3 次后永久放弃重启
+                                    if started.elapsed() > Duration::from_secs(600) {
+                                        restarts = 0;
+                                    }
+                                    restarts += 1;
+                                    if restarts >= 3 {
+                                        state.push_toast(
+                                            ToastKind::Err,
+                                            format!(
+                                                "{}{name} ×3",
+                                                crate::i18n::tr("任务反复退出，请重启应用: ")
+                                            ),
+                                        );
+                                        break;
+                                    }
+                                    tokio::time::sleep(Duration::from_secs(5)).await;
+                                }
+                            });
+                        };
+                    supervise(
+                        "cmd",
+                        h_cmd,
+                        state.clone(),
+                        ctx.clone(),
+                        tx.clone(),
+                        sub_rx.clone(),
+                    );
+                    supervise(
+                        "market",
+                        h_market,
+                        state.clone(),
+                        ctx.clone(),
+                        tx.clone(),
+                        sub_rx.clone(),
+                    );
+                    supervise(
+                        "user-spot",
+                        h_user_spot,
+                        state.clone(),
+                        ctx.clone(),
+                        tx.clone(),
+                        sub_rx.clone(),
+                    );
+                    supervise(
+                        "user-futures",
+                        h_user_fut,
+                        state.clone(),
+                        ctx.clone(),
+                        tx.clone(),
+                        sub_rx.clone(),
+                    );
                     // 常驻
                     loop {
                         tokio::time::sleep(Duration::from_secs(3600)).await;
@@ -939,9 +969,7 @@ async fn handle_cmd(
             }
         }
         // 订单类命令已在 cmd_loop 中并发派发，不会进入 handle_cmd
-        Command::PlaceOrder { .. }
-        | Command::CancelOrder { .. }
-        | Command::CancelAll { .. } => {}
+        Command::PlaceOrder { .. } | Command::CancelOrder { .. } | Command::CancelAll { .. } => {}
     }
 }
 

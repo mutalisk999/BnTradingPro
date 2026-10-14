@@ -178,7 +178,11 @@ pub fn is_light() -> bool {
 pub fn cur() -> Theme {
     let base = if is_light() { LIGHT } else { DARK };
     if PRICE_DIR.load(std::sync::atomic::Ordering::Relaxed) == DIR_RED_UP {
-        Theme { up: base.down, down: base.up, ..base }
+        Theme {
+            up: base.down,
+            down: base.up,
+            ..base
+        }
     } else {
         base
     }
@@ -226,7 +230,11 @@ pub const DIR_RED_UP: u8 = 1;
 
 /// 由配置字符串设置涨跌方向
 pub fn set_price_dir_str(s: &str) {
-    let v = if s == "red_up" { DIR_RED_UP } else { DIR_GREEN_UP };
+    let v = if s == "red_up" {
+        DIR_RED_UP
+    } else {
+        DIR_GREEN_UP
+    };
     PRICE_DIR.store(v, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -283,7 +291,9 @@ pub fn ma_colors() -> [Color32; 4] {
 
 /// 彩色小徽标
 pub fn badge(ui: &mut egui::Ui, text: &str, fg: Color32) {
-    let txt = egui::RichText::new(format!(" {text} ")).size(FONT_SM).strong();
+    let txt = egui::RichText::new(format!(" {text} "))
+        .size(FONT_SM)
+        .strong();
     egui::Frame::default()
         .fill(fg.gamma_multiply(0.22))
         .stroke(Stroke::new(1.0_f32, fg.gamma_multiply(0.85)))
@@ -339,13 +349,25 @@ pub fn btn_danger(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respons
     // 用半透明红叠加：gamma_multiply 在浅色主题下会变成近黑色块
     // （egui 0.36 移除了 ecolor::lerp_color；自透明向 c 以 t 渐显 ≈ 全通道乘 t）
     let fill = cur().err.gamma_multiply(0.16);
+    let btn = egui::Button::new(egui::RichText::new(text).size(FONT_BODY).color(cur().err))
+        .fill(fill)
+        .stroke(Stroke::new(1.0_f32, cur().err.gamma_multiply(0.55)))
+        .corner_radius(6)
+        .min_size(egui::vec2(0.0, BTN_H));
+    ui.add_enabled(enabled, btn)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// 语义实心按钮（横排、自适应宽）：涨/跌色实心填充 + on_fill 文字。
+/// 用于确认弹窗的提交键等"彩色即语义"的场合（btn_primary 是全宽金色，场景不同）
+pub fn btn_solid(ui: &mut egui::Ui, text: &str, fill: Color32, enabled: bool) -> egui::Response {
     let btn = egui::Button::new(
         egui::RichText::new(text)
+            .strong()
             .size(FONT_BODY)
-            .color(cur().err),
+            .color(cur().on_fill),
     )
     .fill(fill)
-    .stroke(Stroke::new(1.0_f32, cur().err.gamma_multiply(0.55)))
     .corner_radius(6)
     .min_size(egui::vec2(0.0, BTN_H));
     ui.add_enabled(enabled, btn)
@@ -369,7 +391,9 @@ pub fn pill_tab(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response 
     let pad_x = 12.0;
     let size = egui::vec2(galley.size().x + pad_x * 2.0, BTN_H);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-    let anim = ui.ctx().animate_bool(egui::Id::new("pill_tab").with(label), active);
+    let anim = ui
+        .ctx()
+        .animate_bool(egui::Id::new("pill_tab").with(label), active);
     // 半透明 accent 叠加：深浅两主题下都是"淡淡的 accent 色块"
     let mut fill = t.accent.gamma_multiply(0.16 * anim);
     if resp.hovered() && !active {
@@ -528,11 +552,20 @@ pub fn apply(ctx: &egui::Context) {
     style.spacing.menu_margin = egui::Margin::symmetric(6, 4);
     style.spacing.combo_width = 90.0;
     style.text_styles = [
-        (egui::TextStyle::Heading, egui::FontId::proportional(FONT_HERO)),
+        (
+            egui::TextStyle::Heading,
+            egui::FontId::proportional(FONT_HERO),
+        ),
         (egui::TextStyle::Body, egui::FontId::proportional(FONT_BODY)),
-        (egui::TextStyle::Button, egui::FontId::proportional(FONT_BODY)),
+        (
+            egui::TextStyle::Button,
+            egui::FontId::proportional(FONT_BODY),
+        ),
         (egui::TextStyle::Small, egui::FontId::proportional(FONT_SM)),
-        (egui::TextStyle::Monospace, egui::FontId::monospace(FONT_BODY)),
+        (
+            egui::TextStyle::Monospace,
+            egui::FontId::monospace(FONT_BODY),
+        ),
     ]
     .into();
     // 0.35+ 按主题分别持有 Style；本应用自带明暗配色（theme::cur()），两个主题统一用同一份

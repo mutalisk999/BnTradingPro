@@ -92,7 +92,8 @@ pub fn save_creds(dir: &Path, password: &str, creds: &Creds) -> Result<(), Strin
             .mode(0o600)
             .open(&tmp)
             .map_err(|e| format!("写入凭据文件失败({}): {e}", tmp.display()))?;
-        f.write_all(&buf).map_err(|e| format!("写入凭据文件失败({}): {e}", tmp.display()))?;
+        f.write_all(&buf)
+            .map_err(|e| format!("写入凭据文件失败({}): {e}", tmp.display()))?;
         // 兜底：文件已存在等异常路径下 mode 不生效，rename 前再校验一次
         if let Err(e) = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)) {
             let _ = std::fs::remove_file(&tmp);

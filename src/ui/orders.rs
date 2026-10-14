@@ -59,8 +59,11 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     let market = app.market;
     if !state.has_creds() {
-        ui.label(
-            egui::RichText::new(crate::i18n::tr("未配置 API 密钥")).color(theme::cur().text_dim),
+        widgets::empty_state(
+            ui,
+            "◎",
+            crate::i18n::tr("未配置 API 密钥"),
+            crate::i18n::tr("在设置页配置密钥后查看"),
         );
         return;
     }
@@ -75,7 +78,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
             ))
             .size(theme::FONT_MD),
         );
-        if ui.small_button(crate::i18n::tr("刷新")).clicked() {
+        if theme::btn_default(ui, crate::i18n::tr("刷新"), true).clicked() {
             state.send_cmd(Command::RefreshOpenOrders { market });
         }
         if !list.is_empty() {
@@ -146,11 +149,11 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                 body.row(28.0, |mut row| {
                     row.col(|ui| {
                         ui.label(
-                            egui::RichText::new(widgets::fmt_time(o.time)).size(theme::FONT_SM),
+                            egui::RichText::new(widgets::fmt_time(o.time)).size(theme::FONT_MD),
                         );
                     });
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(&o.symbol).strong().size(theme::FONT_SM));
+                        ui.label(egui::RichText::new(&o.symbol).strong().size(theme::FONT_MD));
                     });
                     row.col(|ui| {
                         let c = if o.side == "BUY" {
@@ -165,7 +168,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         };
                         ui.label(
                             egui::RichText::new(txt)
-                                .size(theme::FONT_SM)
+                                .size(theme::FONT_MD)
                                 .color(c)
                                 .strong(),
                         );
@@ -178,7 +181,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         };
                         ui.label(
                             egui::RichText::new(format!("{}{extra}", type_cn(&o.order_type)))
-                                .size(theme::FONT_SM),
+                                .size(theme::FONT_MD),
                         );
                     });
                     row.col(|ui| {
@@ -205,7 +208,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                     row.col(|ui| {
                         ui.label(
                             egui::RichText::new(status_cn(&o.status))
-                                .size(theme::FONT_SM)
+                                .size(theme::FONT_MD)
                                 .color(theme::cur().accent),
                         );
                     });
@@ -232,8 +235,11 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
 pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     if !state.has_creds() {
-        ui.label(
-            egui::RichText::new(crate::i18n::tr("未配置 API 密钥")).color(theme::cur().text_dim),
+        widgets::empty_state(
+            ui,
+            "◎",
+            crate::i18n::tr("未配置 API 密钥"),
+            crate::i18n::tr("在设置页配置密钥后查看"),
         );
         return;
     }
@@ -258,16 +264,19 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
             ))
             .size(theme::FONT_MD),
         );
-        if ui.small_button(crate::i18n::tr("刷新")).clicked() {
+        if theme::btn_default(ui, crate::i18n::tr("刷新"), true).clicked() {
             state.send_cmd(Command::RefreshAccount);
         }
-        if ui
-            .small_button(if dual {
+        if theme::btn_default(
+            ui,
+            if dual {
                 crate::i18n::tr("切换单向持仓")
             } else {
                 crate::i18n::tr("切换双向持仓")
-            })
-            .clicked()
+            },
+            true,
+        )
+        .clicked()
         {
             state.send_cmd(Command::SetDualSide { dual: !dual });
         }
@@ -321,7 +330,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                 body.row(28.0, |mut row| {
                     let long = p.amt > Decimal::ZERO;
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(&p.symbol).strong().size(theme::FONT_SM));
+                        ui.label(egui::RichText::new(&p.symbol).strong().size(theme::FONT_MD));
                     });
                     row.col(|ui| {
                         let (txt, c) = if long {
@@ -333,7 +342,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                             egui::RichText::new(txt)
                                 .color(c)
                                 .strong()
-                                .size(theme::FONT_SM),
+                                .size(theme::FONT_MD),
                         );
                     });
                     row.col(|ui| {
@@ -352,7 +361,11 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                             theme::cur().down
                         };
                         let s = widgets::fmt_dec_grouped(&p.unrealized);
-                        let sign = if p.unrealized >= Decimal::ZERO { "+" } else { "" };
+                        let sign = if p.unrealized >= Decimal::ZERO {
+                            "+"
+                        } else {
+                            ""
+                        };
                         widgets::num_cell(ui, format!("{sign}{s}"), Some(c));
                     });
                     row.col(|ui| {
@@ -366,10 +379,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                     row.col(|ui| {
                         widgets::num_cell(
                             ui,
-                            format!(
-                                "{}x",
-                                crate::ui::widgets::f64_decimal(&p.leverage) as i64
-                            ),
+                            format!("{}x", crate::ui::widgets::f64_decimal(&p.leverage) as i64),
                             None,
                         );
                     });
@@ -393,8 +403,11 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
 pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     if !state.has_creds() {
-        ui.label(
-            egui::RichText::new(crate::i18n::tr("未配置 API 密钥")).color(theme::cur().text_dim),
+        widgets::empty_state(
+            ui,
+            "◎",
+            crate::i18n::tr("未配置 API 密钥"),
+            crate::i18n::tr("在设置页配置密钥后查看"),
         );
         return;
     }
@@ -419,8 +432,14 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     .color(theme::cur().text_dim),
             ),
         };
-        if let Some((m, s)) = key.clone() {
-            if ui.small_button(crate::i18n::tr("刷新")).clicked() {
+        let resp = theme::btn_default(ui, crate::i18n::tr("刷新"), key.is_some());
+        let resp = if key.is_none() {
+            resp.on_disabled_hover_text(crate::i18n::tr("请先在交易页选择交易对"))
+        } else {
+            resp
+        };
+        if resp.clicked() {
+            if let Some((m, s)) = key.clone() {
                 state.send_cmd(Command::RefreshHistory {
                     market: m,
                     symbol: s,
@@ -471,11 +490,11 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 body.row(22.0, |mut row| {
                     row.col(|ui| {
                         ui.label(
-                            egui::RichText::new(widgets::fmt_time(o.time)).size(theme::FONT_SM),
+                            egui::RichText::new(widgets::fmt_time(o.time)).size(theme::FONT_MD),
                         );
                     });
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(&o.symbol).size(theme::FONT_SM));
+                        ui.label(egui::RichText::new(&o.symbol).size(theme::FONT_MD));
                     });
                     row.col(|ui| {
                         let c = if o.side == "BUY" {
@@ -488,10 +507,10 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             crate::i18n::tr("卖出")
                         };
-                        ui.label(egui::RichText::new(word).color(c).size(theme::FONT_SM));
+                        ui.label(egui::RichText::new(word).color(c).size(theme::FONT_MD));
                     });
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(type_cn(&o.order_type)).size(theme::FONT_SM));
+                        ui.label(egui::RichText::new(type_cn(&o.order_type)).size(theme::FONT_MD));
                     });
                     row.col(|ui| {
                         // 止损/止盈单 price 为 0 时展示触发价
@@ -523,7 +542,7 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         ui.label(
                             egui::RichText::new(status_cn(&o.status))
                                 .color(c)
-                                .size(theme::FONT_SM),
+                                .size(theme::FONT_MD),
                         );
                     });
                 });
@@ -535,8 +554,11 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
 pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     if !state.has_creds() {
-        ui.label(
-            egui::RichText::new(crate::i18n::tr("未配置 API 密钥")).color(theme::cur().text_dim),
+        widgets::empty_state(
+            ui,
+            "◎",
+            crate::i18n::tr("未配置 API 密钥"),
+            crate::i18n::tr("在设置页配置密钥后查看"),
         );
         return;
     }
@@ -554,12 +576,13 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
             ))
             .size(theme::FONT_MD),
         );
-        let resp = ui.add_enabled(
-            hist_key.is_some(),
-            egui::Button::new(crate::i18n::tr("刷新")).small(),
-        );
-        // 尚未选定交易对时刷新是空操作：禁用并说明，避免"点了没反应"
-        let resp = resp.on_disabled_hover_text(crate::i18n::tr("请先在交易页选择交易对"));
+        // 尚未选定交易对时按钮置灰而非消失：工具条高度不跳变，禁用原因悬停可见
+        let resp = theme::btn_default(ui, crate::i18n::tr("刷新"), hist_key.is_some());
+        let resp = if hist_key.is_none() {
+            resp.on_disabled_hover_text(crate::i18n::tr("请先在交易页选择交易对"))
+        } else {
+            resp
+        };
         if resp.clicked() {
             if let Some((m, s)) = hist_key.clone() {
                 state.send_cmd(Command::RefreshHistory {
@@ -612,11 +635,11 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 body.row(22.0, |mut row| {
                     row.col(|ui| {
                         ui.label(
-                            egui::RichText::new(widgets::fmt_time(t.time)).size(theme::FONT_SM),
+                            egui::RichText::new(widgets::fmt_time(t.time)).size(theme::FONT_MD),
                         );
                     });
                     row.col(|ui| {
-                        ui.label(egui::RichText::new(&t.symbol).size(theme::FONT_SM));
+                        ui.label(egui::RichText::new(&t.symbol).size(theme::FONT_MD));
                     });
                     row.col(|ui| {
                         let (txt, c) = if t.is_buyer {
@@ -624,7 +647,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             (crate::i18n::tr("卖出"), theme::cur().down)
                         };
-                        ui.label(egui::RichText::new(txt).color(c).size(theme::FONT_SM));
+                        ui.label(egui::RichText::new(txt).color(c).size(theme::FONT_MD));
                     });
                     row.col(|ui| {
                         widgets::num_cell(ui, widgets::fmt_dec_grouped(&t.price), None);
@@ -658,7 +681,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     row.col(|ui| {
                         ui.label(
                             egui::RichText::new(if t.is_maker { "maker" } else { "taker" })
-                                .size(theme::FONT_SM)
+                                .size(theme::FONT_MD)
                                 .color(theme::cur().text_dim),
                         );
                     });

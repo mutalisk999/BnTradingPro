@@ -30,7 +30,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         let mut search = egui::TextEdit::singleline(&mut app.page.symbol_filter)
             .id_salt("sidebar_search")
             .hint_text(crate::i18n::tr("搜索交易对…"))
-            .text_color(theme::cur().text);
+            .text_color(theme::cur().text)
+            // 与全站控件高一致（26）：默认 interact_size(~18) 偏矮，且 × 按钮更高会错位
+            .min_size(egui::vec2(0.0, theme::CONTROL_H));
         search = if has_filter {
             // 预留 × 按钮宽度 + 间距余量，避免文本框/按钮贴到面板边被裁
             search.desired_width(ui.available_width() - 34.0)
@@ -38,13 +40,18 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             search.desired_width(f32::INFINITY)
         };
         ui.add(search);
-        if has_filter
-            && ui
-                .small_button("×")
+        if has_filter {
+            let clear = egui::Button::new("×")
+                .fill(egui::Color32::TRANSPARENT)
+                .min_size(egui::vec2(0.0, theme::CONTROL_H));
+            if ui
+                .add(clear)
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(crate::i18n::tr("清空搜索"))
                 .clicked()
-        {
-            app.page.symbol_filter.clear();
+            {
+                app.page.symbol_filter.clear();
+            }
         }
     });
     ui.add_space(2.0);
@@ -88,7 +95,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // contains 检查，逐帧做成本低）。列表面板自身的 show_rows 虚拟化——
     // 每帧只构造可见行的控件。缓存键带规则版本：ReloadAll 重拉
     // exchangeInfo 后旧列表必须失效
-    let rules_ver = app.state.rules_version.load(std::sync::atomic::Ordering::Relaxed);
+    let rules_ver = app
+        .state
+        .rules_version
+        .load(std::sync::atomic::Ordering::Relaxed);
     let cached = app
         .symbols_cache
         .as_ref()
@@ -156,14 +166,15 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             for i in range {
                 let y0 = top + (i - start) as f32 * SYMBOL_ROW_H;
                 let rect = egui::Rect::from_x_y_ranges(x_range, y0..=(y0 + SYMBOL_ROW_H));
-                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |row_ui| {
-                    match &rows[i] {
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(rect),
+                    |row_ui| match &rows[i] {
                         Row::Section(title) => section_row(row_ui, title),
                         Row::Sym(sym, is_fav) => {
                             symbol_row(row_ui, app, sym, *is_fav, &mut switched, &mut toggled);
                         }
-                    }
-                });
+                    },
+                );
             }
         });
     apply_actions(app, switched, toggled);
@@ -216,11 +227,7 @@ fn symbol_row(
             theme::cur().accent,
         );
     } else if anim > 0.0 {
-        painter.rect_filled(
-            row_rect,
-            3.0,
-            theme::cur().row_hover.gamma_multiply(anim),
-        );
+        painter.rect_filled(row_rect, 3.0, theme::cur().row_hover.gamma_multiply(anim));
     }
     ui.horizontal(|ui| {
         // 星标固定宽 + 固定 4px 间距，名称按钮宽度由此推算：
@@ -229,11 +236,13 @@ fn symbol_row(
         ui.spacing_mut().item_spacing.x = 4.0;
         let name_w = ui.available_width() - STAR_W - 4.0;
         let name_txt = {
-            let t = egui::RichText::new(sym).size(theme::FONT_MD).color(if selected {
-                theme::cur().accent
-            } else {
-                theme::cur().text
-            });
+            let t = egui::RichText::new(sym)
+                .size(theme::FONT_MD)
+                .color(if selected {
+                    theme::cur().accent
+                } else {
+                    theme::cur().text
+                });
             if selected {
                 t.strong()
             } else {
@@ -260,11 +269,13 @@ fn symbol_row(
             *switched = Some(sym.to_string());
         }
         let star = if is_fav { "★" } else { "☆" };
-        let star_txt = egui::RichText::new(star).size(theme::FONT_BODY).color(if is_fav {
-            theme::cur().accent
-        } else {
-            theme::cur().text_dim
-        });
+        let star_txt = egui::RichText::new(star)
+            .size(theme::FONT_BODY)
+            .color(if is_fav {
+                theme::cur().accent
+            } else {
+                theme::cur().text_dim
+            });
         if ui
             .add(
                 egui::Button::new(star_txt)

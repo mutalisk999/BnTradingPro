@@ -203,11 +203,13 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 };
                 theme::form_row(ui, |ui| {
                     field_label(ui, crate::i18n::tr("持仓方向"));
-                    ui.label(
-                        egui::RichText::new(pos_txt)
-                            .strong()
-                            .color(theme::cur().accent),
-                    );
+                    // 方向信息用涨跌语义色：金色 accent 是主操作/激活态专用，不做信息着色
+                    let dir_color = if pos_txt.contains("LONG") {
+                        theme::up_color()
+                    } else {
+                        theme::down_color()
+                    };
+                    ui.label(egui::RichText::new(pos_txt).strong().color(dir_color));
                 });
             }
             if !dual {
@@ -227,11 +229,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     .and_then(|d| d.to_string().parse::<u32>().ok())
                     .unwrap_or(0);
                 if lev > 0 {
-                    ui.label(
-                        egui::RichText::new(format!("{lev}x"))
-                            .strong()
-                            .color(theme::cur().accent),
-                    );
+                    ui.label(egui::RichText::new(format!("{lev}x")).strong());
                 }
                 widgets::num_field(
                     ui,
@@ -239,7 +237,11 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     &mut app.page.leverage_input,
                     crate::i18n::tr("杠杆倍数"),
                 );
-                if ui.button(crate::i18n::tr("设定")).clicked() {
+                if ui
+                    .button(crate::i18n::tr("设定"))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
                     match app.page.leverage_input.trim().parse::<u32>() {
                         Ok(l) if (1..=125).contains(&l) => {
                             state.send_cmd(Command::SetLeverage {
@@ -264,7 +266,12 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         if app.page.form.kind != UiKind::Market {
             theme::form_row(ui, |ui| {
                 field_label(ui, crate::i18n::tr("价格"));
-                widgets::num_field(ui, "price_in", &mut app.page.form.price, crate::i18n::tr("价格"));
+                widgets::num_field(
+                    ui,
+                    "price_in",
+                    &mut app.page.form.price,
+                    crate::i18n::tr("价格"),
+                );
                 // 一键填价：盘口最优买卖一价 + 最新价
                 best_px_buttons(ui, app, market, &symbol);
             });
@@ -288,7 +295,12 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         }
         theme::form_row(ui, |ui| {
             field_label(ui, crate::i18n::tr("数量"));
-            widgets::num_field(ui, "qty_in", &mut app.page.form.qty, crate::i18n::tr("数量"));
+            widgets::num_field(
+                ui,
+                "qty_in",
+                &mut app.page.form.qty,
+                crate::i18n::tr("数量"),
+            );
             if let Some(r) = &rule {
                 ui.label(
                     egui::RichText::new(format!(
@@ -308,6 +320,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             for pct in [25.0, 50.0, 75.0, 100.0] {
                 if ui
                     .small_button(format!("{}%", pct as i32))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(crate::i18n::tr("按可用余额估算"))
                     .clicked()
                 {
@@ -446,7 +459,18 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     .fill(color)
     .corner_radius(5)
     .min_size(egui::vec2(ui.available_width(), theme::BTN_LG));
-    let resp = ui.add_enabled(btn_enabled, btn).on_hover_cursor(egui::CursorIcon::PointingHand);
+    let resp = ui
+        .add_enabled(btn_enabled, btn)
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let resp = if !btn_enabled {
+        resp.on_disabled_hover_text(if busy {
+            crate::i18n::tr("上一笔请求处理中…")
+        } else {
+            crate::i18n::tr("请先修正表单中标红的错误")
+        })
+    } else {
+        resp
+    };
     if busy {
         ui.horizontal(|ui| {
             theme::spinner(ui);
@@ -511,7 +535,12 @@ fn best_px_buttons(ui: &mut egui::Ui, app: &mut BnApp, market: Market, symbol: &
         show_mid = true;
     }
     let mut fill = |ui: &mut egui::Ui, label: &str, price: Decimal| {
-        if ui.small_button(label).clicked() {
+        if ui
+            .small_button(label)
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(crate::i18n::tr("点击填入下单价格"))
+            .clicked()
+        {
             app.page.form.price = price.normalize().to_string();
         }
     };
@@ -532,20 +561,21 @@ fn best_px_buttons(ui: &mut egui::Ui, app: &mut BnApp, market: Market, symbol: &
     }
 }
 
-/// 校验错误红条：非空时显示在提交按钮上方
+/// 校验错误红条：非空时显示在提交按钮上方。
+/// 用语义 err 色——down 色留给行情涨跌，错误与"跌"不是一个概念
 fn err_bar(ui: &mut egui::Ui, err: &str) {
     if err.is_empty() {
         return;
     }
     egui::Frame::default()
-        .fill(theme::cur().down.gamma_multiply(0.16))
+        .fill(theme::cur().err.gamma_multiply(0.16))
         .corner_radius(3)
         .inner_margin(egui::Margin::symmetric(8, 5))
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new(err)
                     .size(theme::FONT_SM)
-                    .color(theme::cur().down),
+                    .color(theme::cur().err),
             );
         });
 }
@@ -612,28 +642,27 @@ pub fn build_request(app: &BnApp) -> Result<OrderRequest, String> {
     );
     // 收集该交易对全部非零仓位：同 symbol 双向持仓时取 find 第一个
     // 可能平错边（如 SELL+LONG 平掉多头），两个方向都在仓时直接拒绝
-    let existing: Option<bool> = if market == Market::UmFutures && protective {
-        let longs: Vec<bool> = state
-            .acct
-            .lock()
-            .fut_positions
-            .iter()
-            .filter(|p| p.symbol == symbol && p.amt != Decimal::ZERO)
-            .map(|p| p.amt > Decimal::ZERO)
-            .collect();
-        match longs.len() {
-            0 => None,
-            1 => Some(longs[0]),
-            _ => {
-                return Err(crate::i18n::tr(
+    let existing: Option<bool> =
+        if market == Market::UmFutures && protective {
+            let longs: Vec<bool> = state
+                .acct
+                .lock()
+                .fut_positions
+                .iter()
+                .filter(|p| p.symbol == symbol && p.amt != Decimal::ZERO)
+                .map(|p| p.amt > Decimal::ZERO)
+                .collect();
+            match longs.len() {
+                0 => None,
+                1 => Some(longs[0]),
+                _ => return Err(crate::i18n::tr(
                     "该交易对同时存在多空双向持仓，无法确定止盈止损的平仓方向，请先手动平掉一侧",
                 )
-                .to_string())
+                .to_string()),
             }
-        }
-    } else {
-        None
-    };
+        } else {
+            None
+        };
     // 双向持仓：限价/市价跟随买卖方向开仓（买入=LONG，卖出=SHORT）。
     // 保护单在已有持仓时一律平掉现有持仓——持仓方向取持仓侧，同时订单方向
     // 必须取平仓方向（多平=SELL+LONG，空平=BUY+SHORT）；只改持仓方向不改
@@ -666,7 +695,8 @@ pub fn build_request(app: &BnApp) -> Result<OrderRequest, String> {
     let reduce_only = if dual {
         false
     } else {
-        app.page.form.reduce_only || (market == Market::UmFutures && protective && existing.is_some())
+        app.page.form.reduce_only
+            || (market == Market::UmFutures && protective && existing.is_some())
     };
     Ok(OrderRequest {
         symbol,
@@ -684,7 +714,9 @@ fn fill_by_pct(app: &mut BnApp, pct: f64) {
     let state = &app.state;
     let market = app.market;
     let symbol = app.page.symbol.clone();
-    let Some(r) = state.rule_of(market, &symbol) else { return };
+    let Some(r) = state.rule_of(market, &symbol) else {
+        return;
+    };
 
     // 参考价：优先表单价格，其次最新价
     let ref_price = widgets::parse_dec(&app.page.form.price).or_else(|| {
@@ -755,8 +787,9 @@ fn fill_by_pct(app: &mut BnApp, pct: f64) {
                 .get(&symbol)
                 .and_then(|d| d.to_string().parse::<f64>().ok())
                 .unwrap_or(1.0);
-            take(f_opt)
-                .map(|f| Decimal::try_from(f * lev * pct * 0.999 / price_f).unwrap_or(Decimal::ZERO))
+            take(f_opt).map(|f| {
+                Decimal::try_from(f * lev * pct * 0.999 / price_f).unwrap_or(Decimal::ZERO)
+            })
         }
     };
     let Some(qty) = qty else { return };

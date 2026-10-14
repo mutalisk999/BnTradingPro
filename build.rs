@@ -7,8 +7,8 @@ fn main() {
 
     #[cfg(windows)]
     {
-        let png = std::fs::read("assets/binance-icon.png")
-            .expect("读取 assets/binance-icon.png 失败");
+        let png =
+            std::fs::read("assets/binance-icon.png").expect("读取 assets/binance-icon.png 失败");
         let img = image::load_from_memory(&png).expect("解析图标 PNG 失败");
         // ico 资源用 256×256 单尺寸：Windows 会按需缩放小尺寸
         let ico = img.resize_exact(256, 256, image::imageops::FilterType::Lanczos3);
