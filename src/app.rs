@@ -671,6 +671,21 @@ impl BnApp {
 
         // 图表最大化：右侧下单/盘口/成交与底部订单区全部隐藏，图表占满中央区
         if !self.chart_maximized {
+            // 底部订单区先显示、横贯全宽：若放在右侧面板之后，它只拿到两侧面板
+            // 之间的 ~340px，持仓/挂单表格的右侧列放不下直接被裁掉（看起来像被
+            // 盘口/交易面板挡住）。先显示底部面板，右侧面板会自动从其上方开始
+            egui::Panel::bottom("orders_panel")
+                .resizable(true)
+                .default_size(240.0)
+                .min_size(120.0)
+                .max_size(500.0)
+                .frame(
+                    egui::Frame::default()
+                        .fill(theme::cur().panel)
+                        .inner_margin(8.0),
+                )
+                .show(ui, |ui| self.sub_tabs(ui));
+
             egui::Panel::right("trade_panel")
                 .resizable(true)
                 .default_size(300.0)
@@ -699,19 +714,6 @@ impl BnApp {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| crate::ui::market::show_book_panel(self, ui));
                 });
-
-            // 底部订单区（顶层面板，横贯全宽）
-            egui::Panel::bottom("orders_panel")
-                .resizable(true)
-                .default_size(240.0)
-                .min_size(120.0)
-                .max_size(500.0)
-                .frame(
-                    egui::Frame::default()
-                        .fill(theme::cur().panel)
-                        .inner_margin(8.0),
-                )
-                .show(ui, |ui| self.sub_tabs(ui));
         }
 
         // 中央：页头 + 图表
