@@ -148,9 +148,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                 // 行高 28：容纳 btn_danger（BTN_H）按钮
                 body.row(28.0, |mut row| {
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(widgets::fmt_time(o.time)).size(theme::FONT_MD),
-                        );
+                        widgets::num_cell(ui, widgets::fmt_time(o.time), None);
                     });
                     row.col(|ui| {
                         ui.label(egui::RichText::new(&o.symbol).strong().size(theme::FONT_MD));
@@ -489,9 +487,7 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
             for o in &hist {
                 body.row(22.0, |mut row| {
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(widgets::fmt_time(o.time)).size(theme::FONT_MD),
-                        );
+                        widgets::num_cell(ui, widgets::fmt_time(o.time), None);
                     });
                     row.col(|ui| {
                         ui.label(egui::RichText::new(&o.symbol).size(theme::FONT_MD));
@@ -634,9 +630,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
             for t in &trades {
                 body.row(22.0, |mut row| {
                     row.col(|ui| {
-                        ui.label(
-                            egui::RichText::new(widgets::fmt_time(t.time)).size(theme::FONT_MD),
-                        );
+                        widgets::num_cell(ui, widgets::fmt_time(t.time), None);
                     });
                     row.col(|ui| {
                         ui.label(egui::RichText::new(&t.symbol).size(theme::FONT_MD));

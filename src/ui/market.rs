@@ -452,7 +452,7 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         .num_columns(3)
         .spacing([12.0, 2.0])
         .show(ui, |ui| {
-            // 表头与数据同列对齐：价格/数量右对齐（与 num_cell 同宽），时间左对齐
+            // 表头与数据同列对齐：价格/数量/时间均右对齐（与 num_cell 同宽）
             num_cell(
                 ui,
                 egui::RichText::new(crate::i18n::tr("价格"))
@@ -467,10 +467,12 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
                     .color(theme::cur().text_dim),
                 64.0,
             );
-            ui.label(
+            num_cell(
+                ui,
                 egui::RichText::new(crate::i18n::tr("时间"))
                     .size(theme::FONT_SM)
                     .color(theme::cur().text_dim),
+                58.0,
             );
             ui.end_row();
 
@@ -508,11 +510,13 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
                         .color(theme::cur().text),
                     64.0,
                 );
-                ui.label(
+                num_cell(
+                    ui,
                     egui::RichText::new(widgets::fmt_time_short(t.time))
                         .monospace()
                         .size(theme::FONT_MD)
                         .color(theme::cur().text_dim),
+                    58.0,
                 );
                 ui.end_row();
             }
