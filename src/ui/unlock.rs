@@ -205,7 +205,9 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
         app.phase = Phase::Main;
     }
     ui.add_space(4.0);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    // Align::Min（顶对齐）：Align::Center 会让按钮在剩余全部高度里垂直居中，
+    // 该行的包围盒因此一路撑到区域底部——卡片被凭空拉高 ~250pt，按钮悬在半空
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
         let dir = config::data_dir();
         // 破坏性操作两步确认：误点一次不会直接销毁唯一的本地密钥副本
         let armed = app.vault_delete_armed;
