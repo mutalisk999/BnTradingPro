@@ -74,7 +74,7 @@ pub struct TradeTick {
 }
 
 /// K 线
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Candle {
     pub t: i64,
     pub o: Decimal,
@@ -222,6 +222,38 @@ pub struct SymbolConfig {
     pub symbol: String,
     #[serde(rename = "leverage", deserialize_with = "dec", default)]
     pub leverage: Decimal,
+    /// 保证金模式（"CROSSED" 全仓 / "ISOLATED" 逐仓）
+    #[serde(rename = "marginType", default)]
+    pub margin_type: String,
+}
+
+/// 全市场迷你 ticker（`!miniTicker@arr` 流条目，约 1s 一批）
+#[derive(Debug, Clone, Deserialize)]
+pub struct MiniTicker {
+    #[serde(rename = "s", default)]
+    pub symbol: String,
+    #[serde(rename = "c", deserialize_with = "dec", default)]
+    pub close: Decimal,
+    /// 24h 开盘价：2026-03 拆分后期货负载没有 `P`（涨跌幅）字段，
+    /// 由 (close-open)/open 现算兜底
+    #[serde(rename = "o", deserialize_with = "dec", default)]
+    pub open: Decimal,
+    /// 24h 涨跌幅（百分数值，如 2.35 表示 +2.35%；现货负载带 `P`）
+    #[serde(rename = "P", deserialize_with = "dec", default)]
+    pub change_pct: Decimal,
+}
+
+impl MiniTicker {
+    /// 涨跌幅：优先负载自带的 `P`，缺失时按开/收盘价现算
+    pub fn chg_pct(&self) -> Decimal {
+        if !self.change_pct.is_zero() {
+            return self.change_pct;
+        }
+        if self.open.is_zero() {
+            return Decimal::ZERO;
+        }
+        (self.close - self.open) / self.open * Decimal::from(100)
+    }
 }
 
 /// 双向持仓模式状态（GET /fapi/v1/positionSide/dual）
@@ -387,6 +419,32 @@ pub struct FutExec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 2026-03 API 拆分后期货 `!miniTicker@arr` 条目：无 `P`（涨跌幅）字段，
+    /// 多出 `ps`/`st`；`P` 缺失时 change_pct 应回落为 0 而不是整帧解析失败
+    #[test]
+    fn parse_mini_ticker_without_change_pct() {
+        let list: Vec<MiniTicker> = serde_json::from_str(
+            r#"[{"e":"24hrMiniTicker","E":1792069172222,"s":"SUIUSDT","ps":"SUIUSDT",
+                 "c":"0.969100","o":"1.027400","h":"1.038000","l":"0.960300",
+                 "v":"310134669.7","q":"310980223.789500","st":1}]"#,
+        )
+        .unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].symbol, "SUIUSDT");
+        assert_eq!(list[0].close.to_string(), "0.969100");
+        assert!(list[0].change_pct.is_zero());
+        // 无 `P` 时按 (c-o)/o 现算：0.9691/1.0274-1 ≈ -5.6745%
+        let chg = list[0].chg_pct();
+        assert!((chg - Decimal::new(-56745, 4)).abs() < Decimal::new(1, 4));
+
+        // 现货旧格式仍带 `P`
+        let list: Vec<MiniTicker> = serde_json::from_str(
+            r#"[{"e":"24hrMiniTicker","E":1,"s":"BTCUSDT","c":"96000.5","o":"95000","h":"97000","l":"94000","v":"1","q":"2","P":"1.05"}]"#,
+        )
+        .unwrap();
+        assert_eq!(list[0].chg_pct().to_string(), "1.05");
+    }
 
     #[test]
     fn parse_ticker() {

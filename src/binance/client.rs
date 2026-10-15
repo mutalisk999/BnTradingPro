@@ -75,6 +75,35 @@ impl BinanceError {
     }
 }
 
+/// 限价类订单有效期；GTX = 只做 maker（Post-Only，仅合约）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Tif {
+    #[default]
+    Gtc,
+    Ioc,
+    Fok,
+    Gtx,
+}
+
+impl Tif {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tif::Gtc => "GTC",
+            Tif::Ioc => "IOC",
+            Tif::Fok => "FOK",
+            Tif::Gtx => "GTX",
+        }
+    }
+
+    /// 各市场可用的 TIF 集合（现货无 GTX）
+    pub fn available(market: Market) -> &'static [Tif] {
+        match market {
+            Market::Spot => &[Tif::Gtc, Tif::Ioc, Tif::Fok],
+            Market::UmFutures => &[Tif::Gtc, Tif::Ioc, Tif::Fok, Tif::Gtx],
+        }
+    }
+}
+
 /// 单个请求的上下文（市场 + 环境）
 #[derive(Debug, Clone, Copy)]
 pub struct RestCtx {
@@ -339,6 +368,87 @@ impl BinanceRest {
         }
         unreachable!("循环恰好两次且第二次必经 other 分支返回")
     }
+
+    /// 合约 WS-API 下单：连接 ws-fapi 端点，发送逐请求签名的 order.place，
+    /// 阻塞等待同 id 响应（整体 8s 超时）。任何失败由调用方回退 REST
+    pub async fn place_order_ws(
+        &self,
+        url: &str,
+        proxy: &crate::config::ProxyConfig,
+        market: Market,
+        req: &OrderRequest,
+        recv_window_ms: u64,
+    ) -> Result<Value, BinanceError> {
+        use futures_util::{SinkExt as _, StreamExt};
+        let Some(key) = self.api_key.as_ref() else {
+            return Err(BinanceError::NoCreds);
+        };
+        let Some(secret) = self.api_secret.as_ref() else {
+            return Err(BinanceError::NoCreds);
+        };
+        let ts = self.signed_now_ms();
+        let mut params = build_order_params(market, req);
+        params.push(("apiKey".into(), key.to_string()));
+        let signed = build_signed_query(&params, ts, recv_window_ms, secret.as_str());
+        let (_, sig) = signed
+            .split_once("&signature=")
+            .ok_or_else(|| BinanceError::Decode("签名构建失败".into()))?;
+        // WS-API 的 params 是对象：键值取原始（未 URL 编码）字符串
+        let mut obj = serde_json::Map::new();
+        for (k, v) in &params {
+            obj.insert(k.clone(), Value::String(v.clone()));
+        }
+        obj.insert("timestamp".into(), Value::from(ts));
+        if recv_window_ms > 0 {
+            obj.insert("recvWindow".into(), Value::from(recv_window_ms));
+        }
+        obj.insert("signature".into(), Value::String(sig.to_string()));
+        let id = format!("btp-{ts}");
+        let msg = serde_json::json!({ "id": id, "method": "order.place", "params": obj });
+
+        let ws = crate::binance::ws::connect(url, proxy)
+            .await
+            .map_err(BinanceError::Network)?;
+        let (mut write, mut read) = futures_util::StreamExt::split(ws);
+        use tokio_tungstenite::tungstenite::Message;
+        write
+            .send(Message::text(msg.to_string()))
+            .await
+            .map_err(|e| BinanceError::Network(e.to_string()))?;
+        let fut = async {
+            loop {
+                match read.next().await {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Text(t))) => {
+                        let d: Value = match serde_json::from_str(&t) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+                        if d.get("id").and_then(|x| x.as_str()) != Some(id.as_str()) {
+                            continue;
+                        }
+                        let status = d.get("status").and_then(|x| x.as_i64()).unwrap_or(0);
+                        if status == 200 {
+                            return Ok(d.get("result").cloned().unwrap_or(Value::Null));
+                        }
+                        let code = d.get("code").and_then(|x| x.as_i64()).unwrap_or(0);
+                        let m = d
+                            .get("msg")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        return Err(BinanceError::Api { code, msg: m });
+                    }
+                    Some(Ok(_)) => continue,
+                    Some(Err(e)) => return Err(BinanceError::Network(e.to_string())),
+                    None => return Err(BinanceError::Network("WS-API 连接中断".into())),
+                }
+            }
+        };
+        let r = tokio::time::timeout(Duration::from_secs(8), fut)
+            .await
+            .map_err(|_| BinanceError::Timeout)?;
+        r
+    }
 }
 
 /// 组装待签查询串并附 HMAC-SHA256 签名（纯函数，便于测试）。
@@ -449,9 +559,13 @@ pub struct OrderRequest {
     pub symbol: String,
     pub side: Side,
     pub kind: OrderKind,
+    /// 限价类订单有效期（市价单忽略）
+    pub tif: Tif,
     /// 合约双向持仓模式下的持仓方向
     pub position_side: crate::binance::FutPosSide,
     pub reduce_only: bool,
+    /// 合约 STOP_MARKET 触发即全平该持仓方向（与 quantity/reduceOnly 互斥）
+    pub close_position: bool,
     pub client_id: Option<String>,
 }
 
@@ -477,6 +591,11 @@ pub enum OrderKind {
         qty: Decimal,
         take_profit: bool,
     },
+    /// 合约：跟踪委托（TRAILING_STOP_MARKET，回调幅度为百分数 0.1-10）
+    TrailingStop {
+        callback_rate: Decimal,
+        qty: Decimal,
+    },
 }
 
 impl OrderKind {
@@ -496,6 +615,7 @@ impl OrderKind {
             OrderKind::StopMarket {
                 take_profit: true, ..
             } => "止盈市价",
+            OrderKind::TrailingStop { .. } => "跟踪委托",
         }
     }
 
@@ -503,6 +623,7 @@ impl OrderKind {
         match self {
             OrderKind::Limit { qty, .. } | OrderKind::Market { qty } => *qty,
             OrderKind::StopLimit { qty, .. } | OrderKind::StopMarket { qty, .. } => *qty,
+            OrderKind::TrailingStop { qty, .. } => *qty,
         }
     }
 }
@@ -516,7 +637,7 @@ pub fn build_order_params(market: Market, req: &OrderRequest) -> Vec<(String, St
     match &req.kind {
         OrderKind::Limit { price, qty } => {
             p.push(("type".into(), "LIMIT".into()));
-            p.push(("timeInForce".into(), "GTC".into()));
+            p.push(("timeInForce".into(), req.tif.as_str().into()));
             p.push(("quantity".into(), qty.normalize().to_string()));
             p.push(("price".into(), price.normalize().to_string()));
         }
@@ -538,7 +659,7 @@ pub fn build_order_params(market: Market, req: &OrderRequest) -> Vec<(String, St
                     "STOP_LOSS_LIMIT".into()
                 },
             ));
-            p.push(("timeInForce".into(), "GTC".into()));
+            p.push(("timeInForce".into(), req.tif.as_str().into()));
             p.push(("quantity".into(), qty.normalize().to_string()));
             p.push(("price".into(), price.normalize().to_string()));
             p.push(("stopPrice".into(), trigger.normalize().to_string()));
@@ -556,14 +677,25 @@ pub fn build_order_params(market: Market, req: &OrderRequest) -> Vec<(String, St
                     "STOP_MARKET".into()
                 },
             ));
-            p.push(("quantity".into(), qty.normalize().to_string()));
+            if req.close_position {
+                // closePosition 语义：触发即全平该持仓方向，与 quantity 互斥
+                p.push(("closePosition".into(), "true".into()));
+            } else {
+                p.push(("quantity".into(), qty.normalize().to_string()));
+            }
             p.push(("stopPrice".into(), trigger.normalize().to_string()));
+        }
+        OrderKind::TrailingStop { callback_rate, qty } => {
+            p.push(("type".into(), "TRAILING_STOP_MARKET".into()));
+            p.push(("quantity".into(), qty.normalize().to_string()));
+            p.push(("callbackRate".into(), callback_rate.normalize().to_string()));
         }
     }
     if market == Market::UmFutures {
         match req.position_side {
             crate::binance::FutPosSide::Both => {
-                if req.reduce_only {
+                // closePosition 本身即减仓语义，不能再叠加 reduceOnly
+                if req.reduce_only && !req.close_position {
                     p.push(("reduceOnly".into(), "true".into()));
                 }
             }
@@ -577,6 +709,42 @@ pub fn build_order_params(market: Market, req: &OrderRequest) -> Vec<(String, St
     }
     p
 }
+
+/// 现货 OCO（one-cancels-other）：限价腿 + 止损限价腿，一腿成交另一腿自动撤销
+#[derive(Debug, Clone)]
+pub struct OcoRequest {
+    pub symbol: String,
+    pub side: Side,
+    pub qty: Decimal,
+    /// 止盈腿限价
+    pub price: Decimal,
+    /// 止损腿触发价
+    pub stop_price: Decimal,
+    /// 止损腿限价（触发后挂出的限价）
+    pub stop_limit_price: Decimal,
+    pub client_id: Option<String>,
+}
+
+/// 构建 OCO 下单参数（POST /api/v3/order/oco，不含签名与公共字段）
+pub fn build_oco_params(req: &OcoRequest) -> Vec<(String, String)> {
+    let mut p: Vec<(String, String)> = vec![
+        ("symbol".into(), req.symbol.clone()),
+        ("side".into(), req.side.as_str().into()),
+        ("quantity".into(), req.qty.normalize().to_string()),
+        ("price".into(), req.price.normalize().to_string()),
+        ("stopPrice".into(), req.stop_price.normalize().to_string()),
+        (
+            "stopLimitPrice".into(),
+            req.stop_limit_price.normalize().to_string(),
+        ),
+        ("stopLimitTimeInForce".into(), "GTC".into()),
+    ];
+    if let Some(cid) = &req.client_id {
+        p.push(("listClientOrderId".into(), cid.clone()));
+    }
+    p
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -607,16 +775,100 @@ mod tests {
                 price: Decimal::new(3000012, 2), // 30000.12
                 qty: Decimal::new(1, 4),         // 0.0001
             },
+            tif: Tif::Gtc,
             position_side: FutPosSide::Both,
             reduce_only: false,
+            close_position: false,
             client_id: Some("c-1".into()),
         };
         let p = build_order_params(Market::Spot, &req);
         assert!(p.contains(&("type".into(), "LIMIT".into())));
+        assert!(p.contains(&("timeInForce".into(), "GTC".into())));
         assert!(p.contains(&("price".into(), "30000.12".into())));
         assert!(p.contains(&("quantity".into(), "0.0001".into())));
         assert!(p.contains(&("newClientOrderId".into(), "c-1".into())));
         assert!(!p.iter().any(|(k, _)| k == "reduceOnly"));
+    }
+
+    #[test]
+    fn build_limit_order_uses_request_tif() {
+        let req = OrderRequest {
+            symbol: "BTCUSDT".into(),
+            side: Side::Buy,
+            kind: OrderKind::Limit {
+                price: Decimal::new(3000012, 2),
+                qty: Decimal::new(1, 4),
+            },
+            tif: Tif::Ioc,
+            position_side: FutPosSide::Both,
+            reduce_only: false,
+            close_position: false,
+            client_id: None,
+        };
+        let p = build_order_params(Market::Spot, &req);
+        assert!(p.contains(&("timeInForce".into(), "IOC".into())));
+    }
+
+    #[test]
+    fn build_stop_market_close_position_omits_quantity() {
+        let req = OrderRequest {
+            symbol: "BTCUSDT".into(),
+            side: Side::Sell,
+            kind: OrderKind::StopMarket {
+                trigger: Decimal::new(900000, 1),
+                qty: Decimal::ONE, // closePosition 下省略
+                take_profit: false,
+            },
+            tif: Tif::Gtc,
+            position_side: FutPosSide::Both,
+            reduce_only: false,
+            close_position: true,
+            client_id: None,
+        };
+        let p = build_order_params(Market::UmFutures, &req);
+        assert!(p.contains(&("closePosition".into(), "true".into())));
+        assert!(!p.iter().any(|(k, _)| k == "quantity"));
+        // closePosition 本身即减仓语义，不能再叠加 reduceOnly
+        assert!(!p.iter().any(|(k, _)| k == "reduceOnly"));
+    }
+
+    #[test]
+    fn build_trailing_stop_params() {
+        let req = OrderRequest {
+            symbol: "BTCUSDT".into(),
+            side: Side::Sell,
+            kind: OrderKind::TrailingStop {
+                callback_rate: Decimal::new(10, 1), // 1.0
+                qty: Decimal::new(1, 3),
+            },
+            tif: Tif::Gtc,
+            position_side: FutPosSide::Both,
+            reduce_only: false,
+            close_position: false,
+            client_id: None,
+        };
+        let p = build_order_params(Market::UmFutures, &req);
+        assert!(p.contains(&("type".into(), "TRAILING_STOP_MARKET".into())));
+        assert!(p.contains(&("callbackRate".into(), "1".into())));
+    }
+
+    #[test]
+    fn build_oco_params_fields() {
+        let req = crate::binance::client::OcoRequest {
+            symbol: "BTCUSDT".into(),
+            side: Side::Sell,
+            qty: Decimal::new(1, 3),
+            price: Decimal::new(3100000, 2),
+            stop_price: Decimal::new(2900000, 2),
+            stop_limit_price: Decimal::new(2899000, 2),
+            client_id: Some("l-1".into()),
+        };
+        let p = build_oco_params(&req);
+        assert!(p.contains(&("stopLimitTimeInForce".into(), "GTC".into())));
+        assert!(p.contains(&("price".into(), "31000".into())));
+        assert!(p.contains(&("stopPrice".into(), "29000".into())));
+        assert!(p.contains(&("stopLimitPrice".into(), "28990".into())));
+        assert!(p.contains(&("listClientOrderId".into(), "l-1".into())));
     }
 
     #[test]
@@ -629,8 +881,10 @@ mod tests {
                 qty: Decimal::new(2, 3),
                 take_profit: false,
             },
+            tif: Tif::Gtc,
             position_side: FutPosSide::Long,
             reduce_only: false,
+            close_position: false,
             client_id: None,
         };
         let p = build_order_params(Market::UmFutures, &req);
@@ -647,8 +901,10 @@ mod tests {
             kind: OrderKind::Market {
                 qty: Decimal::new(1, 3),
             },
+            tif: Tif::Gtc,
             position_side: FutPosSide::Both,
             reduce_only: true,
+            close_position: false,
             client_id: None,
         };
         let p = build_order_params(Market::UmFutures, &req);

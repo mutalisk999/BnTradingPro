@@ -65,6 +65,9 @@ pub struct SymbolMd {
 pub struct MarketMd {
     pub spot: HashMap<String, SymbolMd>,
     pub fut: HashMap<String, SymbolMd>,
+    /// 全市场迷你 ticker（`!miniTicker@arr`，与活跃订阅无关，
+    /// 供侧栏列表显示实时价格/涨跌）
+    pub tickers: [HashMap<String, crate::binance::model::MiniTicker>; 2],
     pub market_ws: [ConnState; 2],
     pub user_ws: [ConnState; 2],
 }
@@ -104,6 +107,8 @@ pub struct AccountSnap {
     pub fut_positions: Vec<PositionRisk>,
     pub fut_dual_side: bool,
     pub fut_leverage: HashMap<String, Decimal>,
+    /// 保证金模式（"CROSSED"/"ISOLATED"），来自 symbolConfig
+    pub fut_margin_type: HashMap<String, String>,
 }
 
 #[derive(Default)]
@@ -351,6 +356,32 @@ impl SharedState {
                 md.trades.pop_front();
             }
         });
+    }
+
+    /// 全市场迷你 ticker 写入：与活跃订阅无关（覆盖每个 symbol），
+    /// 不走 `with_symbol_md` 的活跃订阅守卫
+    pub fn apply_mini_tickers(
+        &self,
+        market: Market,
+        list: Vec<crate::binance::model::MiniTicker>,
+    ) {
+        let mut md = self.md.lock();
+        let slot = &mut md.tickers[market as usize];
+        for t in list {
+            if t.symbol.is_empty() {
+                continue;
+            }
+            slot.insert(t.symbol.to_uppercase(), t);
+        }
+    }
+
+    /// 单交易对迷你 ticker 副本（侧栏行实时价格/涨跌）
+    pub fn ticker_of(
+        &self,
+        market: Market,
+        symbol: &str,
+    ) -> Option<crate::binance::model::MiniTicker> {
+        self.md.lock().tickers[market as usize].get(symbol).cloned()
     }
 
     /// 用逐笔成交实时推进最后一根未收盘 K 线。

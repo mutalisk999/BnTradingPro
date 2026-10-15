@@ -33,6 +33,18 @@ impl std::fmt::Debug for ProxyConfig {
     }
 }
 
+/// 本地价格预警（客户端自行判断触发，不依赖交易所条件单）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AlertConfig {
+    /// 0 = 现货，1 = U 本位合约（与行情 tickers 槽位一致）
+    pub market: u8,
+    pub symbol: String,
+    /// 目标价
+    pub price: f64,
+    /// true = 上破触发（最新价 ≥ 目标价），false = 下破触发（≤）
+    pub above: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -64,6 +76,10 @@ pub struct AppConfig {
     pub override_fut_rest: String,
     pub override_fut_ws: String,
     pub proxy: ProxyConfig,
+    /// 本地价格预警列表
+    pub alerts: Vec<AlertConfig>,
+    /// 合约下单走 WS-API 通道（失败自动回退 REST；默认关闭）
+    pub ws_order: bool,
 }
 
 impl Default for AppConfig {
@@ -85,6 +101,8 @@ impl Default for AppConfig {
             override_fut_rest: String::new(),
             override_fut_ws: String::new(),
             proxy: ProxyConfig::default(),
+            alerts: Vec::new(),
+            ws_order: false,
         }
     }
 }

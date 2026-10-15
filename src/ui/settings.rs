@@ -214,6 +214,12 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                             ui.selectable_value(&mut app.settings.log_level, l.to_string(), l);
                         }
                     });
+                ui.separator();
+                // 合约 WS-API 下单通道：失败自动回退 REST，默认关闭
+                ui.checkbox(&mut app.settings.ws_order, crate::i18n::tr("WS 下单"))
+                    .on_hover_text(crate::i18n::tr(
+                        "合约订单经 WebSocket 通道提交（延迟更低）；任何失败自动回退 REST",
+                    ));
             });
             theme::form_row(ui, |ui| {
                 ui.label(crate::i18n::tr("默认交易对"));
@@ -422,13 +428,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             app.settings.favorites_spot = live.favorites_spot.clone();
             app.settings.favorites_futures = live.favorites_futures.clone();
         }
-        let cfg: AppConfig = std::mem::take(&mut app.settings).into_cfg();
+        let mut cfg: AppConfig = std::mem::take(&mut app.settings).into_cfg();
+        // 价格预警同样不在设置页编辑：以 live 值保留，防止保存设置清空预警
+        cfg.alerts = state.cfg.read().alerts.clone();
         // 保留草稿（into_cfg 消耗了草稿），保证继续编辑不丢字段
         app.settings = SettingsDraft::from_cfg(&cfg);
         // 测试网 → 实盘时不沿用端点覆盖：第三方测试网端点会把携带 API Key 的
         // 实盘签名请求发往该主机，自动清空并提示
         let was_testnet = state.cfg.read().testnet;
-        let mut cfg = cfg;
         if was_testnet && !cfg.testnet {
             let had_override = !cfg.override_spot_rest.trim().is_empty()
                 || !cfg.override_spot_ws.trim().is_empty()

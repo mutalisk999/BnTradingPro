@@ -4,8 +4,9 @@ use crate::app::BnApp;
 use crate::ui::{theme, widgets};
 use eframe::egui;
 
-/// 统一行高：小节标题与交易对行共用同一滚动列表、同一槽位高度
-const SYMBOL_ROW_H: f32 = 24.0;
+/// 统一行高：小节标题与交易对行共用同一滚动列表、同一槽位高度。
+/// 交易对行两行显示：名称 / 价格+涨跌
+const SYMBOL_ROW_H: f32 = 36.0;
 /// 星标按钮固定宽度：不依赖字形自然宽度（等宽字体优先下 "☆" 可能回落到
 /// 全角字形），确保星标永远落在行槽裁剪区内、热区完整可点击
 const STAR_W: f32 = 24.0;
@@ -202,7 +203,8 @@ fn section_row(ui: &mut egui::Ui, title: &str) {
     });
 }
 
-/// 侧边栏交易对行：名称（点击切换）+ 星标（点击加/取自选）
+/// 侧边栏交易对行：两行显示——第一行 名称+星标，第二行 实时价格+涨跌幅
+/// （!miniTicker@arr 数据，无行情时第二行留空）
 fn symbol_row(
     ui: &mut egui::Ui,
     app: &BnApp,
@@ -233,12 +235,14 @@ fn symbol_row(
     } else if anim > 0.0 {
         painter.rect_filled(row_rect, 3.0, theme::cur().row_hover.gamma_multiply(anim));
     }
+    ui.spacing_mut().item_spacing.y = 2.0;
+    let tick = app.state.ticker_of(app.market, sym);
+
+    // ---- 第一行：名称 + 星标 ----
     ui.horizontal(|ui| {
-        // 星标固定宽 + 固定 4px 间距，名称按钮宽度由此推算：
-        // 星标不再依赖字形自然宽度，行槽裁剪下热区始终完整——
-        // 此前"全部"列表的星标被推出行槽右边界而无法点击
         ui.spacing_mut().item_spacing.x = 4.0;
-        let name_w = ui.available_width() - STAR_W - 4.0;
+        // 行首内边距：选中行的 3px accent 条压在槽位最左，内容须让开
+        ui.add_space(6.0);
         let name_txt = {
             let t = egui::RichText::new(sym)
                 .size(theme::FONT_MD)
@@ -253,23 +257,21 @@ fn symbol_row(
                 t
             }
         };
-        let name_btn = egui::Button::new(name_txt)
-            .fill(if selected {
-                theme::cur().card
-            } else {
-                egui::Color32::TRANSPARENT
+        let name_w = (ui.available_width() - STAR_W - 4.0).max(0.0);
+        // Label 而非 Button：Button 会把文本在定宽槽内居中，观察列表名称应左对齐；
+        // Label::truncate 按槽宽截断，sense(click) 保留点击切换交易对
+        let name_clicked = ui
+            .allocate_ui(egui::vec2(name_w, 18.0), |ui| {
+                ui.add(
+                    egui::Label::new(name_txt)
+                        .truncate()
+                        .sense(egui::Sense::click()),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
             })
-            .stroke(egui::Stroke::NONE)
-            .corner_radius(3)
-            // 长符号按可用宽度截断显示：按钮宽度跟随面板宽度而非文字自然宽，
-            // 否则 1000PEPEUSDT 这类长名会把行最小宽撑到 ~150px，侧栏拖不窄
-            .truncate()
-            .min_size(egui::vec2(name_w, 20.0));
-        if ui
-            .add(name_btn)
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
+            .inner;
+        if name_clicked {
             *switched = Some(sym.to_string());
         }
         let star = if is_fav { "★" } else { "☆" };
@@ -284,8 +286,9 @@ fn symbol_row(
             .add(
                 egui::Button::new(star_txt)
                     .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::NONE)
                     .corner_radius(3)
-                    .min_size(egui::vec2(STAR_W, 20.0)),
+                    .min_size(egui::vec2(STAR_W, 18.0)),
             )
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(if is_fav {
@@ -298,4 +301,29 @@ fn symbol_row(
             *toggled = Some(sym.to_string());
         }
     });
+
+    // ---- 第二行：实时价格 + 24h 涨跌幅 ----
+    if let Some(t) = tick {
+        let chg = widgets::f64_decimal(&t.chg_pct());
+        let c = theme::signed_color(chg);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(widgets::fmt_dec_grouped(&t.close))
+                    .monospace()
+                    .size(theme::FONT_SM)
+                    .color(theme::cur().text),
+            );
+            // RTL 首个控件自然贴行右缘（与第一行星标同列）
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    egui::RichText::new(format!("{chg:+.2}%"))
+                        .monospace()
+                        .size(9.5)
+                        .color(c),
+                );
+            });
+        });
+    }
 }

@@ -358,14 +358,11 @@ fn en_lookup(zh: &'static str) -> &'static str {
             "Limit / market / stop-loss / take-profit; size buttons estimate from your available balance; every submit goes through a confirm dialog (red warning when live). Price and qty are auto-quantized to exchange filters."
         }
         "订单区" => "Orders",
-        "当前挂单可单笔撤销或一键撤销该交易对全部挂单；合约持仓支持一键市价平仓（走确认弹窗）。" => {
-            "Open orders can be canceled one by one or all at once per symbol; futures positions support one-click market close (with confirm dialog)."
-        }
         "汇总现货资产、合约资金概况与当前持仓。" => "Aggregates spot balances, futures funds overview and current positions.",
         "环境切换（测试网/实盘）、代理、端点覆盖、语言与主题、密钥管理。" => "Environment (testnet/live), proxy, endpoint overrides, language & theme, key management.",
         "交易对与自选" => "Symbols & Favorites",
-        "左侧列表顶部搜索框实时过滤；输入 ⭐ 旁的星标可将交易对加入自选，自选排在列表最顶部" => {
-            "The search box filters the list live; click the star to add a symbol to favorites — favorites are pinned to the top"
+        "左侧列表顶部搜索框实时过滤；点击行尾的星标可将交易对加入自选，自选排在列表最顶部" => {
+            "The search box filters the list live; click the star at the end of a row to favorite it — favorites pin to the top"
         }
         "自选按市场分别保存（现货与合约互不影响），持久化到本机配置" => {
             "Favorites are saved per market (spot and futures independent) and persisted to the local config"
@@ -454,6 +451,125 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "余额到账后自动显示" => "Balances appear once credited",
         "交易规则加载中，请检查网络与代理" => "Loading symbol rules — check network & proxy",
         "错误" => "Error",
+        // ---- Phase 1：TIF / 附加止盈止损 / 保证金模式 / 账户条 ----
+        "有效期" => "Time in Force",
+        "成交为止" => "GTC — rests until filled",
+        "立即成交，剩余撤销" => "IOC — fill what's possible, cancel the rest",
+        "全部成交或立即撤销" => "FOK — fill entirely or cancel",
+        "GTX 只做maker" => "GTX post-only",
+        "只做 maker，不会吃单" => "Post-only — never takes liquidity",
+        "止盈/止损" => "TP/SL",
+        "止盈 / 止损" => "Take-Profit / Stop-Loss",
+        "TP/SL" => "TP/SL",
+        "附加止盈" => "Attach TP",
+        "附加止损" => "Attach SL",
+        "附加止盈/止损（触发后市价全平）" => "Attach TP/SL (market-close all on trigger)",
+        "下单同时挂出触发即全平的止盈/止损单" => {
+            "Also place trigger-to-close TP/SL orders with this order"
+        }
+        "仅单向持仓模式可用（双向模式请用持仓页设置）" => {
+            "One-way mode only (use the Positions tab in hedge mode)"
+        }
+        "止盈触发" => "TP Trigger",
+        "止损触发" => "SL Trigger",
+        "至少填写一个触发价" => "Enter at least one trigger price",
+        "已启用止盈/止损：至少填写一个触发价" => "TP/SL enabled: enter at least one trigger price",
+        "已启用止盈/止损：先填写委托价或等待行情" => {
+            "TP/SL enabled: enter a limit price or wait for market data"
+        }
+        "触发价超出可表示范围" => "Trigger price out of range",
+        "止盈触发价方向不对：多头应高于现价，空头应低于现价" => {
+            "TP trigger on the wrong side: above price for longs, below for shorts"
+        }
+        "止损触发价方向不对：多头应低于现价，空头应高于现价" => {
+            "SL trigger on the wrong side: below price for longs, above for shorts"
+        }
+        "止盈触发价方向不对：多头应高于标记价，空头应低于标记价" => {
+            "TP trigger on the wrong side: above mark price for longs, below for shorts"
+        }
+        "止损触发价方向不对：多头应低于标记价，空头应高于标记价" => {
+            "SL trigger on the wrong side: below mark price for longs, above for shorts"
+        }
+        "触发后市价全平该持仓，提交前需确认" => {
+            "Market-closes the whole position when triggered; a confirm dialog follows"
+        }
+        "提交" => "Submit",
+        "关闭" => "Close",
+        "全仓" => "Cross",
+        "逐仓" => "Isolated",
+        "点击切换保证金模式（全仓/逐仓）" => "Click to switch margin mode (cross/isolated)",
+        "保证金模式已切为 " => "Margin mode switched to ",
+        "保证金模式无需修改" => "Margin mode already set",
+        "钱包" => "Wallet",
+        "未实现" => "uPnL",
+        "USDT 可用" => "USDT available",
+        "最新" => "Last",
+        "买一" => "Best bid",
+        "卖一" => "Best ask",
+        // ---- Phase 1：全撤 / 一键平仓 ----
+        "撤销本市场全部" => "Cancel Entire Market",
+        "确认撤销本市场全部" => "Confirm: Cancel Entire Market",
+        "撤销该市场所有交易对的全部挂单" => "Cancel every open order in this market",
+        "已撤销本市场全部挂单" => "Canceled every open order in the market",
+        "全部平仓" => "Close All",
+        "市价平仓所有持仓（聚合确认）" => "Market-close every position (aggregated confirm)",
+        "市价平仓（有确认弹窗）" => "Market close (with confirm dialog)",
+        "已按步进调整" => "adjusted to step",
+        // ---- Phase 1：使用说明快捷键 ----
+        "快捷键（交易页）" => "Hotkeys (Trading)",
+        "B / S" => "B / S",
+        "买入 / 卖出方向切换，并聚焦数量输入框（输入框获得焦点时不生效）" => {
+            "Switch buy/sell side and focus the qty box (inactive while a text field has focus)"
+        }
+        "Ctrl+Shift+C" => "Ctrl+Shift+C",
+        "撤销当前交易对的全部挂单" => "Cancel all open orders for the current symbol",
+        "当前挂单可单笔撤销、一键撤销该交易对全部挂单或本市场全部挂单；合约持仓支持行内 TP/SL 附加、单笔平仓与一键全部平仓（均走确认弹窗）。" => {
+            "Open orders: cancel one by one, per symbol, or wipe the whole market; futures positions: inline TP/SL, close one, or close all (all with confirm dialogs)."
+        }
+        // ---- Phase 2：盘口聚合 / 价格预警 / CSV 导出 ----
+        "档位" => "Step",
+        "导出 CSV" => "Export CSV",
+        "导出失败: " => "Export failed: ",
+        "已导出 " => "Exported: ",
+        "价格预警" => "Price Alerts",
+        "价格预警（本地触发，到价弹提示）" => {
+            "Price alerts (evaluated locally, toast on trigger)"
+        }
+        "预警" => "Alert",
+        "目标价" => "Target price",
+        "添加" => "Add",
+        "删除" => "Delete",
+        "请输入有效的目标价" => "Enter a valid target price",
+        "行情加载中，请稍后再试" => "Market data loading — try again shortly",
+        "暂无预警，输入目标价添加" => "No alerts yet — enter a target price to add one",
+        "已添加预警 " => "Alert added: ",
+        "已删除预警 " => "Alert removed: ",
+        // ---- Phase 3：跟踪委托 / 反手 / OCO / WS 下单 ----
+        "跟踪委托" => "Trailing Stop",
+        "回调幅度" => "Callback",
+        "回调幅度需为 0.1-10 的百分数" => "Callback rate must be a percentage from 0.1 to 10",
+        "请输入回调幅度（0.1-10 的百分数）" => "Enter callback rate (0.1-10 %)",
+        "百分比" => "percent",
+        "%（0.1-10）" => "% (0.1-10)",
+        "反手" => "Reverse",
+        "市价平仓并反向开同等数量（有确认弹窗）" => {
+            "Market-close and reopen the same size on the opposite side (with confirm dialog)"
+        }
+        "开仓" => "Open",
+        "OCO" => "OCO",
+        "止损委托价" => "Stop Limit",
+        "请输入止损委托价" => "Enter the stop-limit price",
+        "卖出 OCO：限价腿应高于止损触发价" => {
+            "Sell OCO: the limit leg must be above the stop trigger"
+        }
+        "买入 OCO：限价腿应低于止损触发价" => {
+            "Buy OCO: the limit leg must be below the stop trigger"
+        }
+        "WS 下单" => "WS Orders",
+        "合约订单经 WebSocket 通道提交（延迟更低）；任何失败自动回退 REST" => {
+            "Submit futures orders over the WebSocket API (lower latency); any failure falls back to REST automatically"
+        }
+        "WS 下单失败，已回退 REST: " => "WS order failed, fell back to REST: ",
         _ => return_en_fallback(zh),
     }
 }

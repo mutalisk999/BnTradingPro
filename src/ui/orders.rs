@@ -54,6 +54,53 @@ fn head_cell(ui: &mut egui::Ui, t: &str, right: bool) {
     }
 }
 
+/// 导出 CSV 到数据目录 exports/（带 UTF-8 BOM，Excel 直开中文不乱码），
+/// 文件名 {前缀}_{时间戳}.csv；成功返回完整路径供 toast 提示
+fn write_csv(
+    file_stem: &str,
+    header: &[&str],
+    rows: &[Vec<String>],
+) -> Result<std::path::PathBuf, String> {
+    let dir = crate::config::data_dir().join("exports");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let path = dir.join(format!("{file_stem}_{ts}.csv"));
+    let mut s = String::from("\u{feff}");
+    s.push_str(&header.join(","));
+    s.push('\n');
+    for r in rows {
+        let cells: Vec<String> = r
+            .iter()
+            .map(|c| {
+                // CSV 转义：含逗号/引号/换行的字段包引号，内部引号翻倍
+                if c.contains(',') || c.contains('"') || c.contains('\n') {
+                    format!("\"{}\"", c.replace('"', "\"\""))
+                } else {
+                    c.clone()
+                }
+            })
+            .collect();
+        s.push_str(&cells.join(","));
+        s.push('\n');
+    }
+    std::fs::write(&path, s).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+/// 导出完成 toast：成功报路径，失败报原因
+fn toast_export(state: &Arc<crate::engine::state::SharedState>, r: Result<std::path::PathBuf, String>) {
+    match r {
+        Ok(p) => state.push_toast(
+            crate::engine::state::ToastKind::Ok,
+            format!("{} {}", crate::i18n::tr("已导出 "), p.display()),
+        ),
+        Err(e) => state.push_toast(
+            crate::engine::state::ToastKind::Err,
+            format!("{}{e}", crate::i18n::tr("导出失败: ")),
+        ),
+    }
+}
+
 /// 底部订单区表格统一横向兜底：面板窄于表格最小宽（列 at_least 合计 +
 /// 末列下限）时出横向滚动条，避免末尾几列被静默裁剪。
 /// egui_extras 0.36 的 TableBuilder 无内建横向滚动（内部 ScrollArea 写死
@@ -115,8 +162,32 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
             if cancel_all.clicked() {
                 state.send_cmd(Command::CancelAll {
                     market,
-                    symbol: sym,
+                    symbol: Some(sym),
                 });
+            }
+            // 撤销本市场全部挂单（跨交易对；两次点击确认，防误扫全局撤销）
+            let mkt_all_n = list.len();
+            let armed = app.market_cancel_armed;
+            let cancel_mkt = theme::btn_ghost(
+                ui,
+                &if armed {
+                    format!("{}({mkt_all_n})", crate::i18n::tr("确认撤销本市场全部"))
+                } else {
+                    format!("{}({mkt_all_n})", crate::i18n::tr("撤销本市场全部"))
+                },
+                true,
+            )
+            .on_hover_text(crate::i18n::tr("撤销该市场所有交易对的全部挂单"));
+            if cancel_mkt.clicked() {
+                if !armed {
+                    app.market_cancel_armed = true;
+                } else {
+                    app.market_cancel_armed = false;
+                    state.send_cmd(Command::CancelAll { market, symbol: None });
+                }
+            } else if armed && ui.input(|i| i.pointer.any_click()) {
+                // 点其它位置退出待确认态
+                app.market_cancel_armed = false;
             }
         }
     });
@@ -164,7 +235,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                 .into_iter()
                 .enumerate()
                 {
-                    h.col(|ui| head_cell(ui, crate::i18n::tr(t), (4..=6).contains(&i)));
+                    h.col(|ui| head_cell(ui, crate::i18n::tr(t), i == 1 || i == 8 || (4..=6).contains(&i)));
                 }
             })
             .body(|mut body| {
@@ -175,7 +246,12 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                             widgets::num_cell(ui, widgets::fmt_time(o.time), None);
                         });
                         row.col(|ui| {
-                            ui.label(egui::RichText::new(&o.symbol).strong().size(theme::FONT_MD));
+                            // 交易对列右对齐（与表头一致）
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(
+                                    egui::RichText::new(&o.symbol).strong().size(theme::FONT_MD),
+                                );
+                            });
                         });
                         row.col(|ui| {
                             let c = if o.side == "BUY" {
@@ -243,10 +319,13 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                             );
                         });
                         row.col(|ui| {
-                            if theme::btn_danger(ui, crate::i18n::tr("撤销"), true).clicked() {
-                                cancel_id = Some(o.order_id);
-                                cancel_sym = o.symbol.clone();
-                            }
+                            // 操作列右对齐：撤销按钮贴行尾
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if theme::btn_danger(ui, crate::i18n::tr("撤销"), true).clicked() {
+                                    cancel_id = Some(o.order_id);
+                                    cancel_sym = o.symbol.clone();
+                                }
+                            });
                         });
                     });
                 }
@@ -320,6 +399,14 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
         {
             state.send_cmd(Command::SetDualSide { dual: !dual });
         }
+        // 一键平仓：全部非零持仓聚合为一个确认弹窗（真实资金纪律不破例）
+        if !positions.is_empty()
+            && theme::btn_danger(ui, crate::i18n::tr("全部平仓"), true)
+                .on_hover_text(crate::i18n::tr("市价平仓所有持仓（聚合确认）"))
+                .clicked()
+        {
+            crate::ui::trade::confirm_close_all(app);
+        }
     });
     ui.separator();
     if positions.is_empty() {
@@ -333,8 +420,10 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
     }
 
     let mut close_req: Option<(String, Side, Decimal, FutPosSide)> = None;
+    let mut tpsl_open: Option<(String, bool, FutPosSide)> = None;
+    let mut reverse_req: Option<(String, bool, Decimal, FutPosSide)> = None;
 
-    hscroll_table(ui, 612.0, |ui| {
+    hscroll_table(ui, 712.0, |ui| {
         TableBuilder::new(ui)
             .striped(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -350,7 +439,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
             .column(Column::auto().clip(true).at_least(68.0)) // 未实现盈亏
             .column(Column::auto().clip(true).at_least(68.0)) // 强平价
             .column(Column::auto().clip(true).at_least(28.0)) // 杠杆
-            .column(Column::remainder().clip(true).at_least(64.0)) // 操作（平仓按钮）
+            .column(Column::remainder().clip(true).at_least(160.0)) // 操作（TP/SL + 反手 + 平仓）
             .header(22.0, |mut h| {
                 for (i, t) in [
                     "交易对",
@@ -367,7 +456,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                 .into_iter()
                 .enumerate()
                 {
-                    h.col(|ui| head_cell(ui, crate::i18n::tr(t), (2..=8).contains(&i)));
+                    h.col(|ui| head_cell(ui, crate::i18n::tr(t), i == 0 || i == 9 || (2..=8).contains(&i)));
                 }
             })
             .body(|mut body| {
@@ -376,7 +465,12 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                     body.row(28.0, |mut row| {
                         let long = p.amt > Decimal::ZERO;
                         row.col(|ui| {
-                            ui.label(egui::RichText::new(&p.symbol).strong().size(theme::FONT_MD));
+                            // 交易对列右对齐（与表头一致）
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(
+                                    egui::RichText::new(&p.symbol).strong().size(theme::FONT_MD),
+                                );
+                            });
                         });
                         row.col(|ui| {
                             let (txt, c) = if long {
@@ -453,15 +547,38 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                             );
                         });
                         row.col(|ui| {
-                            // 与资产页持仓表一致的短文案（市价语义放悬停提示，省列宽）
-                            if theme::btn_danger(ui, crate::i18n::tr("平仓"), true)
-                                .on_hover_text(crate::i18n::tr("市价平仓（有确认弹窗）"))
-                                .clicked()
-                            {
-                                let side = if long { Side::Sell } else { Side::Buy };
-                                let pos_side = FutPosSide::parse(&p.side);
-                                close_req = Some((p.symbol.clone(), side, p.amt.abs(), pos_side));
-                            }
+                            // 操作列右对齐：按钮贴行尾（RTL 先加的贴最右）
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                // 与资产页持仓表一致的短文案（市价语义放悬停提示，省列宽）
+                                if theme::btn_danger(ui, crate::i18n::tr("平仓"), true)
+                                    .on_hover_text(crate::i18n::tr("市价平仓（有确认弹窗）"))
+                                    .clicked()
+                                {
+                                    let side = if long { Side::Sell } else { Side::Buy };
+                                    let pos_side = FutPosSide::parse(&p.side);
+                                    close_req =
+                                        Some((p.symbol.clone(), side, p.amt.abs(), pos_side));
+                                }
+                                if theme::btn_default(ui, crate::i18n::tr("TP/SL"), true)
+                                    .on_hover_text(crate::i18n::tr("附加止盈/止损（触发后市价全平）"))
+                                    .clicked()
+                                {
+                                    tpsl_open = Some((
+                                        p.symbol.clone(),
+                                        long,
+                                        FutPosSide::parse(&p.side),
+                                    ));
+                                }
+                                if theme::btn_default(ui, crate::i18n::tr("反手"), true)
+                                    .on_hover_text(crate::i18n::tr(
+                                        "市价平仓并反向开同等数量（有确认弹窗）",
+                                    ))
+                                    .clicked()
+                                {
+                                    reverse_req = Some((p.symbol.clone(), long, p.amt.abs(), FutPosSide::parse(&p.side)));
+                                }
+                            });
                         });
                     });
                 }
@@ -470,6 +587,97 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
 
     if let Some((symbol, side, qty, pos_side)) = close_req {
         crate::ui::trade::confirm_market_close(app, symbol, side, qty, pos_side);
+    }
+    if let Some((sym, long, pos_side)) = tpsl_open {
+        app.tpsl_edit = Some((sym, long, pos_side, String::new(), String::new()));
+    }
+    if let Some((symbol, long, qty, pos_side)) = reverse_req {
+        crate::ui::trade::confirm_market_reverse(app, symbol, long, qty, pos_side);
+    }
+    show_tpsl_window(app, ui);
+}
+
+/// 持仓行内 TP/SL 弹窗：两个触发价输入，提交进入确认弹窗（真实资金纪律不破例）
+fn show_tpsl_window(app: &mut BnApp, ui: &mut egui::Ui) {
+    let Some(edit) = app.tpsl_edit.as_mut() else {
+        return;
+    };
+    let (symbol, long, pos_side) = (edit.0.clone(), edit.1, edit.2);
+    let mut close = false;
+    let mut submit: Option<(String, String)> = None;
+    egui::Window::new(
+        egui::RichText::new(format!(
+            "{} · {} {}",
+            crate::i18n::tr("止盈 / 止损"),
+            symbol,
+            if long {
+                crate::i18n::tr("多")
+            } else {
+                crate::i18n::tr("空")
+            }
+        ))
+        .strong()
+        .size(theme::FONT_LG),
+    )
+    .anchor(egui::Align2::CENTER_TOP, [0.0, 96.0])
+    .collapsible(false)
+    .resizable(false)
+    .min_width(268.0)
+    .default_height(0.0)
+    .show(ui.ctx(), |ui| {
+        ui.label(
+            egui::RichText::new(crate::i18n::tr("触发后市价全平该持仓，提交前需确认"))
+                .size(theme::FONT_SM)
+                .color(theme::cur().text_dim),
+        );
+        ui.add_space(4.0);
+        egui::Grid::new("tpsl_grid")
+            .num_columns(2)
+            .spacing([10.0, 6.0])
+            .show(ui, |ui| {
+                for (label, buf) in [
+                    (crate::i18n::tr("止损触发"), &mut edit.3),
+                    (crate::i18n::tr("止盈触发"), &mut edit.4),
+                ] {
+                    ui.label(egui::RichText::new(label).size(theme::FONT_MD));
+                    ui.add(
+                        egui::TextEdit::singleline(buf)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(116.0),
+                    );
+                    ui.end_row();
+                }
+            });
+        ui.add_space(6.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if theme::btn_solid(
+                ui,
+                crate::i18n::tr("提交"),
+                theme::cur().accent,
+                true,
+            )
+            .clicked()
+            {
+                submit = Some((edit.3.clone(), edit.4.clone()));
+            }
+            if theme::btn_default(ui, crate::i18n::tr("关闭"), true).clicked() {
+                close = true;
+            }
+        });
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            close = true;
+        }
+    });
+    if close {
+        app.tpsl_edit = None;
+    }
+    if let Some((sl, tp)) = submit {
+        match crate::ui::trade::confirm_position_tpsl(app, symbol, long, pos_side, sl, tp) {
+            Ok(()) => app.tpsl_edit = None,
+            Err(e) => {
+                app.state.push_toast(crate::engine::state::ToastKind::Warn, e);
+            }
+        }
     }
 }
 
@@ -528,6 +736,43 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     symbol: s,
                 });
             }
+        }
+        // 导出当前展示的订单历史（最多 100 笔）
+        if theme::btn_default(ui, crate::i18n::tr("导出 CSV"), !hist.is_empty())
+            .on_disabled_hover_text(crate::i18n::tr("暂无订单历史"))
+            .clicked()
+        {
+            let rows = hist
+                .iter()
+                .map(|o| {
+                    vec![
+                        widgets::fmt_time(o.time),
+                        o.symbol.clone(),
+                        type_cn(&o.order_type).to_string(),
+                        if o.side == "BUY" {
+                            crate::i18n::tr("买入").to_string()
+                        } else {
+                            crate::i18n::tr("卖出").to_string()
+                        },
+                        o.price.unwrap_or_default().normalize().to_string(),
+                        o.orig_qty.normalize().to_string(),
+                        o.executed_qty.normalize().to_string(),
+                        status_cn(&o.status).to_string(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            let stem = format!(
+                "orders_{}",
+                key.as_ref().map(|(_, s)| s.as_str()).unwrap_or("all")
+            );
+            toast_export(
+                &state,
+                write_csv(
+                    &stem,
+                    &["time", "symbol", "type", "side", "price", "qty", "executed", "status"],
+                    &rows,
+                ),
+            );
         }
     });
     ui.separator();
@@ -690,6 +935,50 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     symbol: s,
                 });
             }
+        }
+        // 导出当前展示的成交明细
+        if theme::btn_default(ui, crate::i18n::tr("导出 CSV"), !trades.is_empty())
+            .on_disabled_hover_text(crate::i18n::tr("暂无成交"))
+            .clicked()
+        {
+            let rows = trades
+                .iter()
+                .map(|t| {
+                    vec![
+                        widgets::fmt_time(t.time),
+                        t.symbol.clone(),
+                        if t.is_buyer {
+                            crate::i18n::tr("买入").to_string()
+                        } else {
+                            crate::i18n::tr("卖出").to_string()
+                        },
+                        t.price.normalize().to_string(),
+                        t.qty.normalize().to_string(),
+                        t.quote_qty.normalize().to_string(),
+                        t.commission.normalize().to_string(),
+                        t.commission_asset.clone(),
+                        if t.is_maker { "maker" } else { "taker" }.to_string(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            let stem = format!(
+                "trades_{}",
+                hist_key
+                    .as_ref()
+                    .map(|(_, s)| s.as_str())
+                    .unwrap_or("all")
+            );
+            toast_export(
+                &state,
+                write_csv(
+                    &stem,
+                    &[
+                        "time", "symbol", "side", "price", "qty", "quote_qty", "fee", "fee_asset",
+                        "role",
+                    ],
+                    &rows,
+                ),
+            );
         }
     });
     ui.separator();

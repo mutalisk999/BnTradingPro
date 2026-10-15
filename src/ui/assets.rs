@@ -140,12 +140,10 @@ fn spot_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::U
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::auto().clip(true).at_least(90.0)) // 资产
             .column(Column::auto().clip(true).at_least(130.0)) // 钱包余额（可用+冻结）
-            .column(if has_locked {
-                Column::auto().clip(true).at_least(130.0)
-            } else {
-                Column::remainder().clip(true)
-            }) // 可用
-            .column(Column::remainder().clip(true)) // 冻结（条件显示）
+            .column(Column::auto().clip(true).at_least(130.0)) // 可用
+            // 数值列统一 auto+at_least：末列不用 remainder，整卡宽度下
+            // 会把末列顶到最右、中间大片留白
+            .column(Column::auto().clip(true).at_least(130.0)) // 冻结（条件显示）
             .header(22.0, |mut h| {
                 for t in if has_locked {
                     ["资产", "钱包余额", "可用", "冻结"].as_slice()
@@ -297,7 +295,8 @@ fn fut_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui
             .column(Column::auto().clip(true).at_least(90.0)) // 资产
             .column(Column::auto().clip(true).at_least(130.0)) // 钱包余额
             .column(Column::auto().clip(true).at_least(130.0)) // 可用
-            .column(Column::remainder().clip(true)) // 未实现盈亏
+            // 末列不用 remainder：整卡宽度下会把末列顶到最右、中间大片留白
+            .column(Column::auto().clip(true).at_least(130.0)) // 未实现盈亏
             .header(22.0, |mut h| {
                 for t in ["资产", "钱包余额", "可用", "未实现盈亏"] {
                     h.col(|ui| {

@@ -5,9 +5,10 @@ edition = "2021"
 description = "Binance 现货/U本位合约专业交易终端（Rust + egui）"
 
 [dependencies]
-# GUI（显式选 glow 渲染器：0.36 默认 wgpu，纯 2D 无需且 wgpu-hal/dx12 在部分 Windows 工具链编不过）
+# GUI（显式选 glow 渲染器：0.36 默认 wgpu，纯 2D 无需且 wgpu-hal/dx12 在部分 Windows 工具链编不过）。
+# 不启用 accesskit：其焦点树在控件快速增删时曾触发 accesskit_consumer 的
+# unreachable panic（交易终端稳定性优先于读屏器支持）
 eframe = { version = "0.36", default-features = false, features = [
-    "accesskit",
     "default_fonts",
     "glow",
     "links",

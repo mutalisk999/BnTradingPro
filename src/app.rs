@@ -1,7 +1,7 @@
 //! 应用主体：启动流程路由（设置密码/解锁/配置密钥/主界面）与交易终端布局
 
 use crate::binance::client::OrderRequest;
-use crate::binance::{Interval, Market, Side};
+use crate::binance::{FutPosSide, Interval, Market, Side};
 use crate::config::{self, AppConfig};
 use crate::engine::state::SharedState;
 use crate::engine::{Command, Engine};
@@ -72,6 +72,8 @@ pub struct TradingPage {
     pub leverage_input: String,
     /// 图表副图指标（成交量/MACD/RSI…，随交易页镜像保存）
     pub sub_indicator: chart::SubIndicator,
+    /// 盘口聚合档位在候选步长中的下标（0 = 原始 tick 不聚合）
+    pub book_group: usize,
 }
 
 impl TradingPage {
@@ -85,15 +87,19 @@ impl TradingPage {
             sub_tab: SubTab::Open,
             leverage_input: String::new(),
             sub_indicator: chart::SubIndicator::Vol,
+            book_group: 0,
         }
     }
 }
 
 pub struct ConfirmOrder {
     pub market: Market,
-    pub req: OrderRequest,
-    pub rows: Vec<(String, String)>,
+    /// 主单在前，附加止盈/止损随后（一次确认、顺序提交）
+    pub reqs: Vec<OrderRequest>,
+    /// 现货 OCO：非空时忽略 reqs，提交单条 PlaceOco
+    pub oco: Option<crate::binance::client::OcoRequest>,
     pub side: Side,
+    pub rows: Vec<(String, String)>,
 }
 
 /// 设置页的编辑草稿：存放在 BnApp 上，避免 egui 每帧从快照重建导致输入被重置
@@ -117,6 +123,8 @@ pub struct SettingsDraft {
     pub price_dir: String,
     pub favorites_spot: Vec<String>,
     pub favorites_futures: Vec<String>,
+    /// 合约下单走 WS-API 通道（失败自动回退 REST）
+    pub ws_order: bool,
 }
 
 impl SettingsDraft {
@@ -139,6 +147,7 @@ impl SettingsDraft {
             price_dir: cfg.price_dir.clone(),
             favorites_spot: cfg.favorites_spot.clone(),
             favorites_futures: cfg.favorites_futures.clone(),
+            ws_order: cfg.ws_order,
         }
     }
 
@@ -163,6 +172,7 @@ impl SettingsDraft {
             price_dir: self.price_dir,
             favorites_spot: self.favorites_spot,
             favorites_futures: self.favorites_futures,
+            ws_order: self.ws_order,
             override_spot_rest: self.override_spot_rest,
             override_spot_ws: self.override_spot_ws,
             override_fut_rest: self.override_fut_rest,
@@ -171,6 +181,8 @@ impl SettingsDraft {
                 enabled: self.proxy_enabled,
                 url: self.proxy_url,
             },
+            // 预警不在设置页编辑：调用方（settings 保存）会以 live 值覆盖此空表
+            alerts: Vec::new(),
         }
     }
 }
@@ -214,6 +226,14 @@ pub struct BnApp {
     pub active_sub: Option<(Market, String, Interval)>,
     /// 删除凭据库的两步确认（第一次点击进入待确认态）
     pub vault_delete_armed: bool,
+    /// 「撤销本市场全部」两步确认（第一次点击进入待确认态，点击其他位置解除）
+    pub market_cancel_armed: bool,
+    /// 持仓行内 TP/SL 弹窗：(symbol, 多头?, 持仓方向, 止损触发价, 止盈触发价)
+    pub tpsl_edit: Option<(String, bool, FutPosSide, String, String)>,
+    /// 价格预警弹窗开关（页头铃铛）
+    pub alerts_open: bool,
+    /// 新预警目标价输入缓冲
+    pub alert_input: String,
     /// 认证卡片上一帧实测高度（矮窗口下卡片居中/顶置的布局依据，滞后一帧收敛）
     pub auth_card_h: f32,
     /// 左侧交易对列表展开（false 时收起为窄条，» / « 按钮切换）
@@ -293,6 +313,10 @@ impl BnApp {
             // 引擎启动时已订阅现货默认交易对
             active_sub: Some((Market::Spot, default_symbol, interval)),
             vault_delete_armed: false,
+            market_cancel_armed: false,
+            tpsl_edit: None,
+            alerts_open: false,
+            alert_input: String::new(),
             // 首帧定位用：收紧内边距后 EnterKeys 表单实测约 340，Unlock 约 240。
             // 首帧用两页的中间值，第二帧起由实测值收敛，避免开场跳一下
             auth_card_h: 300.0,
@@ -310,7 +334,132 @@ impl BnApp {
         }
     }
 
+    // ---------- 价格预警 ----------
+
+    /// 逐帧评估预警：最新价来自全市场迷你 ticker（约 1s 一批，覆盖任意
+    /// 交易对），活跃交易对回退 ticker24。触发即 toast + 移除（一次性）
+    fn check_alerts(&mut self) {
+        let targets: Vec<(u8, String, f64, bool)> = {
+            let md = self.state.md.lock();
+            let cfg = self.state.cfg.read();
+            cfg.alerts
+                .iter()
+                .filter_map(|a| {
+                    let last = md.tickers[a.market as usize]
+                        .get(&a.symbol)
+                        .map(|t| t.close)
+                        .or_else(|| {
+                            let m = if a.market == 0 {
+                                crate::binance::Market::Spot
+                            } else {
+                                crate::binance::Market::UmFutures
+                            };
+                            md.get(m, &a.symbol)
+                                .and_then(|s| s.ticker.as_ref())
+                                .map(|t| t.last_price)
+                        })?;
+                    let f = crate::ui::widgets::f64_decimal(&last);
+                    let hit = if a.above { f >= a.price } else { f <= a.price };
+                    hit.then(|| (a.market, a.symbol.clone(), a.price, a.above))
+                })
+                .collect()
+        };
+        if targets.is_empty() {
+            return;
+        }
+        {
+            let mut cfg = self.state.cfg.write();
+            for (market, symbol, price, above) in &targets {
+                cfg.alerts.retain(|a| {
+                    !(a.market == *market && &a.symbol == symbol && a.price == *price && a.above == *above)
+                });
+            }
+        }
+        self.state.send_cmd(crate::engine::Command::PersistConfig);
+        for (_market, symbol, price, above) in targets {
+            let dir = if above { "≥" } else { "≤" };
+            self.state.push_toast(
+                crate::engine::state::ToastKind::Ok,
+                format!("{} {} {}", symbol, dir, price),
+            );
+        }
+    }
+
+    /// 添加预警：方向按目标价相对最新价自动判定（目标在上方=上破，
+    /// 在下方=下破）；目标价已越过节拍价时拒绝创建
+    pub fn add_alert(&mut self) {
+        let Some(price) = widgets::parse_dec(&self.alert_input) else {
+            self.state.push_toast(
+                crate::engine::state::ToastKind::Warn,
+                crate::i18n::tr("请输入有效的目标价").to_string(),
+            );
+            return;
+        };
+        if price <= rust_decimal::Decimal::ZERO {
+            self.state.push_toast(
+                crate::engine::state::ToastKind::Warn,
+                crate::i18n::tr("请输入有效的目标价").to_string(),
+            );
+            return;
+        }
+        let market = self.market;
+        let symbol = self.page.symbol.clone();
+        let last = self
+            .state
+            .ticker_of(market, &symbol)
+            .map(|t| t.close)
+            .or_else(|| {
+                self.state.md.lock().get(market, &symbol).and_then(|s| {
+                    s.ticker.as_ref().map(|t| t.last_price)
+                })
+            });
+        let Some(last) = last else {
+            self.state.push_toast(
+                crate::engine::state::ToastKind::Warn,
+                crate::i18n::tr("行情加载中，请稍后再试").to_string(),
+            );
+            return;
+        };
+        let above = price >= last;
+        {
+            let mut cfg = self.state.cfg.write();
+            cfg.alerts.retain(|a| {
+                !(a.market == market as u8 && a.symbol == symbol && a.price == widgets::f64_decimal(&price))
+            });
+            cfg.alerts.push(crate::config::AlertConfig {
+                market: market as u8,
+                symbol: symbol.clone(),
+                price: widgets::f64_decimal(&price),
+                above,
+            });
+        }
+        self.state.send_cmd(crate::engine::Command::PersistConfig);
+        self.alert_input.clear();
+        let dir = if above { "≥" } else { "≤" };
+        self.state.push_toast(
+            crate::engine::state::ToastKind::Info,
+            format!("{} {} {} {}", crate::i18n::tr("已添加预警 "), symbol, dir, price),
+        );
+    }
+
+    /// 删除一条预警（按下标）
+    pub fn remove_alert(&mut self, idx: usize) {
+        let removed = self.state.cfg.write().alerts.remove(idx);
+        self.state.send_cmd(crate::engine::Command::PersistConfig);
+        self.state.push_toast(
+            crate::engine::state::ToastKind::Info,
+            format!(
+                "{} {} {} {}",
+                crate::i18n::tr("已删除预警 "),
+                removed.symbol,
+                if removed.above { "≥" } else { "≤" },
+                removed.price
+            ),
+        );
+    }
+
     // ---------- 页签切换（活动页整体换入换出） ----------
+
 
     pub fn set_tab(&mut self, tab: Tab) {
         if self.tab == tab {
@@ -326,6 +475,8 @@ impl BnApp {
         // 换市场后盘口属于另一套数据，flash 与残影一并清空
         self.flash_reset();
         self.book_anim.clear();
+        // 全撤待确认态不得跨市场残留：换市场后第一次点击应重新确认
+        self.market_cancel_armed = false;
         // 切换顶层页签退出图表最大化：资产/设置页没有图表，残留状态会让
         // 交易页在下次进入时仍处于全屏、找不到还原按钮以外的面板
         self.chart_maximized = false;
@@ -599,6 +750,43 @@ impl BnApp {
 
     /// 交易页：左侧交易对列表 + 页头 + 图表 | 盘口+成交 | 下单面板 + 底部订单区
     fn trading_ui(&mut self, ui: &mut egui::Ui) {
+        // ---------- 快捷键 ----------
+        // B/S 切换买卖侧并聚焦数量框（输入框聚焦时不抢键）；
+        // Ctrl+Shift+C 撤销当前交易对全部挂单
+        if self.confirm.is_none() {
+            let (b, s, ctrl_shift_c) = ui.ctx().input(|i| {
+                (
+                    i.key_pressed(egui::Key::B),
+                    i.key_pressed(egui::Key::S),
+                    i.modifiers.ctrl
+                        && i.modifiers.shift
+                        && i.key_pressed(egui::Key::C),
+                )
+            });
+            let editing = ui.ctx().memory(|m| m.focused().is_some());
+            if !editing {
+                if b {
+                    self.page.form.side = Side::Buy;
+                    ui.ctx().memory_mut(|m| {
+                        m.request_focus(egui::Id::new("qty_in"))
+                    });
+                }
+                if s {
+                    self.page.form.side = Side::Sell;
+                    ui.ctx().memory_mut(|m| {
+                        m.request_focus(egui::Id::new("qty_in"))
+                    });
+                }
+            }
+            if ctrl_shift_c && self.state.has_creds() {
+                let sym = self.page.symbol.clone();
+                self.state.send_cmd(Command::CancelAll {
+                    market: self.market,
+                    symbol: Some(sym),
+                });
+            }
+        }
+
         // 侧栏宽度按用户指定 180~240（默认 180）；egui 0.36 自带的 Panel 拖拽把手
         // 在展开态不吃手势（实测），改用自绘把手：内容区右缘 8px 竖条直接驱动宽度
         if self.sidebar_expanded {
@@ -936,12 +1124,19 @@ impl BnApp {
         if submit {
             let c = self.confirm.take().unwrap();
             // 入队即置忙（引擎负责释放）：覆盖"下单命令排队在被卡住的刷新
-            // 之后"的窗口，期间提交按钮禁用，防止双击双单
+            // 之后"的窗口，期间提交按钮禁用，防止双击双单。
+            // OCO 单条命令提交；多单（主单+附加止盈止损）顺序入队
             self.state.set_busy("place", true);
-            self.engine.send(Command::PlaceOrder {
-                market: c.market,
-                req: c.req,
-            });
+            if let Some(oco) = c.oco {
+                self.engine.send(Command::PlaceOco { req: oco });
+            } else {
+                for req in c.reqs {
+                    self.engine.send(Command::PlaceOrder {
+                        market: c.market,
+                        req,
+                    });
+                }
+            }
         } else if !keep || cancel {
             self.confirm = None;
         }
@@ -951,6 +1146,8 @@ impl BnApp {
 impl eframe::App for BnApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone(); // Context 内部是 Arc，克隆廉价；避免与 ui 的可变借用冲突
+        // 本地价格预警逐帧评估（内部空表时即刻返回，无锁开销）
+        self.check_alerts();
                                     // 响应式等比缩放（防抖）：最大化/恢复会产生一串 resize 事件，在过渡帧
                                     // （窗口高度骤减）应用 zoom 曾引发 chart 绘制的 clamp panic（已单独修复）；
                                     // 仍保留防抖：仅当窗口物理尺寸稳定 ≥0.25s 后才应用 zoom，使缩放切换
@@ -1091,6 +1288,13 @@ impl BnApp {
         acct.fut_leverage = [
             ("BTCUSDT".to_string(), d("10")),
             ("ETHUSDT".to_string(), d("5")),
+        ]
+        .into_iter()
+        .collect();
+        // 保证金模式与 symbolConfig 同源（杠杆行徽章显示/切换）
+        acct.fut_margin_type = [
+            ("BTCUSDT".to_string(), "CROSSED".to_string()),
+            ("ETHUSDT".to_string(), "ISOLATED".to_string()),
         ]
         .into_iter()
         .collect();

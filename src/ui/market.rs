@@ -4,7 +4,7 @@
 //! 这里统一"短锁拷贝 → 释放 → 绘制"，绝不在面板构建期间持有锁。
 
 use crate::app::BnApp;
-use crate::binance::Interval;
+use crate::binance::{Interval, Market};
 use crate::ui::flash;
 use crate::ui::theme;
 use crate::ui::widgets;
@@ -48,6 +48,65 @@ pub fn show_book_panel(app: &mut BnApp, ui: &mut egui::Ui) {
         }
     });
     ui.separator();
+    // 盘口聚合档位步长（Binance 同款）：tick 的 1/10/100/1000 倍。独立一行
+    // 而非塞进页签行——面板窄时 RTL 溢出会叠到"成交明细"页签上
+    if app.book_tab == BookTab::Book {
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                let tick = app.state.with_rule(app.market, &app.page.symbol, |r| {
+                    r.map(|x| x.tick).unwrap_or_default()
+                });
+                if tick.is_zero() {
+                    return;
+                }
+                let steps = [
+                    tick,
+                    tick * Decimal::from(10),
+                    tick * Decimal::from(100),
+                    tick * Decimal::from(1000),
+                ];
+                let group_idx = app.page.book_group.min(steps.len() - 1);
+                ui.label(
+                    egui::RichText::new(crate::i18n::tr("档位"))
+                        .size(theme::FONT_SM)
+                        .color(theme::cur().text_dim),
+                );
+                for (i, s) in steps.iter().enumerate().rev() {
+                    let label =
+                        widgets::fmt_dec_fixed(s, s.normalize().scale() as usize);
+                    let selected = i == group_idx;
+                    let txt = egui::RichText::new(label)
+                        .size(theme::FONT_SM)
+                        .color(if selected {
+                            theme::cur().accent
+                        } else {
+                            theme::cur().text_dim
+                        });
+                    let btn = egui::Button::new(txt)
+                        .fill(if selected {
+                            theme::cur().row_hover
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
+                        .stroke(egui::Stroke::NONE)
+                        .corner_radius(3)
+                        .min_size(egui::vec2(0.0, 18.0));
+                    if ui
+                        .add(btn)
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        app.page.book_group = i;
+                        // 桶价与原始价不同源：切换聚合后闪光/残影基线一并重置
+                        app.flash_book = Default::default();
+                        app.book_anim.clear();
+                    }
+                }
+            });
+        });
+        ui.separator();
+    }
     // 切页签后闪光/残影的"上一帧"属于旧页内容：重置基线，
     // 避免切回时把缺失时段累积的价格变化整列闪一遍
     if app.book_tab != prev {
@@ -87,7 +146,21 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     let n = (((avail - SPREAD_H - SPREAD_PAD - SAFETY) / (2.0 * ROW_H)).floor() as usize)
         .clamp(BOOK_LEVELS, BOOK_MAX_LEVELS);
 
-    // 短锁拷贝（价格, 数量）
+    // 短锁拷贝（价格, 数量）。开启聚合时取全部原始档位按步长分桶：
+    // bids 向下取整、asks 向上取整到桶边界，同桶数量合并（桶价与
+    // Binance 深度聚合一致）；桶数少于 n 时面板留白
+    let group_step = {
+        let steps_tick = [1u32, 10, 100, 1000];
+        let idx = app.page.book_group.min(steps_tick.len() - 1);
+        let tick = state.with_rule(app.market, &app.page.symbol, |r| {
+            r.map(|x| x.tick).unwrap_or_default()
+        });
+        if idx == 0 {
+            Decimal::ZERO
+        } else {
+            tick * Decimal::from(steps_tick[idx])
+        }
+    };
     let (asks, bids) = {
         let md = state.md.lock();
         let Some(md) = md.get(app.market, &app.page.symbol) else {
@@ -98,13 +171,35 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             widgets::loading_state(ui, crate::i18n::tr("等待深度数据…"));
             return;
         }
-        let take = |side: &Vec<crate::binance::model::Level>| {
-            side.iter()
-                .take(n)
+        let take = |side: &Vec<crate::binance::model::Level>, up: bool| {
+            let raw: Vec<(Decimal, Decimal)> = side
+                .iter()
                 .map(|l| (l.price, l.qty))
-                .collect::<Vec<(Decimal, Decimal)>>()
+                .collect();
+            if group_step.is_zero() {
+                return raw.into_iter().take(n).collect::<Vec<_>>();
+            }
+            // asks 升序（最优在前）桶边界向上取整；bids 降序向下取整。
+            // 合并后保持原排序方向，同桶数量累加
+            let mut merged: Vec<(Decimal, Decimal)> = Vec::with_capacity(raw.len());
+            for (p, q) in raw {
+                let buckets = p / group_step;
+                let b = (if up {
+                    buckets.ceil()
+                } else {
+                    buckets.floor()
+                }) * group_step;
+                if let Some(last) = merged.last_mut() {
+                    if last.0 == b {
+                        last.1 += q;
+                        continue;
+                    }
+                }
+                merged.push((b, q));
+            }
+            merged.into_iter().take(n).collect::<Vec<_>>()
         };
-        (take(&md.depth.asks), take(&md.depth.bids))
+        (take(&md.depth.asks, true), take(&md.depth.bids, false))
     };
 
     // 累计量用于深度条：从价差向外累积（显示行自上而下为最远档 → 最近档）
@@ -469,23 +564,58 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
 
     ui.set_min_width(0.0);
     // 数字列右对齐 + 最小列宽：价格/数量纵向成列，便于扫读。
-    // 列宽下限必须 ≥ 内容实宽：RTL 布局里内容贴 set_min_size 撑出的
-    // 右缘对齐，文本超宽时向左溢出（时间列 HH:MM:SS 等宽 8 字符 > 设定
-    // 列宽 58），窄内容的表头"时间"却停在设定右缘——表头会相对数据行
-    // 整体左偏。取 max(设定宽, 文本实宽) 后同列所有单元格右缘一致
-    let num_cell =
-        |ui: &mut egui::Ui, txt: String, font: egui::FontId, color: egui::Color32, w: f32, h: f32| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // 实宽测量 + 固定行高：Grid 行高由最高单元格决定，统一高度后
-                // 节距稳定可预算
-                let galley = ui.painter().layout_no_wrap(txt.clone(), font.clone(), color);
-                ui.set_min_size(egui::vec2(w.max(galley.size().x), h));
-                ui.label(egui::RichText::new(txt).font(font).color(color));
-            });
+    // 列宽 = max(设定宽, 列内全部单元格实宽)——含表头。Grid 列宽取列内
+    // 最宽单元格，但各单元格若只按自身文本设宽，窄单元格（如表头"时间"）
+    // 会停在自身右缘而非列右缘，出现 1-2pt 的错位；先整列统一测宽再绘制，
+    // 同列所有单元格右缘严格一致
+    let measure =
+        |txt: &str, font: &egui::FontId| -> f32 {
+            ui.painter()
+                .layout_no_wrap(txt.to_string(), font.clone(), theme::cur().text)
+                .size()
+                .x
         };
     // 表头/数据两套字体：表头小号正体，数据等宽正文
     let head_font = egui::FontId::proportional(theme::FONT_SM);
     let data_font = egui::FontId::monospace(theme::FONT_MD);
+    let (mut w_price, mut w_qty, mut w_time) = (
+        measure(crate::i18n::tr("价格"), &head_font).max(72.0),
+        measure(crate::i18n::tr("数量"), &head_font).max(64.0),
+        measure(crate::i18n::tr("时间"), &head_font).max(58.0),
+    );
+    for t in &trades {
+        w_price = w_price.max(measure(&format!("{:.*}", dp, widgets::f64_decimal(&t.price)), &data_font));
+        w_qty = w_qty.max(measure(&format!("{:.*}", qdp, widgets::f64_decimal(&t.qty)), &data_font));
+        w_time = w_time.max(measure(&widgets::fmt_time_short(t.time), &data_font));
+    }
+    // 窄面板时间降级：列宽绝不压到内容实宽以下（压缩会让手绘 galley 向左
+    // 溢出、与数量列叠印）。放不下完整 HH:MM:SS 时省略秒，再不够才等比压缩
+    let avail = ui.available_width();
+    let tw_short = measure("00:00", &data_font);
+    if w_price + w_qty + w_time + 24.0 > avail && w_price + w_qty + tw_short + 24.0 <= avail {
+        w_time = tw_short;
+    }
+    let time_full = w_time > tw_short;
+    let total = w_price + w_qty + w_time + 24.0;
+    if total > avail {
+        let k = avail / total;
+        w_price *= k;
+        w_qty *= k;
+        w_time *= k;
+    }
+    let num_cell =
+        |ui: &mut egui::Ui, txt: String, font: egui::FontId, color: egui::Color32, w: f32, h: f32| {
+            // 精确占位 + 手绘 galley：单元格右缘 = 列右缘，文本右对齐到
+            // rect.right()，不依赖 RTL 布局的落位细节（Grid 按各单元格
+            // 自身内容定列宽时，set_min_size 的窄单元格会差出几 pt）
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
+            let galley = ui.painter().layout_no_wrap(txt.clone(), font, color);
+            let pos = egui::pos2(
+                rect.right() - galley.size().x,
+                rect.center().y - galley.size().y * 0.5,
+            );
+            ui.painter().galley(pos, galley, color);
+        };
     if trades.is_empty() {
         widgets::empty_state(ui, "◍", crate::i18n::tr("暂无成交"), "");
         return;
@@ -493,8 +623,10 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     // 列宽随面板可用宽等比收缩：Grid 最小宽一旦超过面板内宽，egui 会把内容
     // 宽度持久化进 PanelState，切到成交页签面板就被撑宽且切不回去。
     // 表头与数据行用同一组列宽，纵向对齐不受影响
-    let col_k = (ui.available_width() / (72.0 + 64.0 + 58.0 + 24.0)).min(1.0);
-    let (w_price, w_qty, w_time) = (72.0 * col_k, 64.0 * col_k, 58.0 * col_k);
+    let col_k = (ui.available_width() / (w_price + w_qty + w_time + 24.0)).min(1.0);
+    w_price *= col_k;
+    w_qty *= col_k;
+    w_time *= col_k;
     egui::Grid::new("trades_grid")
         .num_columns(3)
         .spacing([12.0, 2.0])
@@ -560,9 +692,11 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
                     w_qty,
                     ROW_H,
                 );
+                let ts = widgets::fmt_time_short(t.time);
                 num_cell(
                     ui,
-                    widgets::fmt_time_short(t.time),
+                    // 窄面板时间降级：省略秒（HH:MM），与列宽决策一致
+                    if time_full { ts } else { ts[..5].to_string() },
                     data_font.clone(),
                     theme::cur().text_dim,
                     w_time,
@@ -587,14 +721,15 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .unwrap_or((String::new(), String::new()));
     // 单次短锁取齐本帧所需的 ticker 与资金费率（原先分 3 次锁、逐字段字符串解析）
-    let (tick, funding) = {
+    let (tick, funding, funding_at) = {
         let md_guard = state.md.lock();
         match md_guard.get(app.market, &app.page.symbol) {
             Some(md) => (
                 md.ticker.clone(),
                 md.mark.as_ref().and_then(|m| m.funding_rate),
+                md.mark.as_ref().map(|m| m.next_funding_time),
             ),
-            None => (None, None),
+            None => (None, None, None),
         }
     };
 
@@ -652,9 +787,41 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 app.switch_interval(iv);
             }
         }
-        // F1：自选星标固定在行最右
+        // F1：自选星标固定在行最右；其左侧为账户条（钱包/可用/未实现盈亏）
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let is_fav = app.state.favorites(app.market).contains(&app.page.symbol);
+            // 价格预警入口：本交易对已有 N 条时高亮
+            let alert_n = app
+                .state
+                .cfg
+                .read()
+                .alerts
+                .iter()
+                .filter(|a| a.market == app.market as u8 && a.symbol == app.page.symbol)
+                .count();
+            let bell_txt = egui::RichText::new(if alert_n > 0 {
+                format!("{}({alert_n})", crate::i18n::tr("预警"))
+            } else {
+                crate::i18n::tr("预警").to_string()
+            })
+            .size(theme::FONT_SM)
+            .color(if alert_n > 0 || app.alerts_open {
+                theme::cur().accent
+            } else {
+                theme::cur().text_dim
+            });
+            if ui
+                .add(
+                    egui::Button::new(bell_txt)
+                        .fill(egui::Color32::TRANSPARENT)
+                        .corner_radius(3),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(crate::i18n::tr("价格预警（本地触发，到价弹提示）"))
+                .clicked()
+            {
+                app.alerts_open = !app.alerts_open;
+            }
             let star_txt = egui::RichText::new(if is_fav { "★" } else { "☆" })
                 .size(theme::FONT_BODY)
                 .color(if is_fav {
@@ -677,6 +844,58 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 .clicked()
             {
                 app.state.toggle_favorite(app.market, &app.page.symbol);
+            }
+            // 账户条：交易页抬头直接可见资金（WS 事件驱动刷新，准实时）
+            let acct = app.state.acct.lock();
+            let chip = |ui: &mut egui::Ui, label: &str, v: String, c: egui::Color32| {
+                ui.label(theme::card_label(label));
+                ui.label(
+                    egui::RichText::new(v)
+                        .monospace()
+                        .size(theme::FONT_MD)
+                        .color(c),
+                );
+                ui.separator();
+            };
+            match app.market {
+                Market::UmFutures => {
+                    if let Some(a) = &acct.fut {
+                        let f = widgets::f64_decimal;
+                        chip(
+                            ui,
+                            crate::i18n::tr("钱包"),
+                            widgets::fmt_compact(f(&a.total_wallet)),
+                            theme::cur().text,
+                        );
+                        chip(
+                            ui,
+                            crate::i18n::tr("可用"),
+                            widgets::fmt_compact(f(&a.available)),
+                            theme::cur().text,
+                        );
+                        chip(
+                            ui,
+                            crate::i18n::tr("未实现"),
+                            format!(
+                                "{:+.2}",
+                                f(&a.total_unrealized)
+                            ),
+                            theme::signed_color(f(&a.total_unrealized)),
+                        );
+                    }
+                }
+                Market::Spot => {
+                    if let Some(a) = &acct.spot {
+                        if let Some(b) = a.balances.iter().find(|b| b.asset == "USDT") {
+                            chip(
+                                ui,
+                                crate::i18n::tr("USDT 可用"),
+                                widgets::fmt_compact(widgets::f64_decimal(&b.free)),
+                                theme::cur().text,
+                            );
+                        }
+                    }
+                }
             }
         });
     });
@@ -759,7 +978,161 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 )
                 .wrap_mode(egui::TextWrapMode::Extend),
             );
+            // 下次结算倒计时：费率旁直接可见距离收/付资金费的剩余时间
+            if let Some(next) = funding_at {
+                if next > 0 {
+                    let left = (next - chrono::Utc::now().timestamp_millis()).max(0) / 1000;
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(format!(
+                                " · {:02}:{:02}:{:02}",
+                                left / 3600,
+                                (left % 3600) / 60,
+                                left % 60
+                            ))
+                            .monospace()
+                            .size(theme::FONT_MD)
+                            .color(theme::cur().text_dim),
+                        )
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                    );
+                }
+            }
         }
     });
+
+    // 价格预警弹窗：当前交易对添加 + 全部预警列表（一次性触发，到价 toast）
+    if app.alerts_open {
+        let mut close = false;
+        egui::Window::new(
+            egui::RichText::new(crate::i18n::tr("价格预警"))
+                .strong()
+                .size(theme::FONT_LG),
+        )
+        .id(egui::Id::new("alerts_win"))
+        .anchor(egui::Align2::RIGHT_TOP, [-16.0, 92.0])
+        .collapsible(false)
+        .resizable(false)
+        .min_width(272.0)
+        .default_height(0.0)
+        .show(ui.ctx(), |ui| {
+            // 添加行：目标价（方向按相对最新价自动判定）
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(&app.page.symbol)
+                        .strong()
+                        .size(theme::FONT_MD),
+                );
+                if let Some(t) = &tick {
+                    ui.label(
+                        egui::RichText::new(widgets::fmt_thousands(
+                            widgets::f64_decimal(&t.last_price),
+                            dp,
+                        ))
+                        .monospace()
+                        .size(theme::FONT_SM)
+                        .color(theme::cur().text_dim),
+                    );
+                }
+            });
+            ui.horizontal(|ui| {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut app.alert_input)
+                        .id_salt("alert_price_in")
+                        .hint_text(crate::i18n::tr("目标价"))
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(110.0),
+                );
+                let enter = resp.lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if ui
+                    .add(
+                        egui::Button::new(egui::RichText::new(crate::i18n::tr("添加")).size(theme::FONT_SM))
+                            .min_size(egui::vec2(0.0, theme::CONTROL_H)),
+                    )
+                    .clicked()
+                    || enter
+                {
+                    app.add_alert();
+                }
+            });
+            ui.add_space(2.0);
+            ui.separator();
+            let alerts = app.state.cfg.read().alerts.clone();
+            if alerts.is_empty() {
+                ui.label(
+                    egui::RichText::new(crate::i18n::tr("暂无预警，输入目标价添加"))
+                        .size(theme::FONT_SM)
+                        .color(theme::cur().text_dim),
+                );
+            } else {
+                let adp = |mkt: u8, sym: &str| -> usize {
+                    let m = if mkt == 0 {
+                        crate::binance::Market::Spot
+                    } else {
+                        crate::binance::Market::UmFutures
+                    };
+                    state.with_rule(m, sym, |r| r.map(|x| x.price_dp() as usize).unwrap_or(2))
+                };
+                egui::ScrollArea::vertical()
+                    .max_height(180.0)
+                    .show(ui, |ui| {
+                        for (i, a) in alerts.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(&a.symbol).size(theme::FONT_MD));
+                                let mkt_label = if a.market == 0 { "" } else { "· 合约" };
+                                if !mkt_label.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(mkt_label)
+                                            .size(theme::FONT_SM)
+                                            .color(theme::cur().text_dim),
+                                    );
+                                }
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui
+                                            .add(
+                                                egui::Button::new(
+                                                    egui::RichText::new("×")
+                                                        .size(theme::FONT_SM)
+                                                        .color(theme::cur().text_dim),
+                                                )
+                                                .fill(egui::Color32::TRANSPARENT)
+                                                .corner_radius(3),
+                                            )
+                                            .on_hover_text(crate::i18n::tr("删除"))
+                                            .clicked()
+                                        {
+                                            app.remove_alert(i);
+                                        }
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "{} {}",
+                                                if a.above { "≥" } else { "≤" },
+                                                widgets::fmt_thousands(a.price, adp(a.market, &a.symbol))
+                                            ))
+                                            .monospace()
+                                            .size(theme::FONT_MD)
+                                            .color(if a.above {
+                                                theme::cur().up
+                                            } else {
+                                                theme::cur().down
+                                            }),
+                                        );
+                                    },
+                                );
+                            });
+                        }
+                    });
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close = true;
+            }
+        });
+        if close {
+            app.alerts_open = false;
+        }
+    }
     ui.separator();
 }

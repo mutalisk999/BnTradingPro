@@ -1,7 +1,7 @@
 //! 下单面板：买/卖、限价/市价/止损/止盈、数量百分比快捷填充、确认下单
 
 use crate::app::{BnApp, ConfirmOrder};
-use crate::binance::client::{OrderKind, OrderRequest};
+use crate::binance::client::{OrderKind, OrderRequest, Tif};
 use crate::binance::{FutPosSide, Market, Side};
 use crate::engine::{state::ToastKind, Command};
 use crate::ui::{flash, theme, widgets};
@@ -17,6 +17,10 @@ pub enum UiKind {
     TakeProfitLimit,
     StopLossMarket,
     TakeProfitMarket,
+    /// 合约跟踪委托（回调幅度触发市价全平）
+    TrailingStop,
+    /// 现货 OCO（限价腿 + 止损限价腿）
+    Oco,
 }
 
 impl UiKind {
@@ -28,6 +32,8 @@ impl UiKind {
             UiKind::TakeProfitLimit => crate::i18n::tr("止盈限价"),
             UiKind::StopLossMarket => crate::i18n::tr("止损市价"),
             UiKind::TakeProfitMarket => crate::i18n::tr("止盈市价"),
+            UiKind::TrailingStop => crate::i18n::tr("跟踪委托"),
+            UiKind::Oco => crate::i18n::tr("OCO"),
         }
     }
 
@@ -38,12 +44,14 @@ impl UiKind {
                 UiKind::Market,
                 UiKind::StopLossLimit,
                 UiKind::TakeProfitLimit,
+                UiKind::Oco,
             ],
             Market::UmFutures => vec![
                 UiKind::Limit,
                 UiKind::Market,
                 UiKind::StopLossMarket,
                 UiKind::TakeProfitMarket,
+                UiKind::TrailingStop,
             ],
         }
     }
@@ -53,10 +61,19 @@ impl UiKind {
 pub struct OrderForm {
     pub side: Side,
     pub kind: UiKind,
+    pub tif: Tif,
     pub price: String,
     pub qty: String,
     pub trigger: String,
+    /// 跟踪委托回调幅度（百分数，0.1-10）
+    pub callback_rate: String,
+    /// 现货 OCO 止损腿限价
+    pub stop_limit: String,
     pub reduce_only: bool,
+    /// 合约附加止盈/止损（单向持仓模式；触发即全平）
+    pub tpsl_on: bool,
+    pub tp_price: String,
+    pub sl_price: String,
     /// 校验错误文本：非空时在提交按钮上方显示红色提示条（替代仅 toast 的反馈）
     pub err: String,
 }
@@ -66,10 +83,16 @@ impl Default for OrderForm {
         Self {
             side: Side::Buy,
             kind: UiKind::Limit,
+            tif: Tif::Gtc,
             price: String::new(),
             qty: String::new(),
             trigger: String::new(),
+            callback_rate: "1".to_string(),
+            stop_limit: String::new(),
             reduce_only: false,
+            tpsl_on: false,
+            tp_price: String::new(),
+            sl_price: String::new(),
             err: String::new(),
         }
     }
@@ -199,6 +222,51 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 });
         });
 
+        // ---------- 有效期（限价类订单；GTX 仅合约 = 只做 maker） ----------
+        if matches!(app.page.form.kind, UiKind::Limit | UiKind::StopLossLimit | UiKind::TakeProfitLimit)
+        {
+            compact_row(ui, |ui| {
+                field_label(ui, crate::i18n::tr("有效期"));
+                for &t in Tif::available(market) {
+                    let on = app.page.form.tif == t;
+                    let txt = if t == Tif::Gtx {
+                        crate::i18n::tr("GTX 只做maker").to_string()
+                    } else {
+                        t.as_str().to_string()
+                    };
+                    let btn = egui::Button::new(
+                        egui::RichText::new(txt)
+                            .size(theme::FONT_SM)
+                            .color(if on {
+                                theme::cur().accent
+                            } else {
+                                theme::cur().text_dim
+                            }),
+                    )
+                    .fill(if on {
+                        theme::cur().accent.gamma_multiply(0.16)
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    })
+                    .corner_radius(f32::from(theme::R_SM))
+                    .min_size(egui::vec2(0.0, 18.0));
+                    if ui
+                        .add(btn)
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(match t {
+                            Tif::Gtc => crate::i18n::tr("成交为止"),
+                            Tif::Ioc => crate::i18n::tr("立即成交，剩余撤销"),
+                            Tif::Fok => crate::i18n::tr("全部成交或立即撤销"),
+                            Tif::Gtx => crate::i18n::tr("只做 maker，不会吃单"),
+                        })
+                        .clicked()
+                    {
+                        app.page.form.tif = t;
+                    }
+                }
+            });
+        }
+
         // ---------- 合约持仓方向 / 只减仓 / 杠杆 ----------
         if market == Market::UmFutures {
             let dual = state.acct.lock().fut_dual_side;
@@ -240,6 +308,28 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 if lev > 0 {
                     ui.label(egui::RichText::new(format!("{lev}x")).strong());
                 }
+                // 保证金模式（symbolConfig）：点击在 全仓/逐仓 间切换
+                let mt = state.acct.lock().fut_margin_type.get(&symbol).cloned();
+                if let Some(mt) = mt {
+                    let isolated = mt == "ISOLATED";
+                    if theme::btn_ghost(
+                        ui,
+                        if isolated {
+                            crate::i18n::tr("逐仓")
+                        } else {
+                            crate::i18n::tr("全仓")
+                        },
+                        true,
+                    )
+                    .on_hover_text(crate::i18n::tr("点击切换保证金模式（全仓/逐仓）"))
+                    .clicked()
+                    {
+                        state.send_cmd(Command::SetMarginType {
+                            symbol: symbol.clone(),
+                            isolated: !isolated,
+                        });
+                    }
+                }
                 widgets::num_field_h(
                     ui,
                     "lev_in",
@@ -265,7 +355,11 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 }
             });
         }
-        if app.page.form.kind != UiKind::Market {
+        // 限价/止损限价需要委托价；市价与跟踪委托不需要
+        if !matches!(
+            app.page.form.kind,
+            UiKind::Market | UiKind::TrailingStop
+        ) {
             compact_row(ui, |ui| {
                 field_label(ui, crate::i18n::tr("价格"));
                 widgets::num_field_h(
@@ -285,6 +379,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 | UiKind::TakeProfitLimit
                 | UiKind::StopLossMarket
                 | UiKind::TakeProfitMarket
+                | UiKind::Oco
         ) {
             compact_row(ui, |ui| {
                 field_label(ui, crate::i18n::tr("触发价"));
@@ -293,6 +388,19 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     "trig_in",
                     &mut app.page.form.trigger,
                     crate::i18n::tr("触发价"),
+                    22.0,
+                );
+            });
+        }
+        // OCO 止损腿限价（触发后挂出的限价单）
+        if app.page.form.kind == UiKind::Oco {
+            compact_row(ui, |ui| {
+                field_label(ui, crate::i18n::tr("止损委托价"));
+                widgets::num_field_h(
+                    ui,
+                    "sl_limit_in",
+                    &mut app.page.form.stop_limit,
+                    crate::i18n::tr("委托价"),
                     22.0,
                 );
             });
@@ -318,6 +426,67 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 );
             }
         });
+
+        // 跟踪委托：回调幅度（百分数，价格回撤该幅度触发市价全平）
+        if app.page.form.kind == UiKind::TrailingStop {
+            compact_row(ui, |ui| {
+                field_label(ui, crate::i18n::tr("回调幅度"));
+                widgets::num_field_h(
+                    ui,
+                    "cb_rate_in",
+                    &mut app.page.form.callback_rate,
+                    crate::i18n::tr("百分比"),
+                    22.0,
+                );
+                ui.label(
+                    egui::RichText::new(crate::i18n::tr("%（0.1-10）"))
+                        .size(theme::FONT_SM)
+                        .color(theme::cur().text_dim),
+                );
+            });
+        }
+
+        // ---------- 附加止盈/止损（合约单向持仓模式，触发即全平） ----------
+        if market == Market::UmFutures && matches!(app.page.form.kind, UiKind::Limit | UiKind::Market)
+        {
+            let dual = state.acct.lock().fut_dual_side;
+            compact_row(ui, |ui| {
+                field_label(ui, crate::i18n::tr("止盈/止损"));
+                let enabled = !dual;
+                // add_enabled：双向持仓模式下禁用（禁用态点击无响应，无需复位）
+                ui.add_enabled(
+                    enabled,
+                    egui::Checkbox::new(&mut app.page.form.tpsl_on, ""),
+                )
+                .on_hover_text(if enabled {
+                    crate::i18n::tr("下单同时挂出触发即全平的止盈/止损单")
+                } else {
+                    crate::i18n::tr("仅单向持仓模式可用（双向模式请用持仓页设置）")
+                });
+            });
+            if app.page.form.tpsl_on {
+                compact_row(ui, |ui| {
+                    field_label(ui, crate::i18n::tr("止盈触发"));
+                    widgets::num_field_h(
+                        ui,
+                        "tp_in",
+                        &mut app.page.form.tp_price,
+                        crate::i18n::tr("触发价"),
+                        22.0,
+                    );
+                });
+                compact_row(ui, |ui| {
+                    field_label(ui, crate::i18n::tr("止损触发"));
+                    widgets::num_field_h(
+                        ui,
+                        "sl_in",
+                        &mut app.page.form.sl_price,
+                        crate::i18n::tr("触发价"),
+                        22.0,
+                    );
+                });
+            }
+        }
 
         // ---------- 百分比快捷填充 ----------
         compact_row(ui, |ui| {
@@ -429,12 +598,29 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // ---------- 提交 ----------
     ui.add_space(4.0);
     let busy = state.is_busy("place");
+    // 现货 OCO 走独立构建器（占位主单仅用于按钮启用判定，不会发送）
+    let is_oco = market == Market::Spot && app.page.form.kind == UiKind::Oco;
+    let check_oco = if is_oco { Some(build_oco(app)) } else { None };
     // 提交前校验：错误以红色提示条显示在按钮上方（输入时实时清红条，
     // 避免错误残留造成"界面在骂人"），真正的下单仍以确认弹窗兜底
-    let check = build_request(app);
-    let btn_enabled = !busy
-        && state.has_creds()
-        && match &check {
+    let check = if is_oco {
+        Ok((OrderRequest {
+            symbol: symbol.clone(),
+            side: app.page.form.side,
+            kind: OrderKind::Market {
+                qty: Decimal::ONE,
+            },
+            tif: Tif::Gtc,
+            position_side: crate::binance::FutPosSide::Both,
+            reduce_only: false,
+            close_position: false,
+            client_id: None,
+        }, Vec::new()))
+    } else {
+        build_request_bundle(app)
+    };
+    let check_ok = if let Some(r) = &check_oco {
+        match r {
             Ok(_) => true,
             Err(e) => {
                 if app.page.form.err != *e {
@@ -442,7 +628,19 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 }
                 false
             }
-        };
+        }
+    } else {
+        match &check {
+            Ok(_) => true,
+            Err(e) => {
+                if app.page.form.err != *e {
+                    app.page.form.err = e.clone();
+                }
+                false
+            }
+        }
+    };
+    let btn_enabled = !busy && state.has_creds() && check_ok;
     if btn_enabled && !app.page.form.err.is_empty() {
         app.page.form.err.clear();
     }
@@ -492,8 +690,19 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     }
     if resp.clicked() {
         // 校验已在按钮上方红条提示，这里不再重复弹 toast
-        if let Ok(req) = check {
-            let mut rows = order_rows(&req);
+        if is_oco {
+            if let Some(Ok(oco)) = &check_oco {
+                let rows = oco_rows(oco);
+                app.confirm = Some(ConfirmOrder {
+                    market: Market::Spot,
+                    oco: Some(oco.clone()),
+                    reqs: Vec::new(),
+                    side: oco.side,
+                    rows,
+                });
+            }
+        } else if let Ok((main, extras)) = check {
+            let mut rows = order_rows(&main);
             // 确认弹窗给出金额量级，兜住市价单输错数量的低级失误
             if let Some(t) = total {
                 rows.push((
@@ -501,12 +710,31 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     format!("≈ {}", t.normalize().round_dp(8)),
                 ));
             }
+            // 附加止盈/止损单入列（主单在前，触发即全平）
+            for e in &extras {
+                if let OrderKind::StopMarket {
+                    trigger, take_profit, ..
+                } = &e.kind
+                {
+                    rows.push((
+                        if *take_profit {
+                            crate::i18n::tr("附加止盈").to_string()
+                        } else {
+                            crate::i18n::tr("附加止损").to_string()
+                        },
+                        format!("{} {}", crate::i18n::tr("触发"), trigger.normalize()),
+                    ));
+                }
+            }
             // 弹窗头部的买卖方向必须与实际请求一致：
             // 对冲保护单会把 side 翻转为平仓方向（如 LONG→SELL+LONG）
-            let side = req.side;
+            let side = main.side;
+            let mut reqs = vec![main];
+            reqs.extend(extras);
             app.confirm = Some(ConfirmOrder {
                 market: app.market,
-                req,
+                oco: None,
+                reqs,
                 rows,
                 side,
             });
@@ -656,6 +884,24 @@ pub fn build_request(app: &BnApp) -> Result<OrderRequest, String> {
             qty: q_qty(qty)?,
             take_profit: true,
         },
+        UiKind::TrailingStop => {
+            let rate = widgets::parse_dec(&app.page.form.callback_rate)
+                .ok_or(crate::i18n::tr("请输入回调幅度（0.1-10 的百分数）"))?;
+            if !(Decimal::from_str_exact("0.1").unwrap_or_default()..=Decimal::from(10))
+                .contains(&rate)
+            {
+                return Err(crate::i18n::tr("回调幅度需为 0.1-10 的百分数").to_string());
+            }
+            OrderKind::TrailingStop {
+                callback_rate: rate.round_dp(1),
+                qty: q_qty(qty)?,
+            }
+        }
+        // OCO 走独立构建器（build_oco），此分支仅在类型枚举穷尽时兜底；
+        // 启用判定与提交都走 check_oco，不会到达
+        UiKind::Oco => OrderKind::Market {
+            qty: q_qty(qty).unwrap_or_default(),
+        },
     };
     let dual = state.acct.lock().fut_dual_side;
     // 止损/止盈为保护单（两个持仓模式同理）：已有持仓时它的语义是"保护"，
@@ -729,11 +975,152 @@ pub fn build_request(app: &BnApp) -> Result<OrderRequest, String> {
         symbol,
         side,
         kind,
+        tif: app.page.form.tif,
         position_side,
         reduce_only,
+        close_position: false,
         // 幂等标识：同一确认弹窗重发相同 newClientOrderId，方便对账与排查重复委托
         client_id: Some(format!("btp-{}", chrono::Utc::now().timestamp_millis())),
     })
+}
+
+/// 主单 + 合约附加止盈/止损（仅单向持仓模式）：附加单为 STOP_MARKET
+/// closePosition=true（触发即全平该方向持仓），方向与主单相反
+pub fn build_request_bundle(
+    app: &BnApp,
+) -> Result<(OrderRequest, Vec<OrderRequest>), String> {
+    let main = build_request(app)?;
+    let state = &app.state;
+    let market = app.market;
+    if market != Market::UmFutures
+        || !app.page.form.tpsl_on
+        || state.acct.lock().fut_dual_side
+        || !matches!(app.page.form.kind, UiKind::Limit | UiKind::Market)
+    {
+        return Ok((main, Vec::new()));
+    }
+    // 参考价：优先表单价格，其次最新价（触发价方向校验的基准）
+    let ref_price = widgets::parse_dec(&app.page.form.price).or_else(|| {
+        state
+            .md
+            .lock()
+            .get(market, &main.symbol)
+            .and_then(|md| md.ticker.as_ref().map(|t| t.last_price))
+    });
+    let Some(ref_price) = ref_price else {
+        return Err(crate::i18n::tr("已启用止盈/止损：先填写委托价或等待行情").to_string());
+    };
+    let Some(r) = state.rule_of(market, &main.symbol) else {
+        return Err(crate::i18n::tr("交易规则尚未加载").to_string());
+    };
+    let tp = widgets::parse_dec(&app.page.form.tp_price);
+    let sl = widgets::parse_dec(&app.page.form.sl_price);
+    if tp.is_none() && sl.is_none() {
+        return Err(crate::i18n::tr("已启用止盈/止损：至少填写一个触发价").to_string());
+    }
+    let q = |v: Decimal| {
+        crate::binance::symbols::quantize_price(v, r.tick)
+            .ok_or_else(|| crate::i18n::tr("触发价超出可表示范围").to_string())
+    };
+    // 方向校验：多头（买入开仓）止盈在上方、止损在下方；空头相反
+    let long = main.side == Side::Buy;
+    let mk = |trigger: Decimal, take_profit: bool| {
+        OrderRequest {
+            symbol: main.symbol.clone(),
+            side: if long { Side::Sell } else { Side::Buy },
+            kind: OrderKind::StopMarket {
+                trigger,
+                qty: Decimal::ONE, // closePosition 下省略
+                take_profit,
+            },
+            position_side: FutPosSide::Both,
+            tif: Tif::Gtc,
+            reduce_only: false,
+            close_position: true,
+            client_id: Some(format!(
+                "btp-tpsl-{}",
+                chrono::Utc::now().timestamp_millis()
+            )),
+        }
+    };
+    let mut extras = Vec::new();
+    if let Some(tp) = tp {
+        let t = q(tp)?;
+        if (long && t <= ref_price) || (!long && t >= ref_price) {
+            return Err(
+                crate::i18n::tr("止盈触发价方向不对：多头应高于现价，空头应低于现价").to_string(),
+            );
+        }
+        extras.push(mk(t, true));
+    }
+    if let Some(sl) = sl {
+        let t = q(sl)?;
+        if (long && t >= ref_price) || (!long && t <= ref_price) {
+            return Err(
+                crate::i18n::tr("止损触发价方向不对：多头应低于现价，空头应高于现价").to_string(),
+            );
+        }
+        extras.push(mk(t, false));
+    }
+    Ok((main, extras))
+}
+
+/// 现货 OCO 构建：限价腿 + 止损限价腿，校验两腿价格方向
+/// （卖出 OCO：限价 > 触发价；买入 OCO：限价 < 触发价）
+pub fn build_oco(app: &BnApp) -> Result<crate::binance::client::OcoRequest, String> {
+    let state = &app.state;
+    let market = Market::Spot;
+    let symbol = app.page.symbol.clone();
+    let Some(r) = state.rule_of(market, &symbol) else {
+        return Err(crate::i18n::tr("交易规则尚未加载").to_string());
+    };
+    let qty = widgets::parse_dec(&app.page.form.qty).ok_or(crate::i18n::tr("请输入数量"))?;
+    let price = widgets::parse_dec(&app.page.form.price).ok_or(crate::i18n::tr("请输入价格"))?;
+    let trigger =
+        widgets::parse_dec(&app.page.form.trigger).ok_or(crate::i18n::tr("请输入触发价"))?;
+    let stop_limit = widgets::parse_dec(&app.page.form.stop_limit)
+        .ok_or(crate::i18n::tr("请输入止损委托价"))?;
+    let q = |v: Decimal| {
+        crate::binance::symbols::quantize_price(v, r.tick)
+            .ok_or_else(|| crate::i18n::tr("价格超出可表示范围").to_string())
+    };
+    let qp = q(price)?;
+    let qtr = q(trigger)?;
+    let qsl = q(stop_limit)?;
+    let side = app.page.form.side;
+    if side == Side::Sell && qp <= qtr {
+        return Err(crate::i18n::tr("卖出 OCO：限价腿应高于止损触发价").to_string());
+    }
+    if side == Side::Buy && qp >= qtr {
+        return Err(crate::i18n::tr("买入 OCO：限价腿应低于止损触发价").to_string());
+    }
+    Ok(crate::binance::client::OcoRequest {
+        symbol,
+        side,
+        qty: crate::binance::symbols::quantize_qty(qty, r.step)
+            .ok_or_else(|| crate::i18n::tr("数量超出可表示范围").to_string())?,
+        price: qp,
+        stop_price: qtr,
+        stop_limit_price: qsl,
+        client_id: Some(format!("btp-oco-{}", chrono::Utc::now().timestamp_millis())),
+    })
+}
+
+/// OCO 确认弹窗行
+fn oco_rows(o: &crate::binance::client::OcoRequest) -> Vec<(String, String)> {
+    let tr = crate::i18n::tr;
+    vec![
+        (tr("交易对").to_string(), o.symbol.clone()),
+        (tr("方向").to_string(), o.side.label().to_string()),
+        (tr("类型").to_string(), "OCO".to_string()),
+        (tr("价格").to_string(), o.price.normalize().to_string()),
+        (tr("触发价").to_string(), o.stop_price.normalize().to_string()),
+        (
+            tr("止损委托价").to_string(),
+            o.stop_limit_price.normalize().to_string(),
+        ),
+        (tr("数量").to_string(), o.qty.normalize().to_string()),
+    ]
 }
 
 /// 百分比快捷填充
@@ -861,8 +1248,10 @@ pub fn confirm_market_close(
         symbol: symbol.clone(),
         side,
         kind: OrderKind::Market { qty },
+        tif: Tif::Gtc,
         position_side: pos_side,
         reduce_only: !dual,
+        close_position: false,
         client_id: Some(format!("btp-{}", chrono::Utc::now().timestamp_millis())),
     };
     // 走确认弹窗，避免误触直接发真实市价单；给出金额量级兜住输错数量的失误
@@ -877,9 +1266,250 @@ pub fn confirm_market_close(
         ));
     }
     app.confirm = Some(ConfirmOrder {
+        oco: None,
         market: Market::UmFutures,
         side: req.side,
-        req,
+        reqs: vec![req],
+        rows,
+    });
+}
+
+/// 一键平仓：全部非零持仓聚合为一个确认弹窗，确认后逐单市价平仓
+pub fn confirm_close_all(app: &mut BnApp) {
+    let tr = crate::i18n::tr;
+    let state = &app.state;
+    let (positions, dual) = {
+        let a = state.acct.lock();
+        (
+            a.fut_positions
+                .iter()
+                .filter(|p| p.amt != Decimal::ZERO)
+                .cloned()
+                .collect::<Vec<_>>(),
+            a.fut_dual_side,
+        )
+    };
+    if positions.is_empty() {
+        return;
+    }
+    let mut reqs = Vec::with_capacity(positions.len());
+    let mut rows = Vec::new();
+    let mut first_side = Side::Buy;
+    for p in &positions {
+        let long = p.amt > Decimal::ZERO;
+        let side = if long { Side::Sell } else { Side::Buy };
+        if reqs.is_empty() {
+            first_side = side;
+        }
+        // 数量按步进量化：与仓位原值不一致时在行内标注，避免留下残余仓位
+        let step = state.rule_of(Market::UmFutures, &p.symbol).map(|r| r.step);
+        let qty = p.amt.abs();
+        let (qty, adj) = match step.and_then(|s| crate::binance::symbols::quantize_qty(qty, s)) {
+            Some(q) if q != qty => (q, true),
+            _ => (qty, false),
+        };
+        let req = OrderRequest {
+            symbol: p.symbol.clone(),
+            side,
+            kind: OrderKind::Market { qty },
+            tif: Tif::Gtc,
+            position_side: FutPosSide::parse(&p.side),
+            reduce_only: !dual,
+            close_position: false,
+            client_id: Some(format!("btp-{}", chrono::Utc::now().timestamp_millis())),
+        };
+        rows.push((tr("交易对").to_string(), p.symbol.clone()));
+        rows.push((
+            tr("方向").to_string(),
+            format!("{} {}", req.side.label(), tr("市价平仓")),
+        ));
+        rows.push((
+            tr("数量").to_string(),
+            if adj {
+                format!("{}（{}）", qty.normalize(), tr("已按步进调整"))
+            } else {
+                qty.normalize().to_string()
+            },
+        ));
+        if !p.mark_price.is_zero() {
+            rows.push((
+                tr("预估金额").to_string(),
+                format!("≈ {}", (qty * p.mark_price).normalize().round_dp(8)),
+            ));
+        }
+        reqs.push(req);
+    }
+    app.confirm = Some(ConfirmOrder {
+        oco: None,
+        market: Market::UmFutures,
+        side: first_side,
+        reqs,
+        rows,
+    });
+}
+
+/// 持仓行内 TP/SL：构建 STOP_MARKET closePosition 单（触发即市价全平该方向持仓），
+/// 校验触发价方向（多头 SL < 参考价 < TP，空头相反）后进入确认弹窗。
+/// 参考价取持仓标记价。返回 Err 时弹 toast，输入保留待修正
+pub fn confirm_position_tpsl(
+    app: &mut BnApp,
+    symbol: String,
+    long: bool,
+    pos_side: FutPosSide,
+    sl_txt: String,
+    tp_txt: String,
+) -> Result<(), String> {
+    let tr = crate::i18n::tr;
+    let state = &app.state;
+    let ref_price = {
+        let a = state.acct.lock();
+        a.fut_positions
+            .iter()
+            .find(|p| p.symbol == symbol && FutPosSide::parse(&p.side) == pos_side)
+            .map(|p| p.mark_price)
+            .unwrap_or_default()
+    };
+    let Some(r) = state.rule_of(Market::UmFutures, &symbol) else {
+        return Err(crate::i18n::tr("交易规则尚未加载").to_string());
+    };
+    let tp = widgets::parse_dec(&tp_txt);
+    let sl = widgets::parse_dec(&sl_txt);
+    if tp.is_none() && sl.is_none() {
+        return Err(crate::i18n::tr("至少填写一个触发价").to_string());
+    }
+    let q = |v: Decimal| {
+        crate::binance::symbols::quantize_price(v, r.tick)
+            .ok_or_else(|| crate::i18n::tr("触发价超出可表示范围").to_string())
+    };
+    let mk = |trigger: Decimal, take_profit: bool| OrderRequest {
+        symbol: symbol.clone(),
+        side: if long { Side::Sell } else { Side::Buy },
+        kind: OrderKind::StopMarket {
+            trigger,
+            qty: Decimal::ONE, // closePosition 下省略
+            take_profit,
+        },
+        position_side: pos_side,
+        tif: Tif::Gtc,
+        reduce_only: false,
+        close_position: true,
+        client_id: Some(format!("btp-tpsl-{}", chrono::Utc::now().timestamp_millis())),
+    };
+    let mut reqs = Vec::new();
+    let mut rows = vec![(tr("交易对").to_string(), symbol.clone())];
+    if let Some(tp) = tp {
+        let t = q(tp)?;
+        if (long && t <= ref_price) || (!long && t >= ref_price) {
+            return Err(
+                crate::i18n::tr("止盈触发价方向不对：多头应高于标记价，空头应低于标记价").to_string(),
+            );
+        }
+        rows.push((tr("止盈触发").to_string(), t.normalize().to_string()));
+        reqs.push(mk(t, true));
+    }
+    if let Some(sl) = sl {
+        let t = q(sl)?;
+        if (long && t >= ref_price) || (!long && t <= ref_price) {
+            return Err(
+                crate::i18n::tr("止损触发价方向不对：多头应低于标记价，空头应高于标记价").to_string(),
+            );
+        }
+        rows.push((tr("止损触发").to_string(), t.normalize().to_string()));
+        reqs.push(mk(t, false));
+    }
+    app.confirm = Some(ConfirmOrder {
+        oco: None,
+        market: Market::UmFutures,
+        side: reqs[0].side,
+        reqs,
+        rows,
+    });
+    Ok(())
+}
+
+/// 反手：市价平掉当前持仓并立即反向开同等数量，聚合为一个确认弹窗
+/// （确认后顺序提交两张单）。双向持仓下平仓/开仓各用对应 positionSide，
+/// 单向持仓均 Both、开仓单不带只减仓
+pub fn confirm_market_reverse(
+    app: &mut BnApp,
+    symbol: String,
+    long: bool,
+    qty: Decimal,
+    pos_side: FutPosSide,
+) {
+    let state = &app.state;
+    let dual = state.acct.lock().fut_dual_side;
+    let mark = state
+        .acct
+        .lock()
+        .fut_positions
+        .iter()
+        .find(|p| p.symbol == symbol)
+        .map(|p| p.mark_price)
+        .unwrap_or_default();
+    // 平仓量按步进量化：与仓位原值不一致时改用量化值并在确认弹窗中提示，
+    // 避免依赖引擎侧静默向下取整而留下残余仓位
+    let step = state.rule_of(Market::UmFutures, &symbol).map(|r| r.step);
+    let (qty, adj) = match step.and_then(|s| crate::binance::symbols::quantize_qty(qty, s)) {
+        Some(q) if q != qty => (q, true),
+        _ => (qty, false),
+    };
+    let close_side = if long { Side::Sell } else { Side::Buy };
+    let open_side = if long { Side::Buy } else { Side::Sell };
+    let client_id = format!("btp-{}", chrono::Utc::now().timestamp_millis());
+    let close = OrderRequest {
+        symbol: symbol.clone(),
+        side: close_side,
+        kind: OrderKind::Market { qty },
+        tif: Tif::Gtc,
+        position_side: pos_side,
+        reduce_only: !dual,
+        close_position: false,
+        client_id: Some(client_id.clone()),
+    };
+    let open = OrderRequest {
+        symbol: symbol.clone(),
+        side: open_side,
+        kind: OrderKind::Market { qty },
+        tif: Tif::Gtc,
+        position_side: if dual {
+            if long {
+                FutPosSide::Short
+            } else {
+                FutPosSide::Long
+            }
+        } else {
+            FutPosSide::Both
+        },
+        reduce_only: false,
+        close_position: false,
+        client_id: Some(client_id),
+    };
+    let tr = crate::i18n::tr;
+    let mut rows = vec![(tr("交易对").to_string(), symbol.clone())];
+    rows.push((
+        tr("方向").to_string(),
+        format!("{} {} → {} {}", close.side.label(), tr("平仓"), open.side.label(), tr("开仓")),
+    ));
+    rows.push((
+        tr("数量").to_string(),
+        if adj {
+            format!("{}（{}）", qty.normalize(), tr("已按步进调整"))
+        } else {
+            qty.normalize().to_string()
+        },
+    ));
+    if !mark.is_zero() {
+        rows.push((
+            tr("预估金额").to_string(),
+            format!("≈ {}", (qty * mark).normalize().round_dp(8)),
+        ));
+    }
+    app.confirm = Some(ConfirmOrder {
+        oco: None,
+        market: Market::UmFutures,
+        side: close_side,
+        reqs: vec![close, open],
         rows,
     });
 }
@@ -906,6 +1536,12 @@ pub fn order_rows(req: &OrderRequest) -> Vec<(String, String)> {
         }
         OrderKind::StopMarket { trigger, .. } => {
             rows.push((tr("触发价").into(), trigger.normalize().to_string()));
+        }
+        OrderKind::TrailingStop { callback_rate, .. } => {
+            rows.push((
+                tr("回调幅度").into(),
+                format!("{}%", callback_rate.normalize()),
+            ));
         }
     }
     if req.reduce_only {

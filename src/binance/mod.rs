@@ -102,6 +102,16 @@ fn non_empty(s: &str, default: &str) -> String {
     t.to_string()
 }
 
+/// 合约 WS-API（下单通道）端点：独立于行情/用户流端点，不走覆盖配置
+/// （实测 testnet 的 ws-api 在 testnet.binancefuture.com 主机下而非 stream 子域）
+pub fn ws_api_order(testnet: bool) -> &'static str {
+    if testnet {
+        "wss://testnet.binancefuture.com/ws-fapi/v1"
+    } else {
+        "wss://ws-fapi.binance.com/ws-fapi/v1"
+    }
+}
+
 /// K 线周期
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Interval {

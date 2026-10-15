@@ -53,13 +53,23 @@ pub enum Command {
         symbol: String,
         order_id: i64,
     },
+    /// 撤销挂单：symbol=None 撤销该市场全部挂单
     CancelAll {
         market: Market,
-        symbol: String,
+        symbol: Option<String>,
+    },
+    /// 现货 OCO 下单（限价腿 + 止损限价腿，一腿成交另一腿自动撤销）
+    PlaceOco {
+        req: crate::binance::client::OcoRequest,
     },
     SetLeverage {
         symbol: String,
         leverage: u32,
+    },
+    /// 切换合约保证金模式（全仓/逐仓）
+    SetMarginType {
+        symbol: String,
+        isolated: bool,
     },
     SetDualSide {
         dual: bool,
@@ -387,6 +397,19 @@ async fn cmd_loop(
                         state.set_busy("place", false);
                     }
                 }
+                Command::PlaceOco { req } => {
+                    if let Some(client) = c.client.clone() {
+                        let (st, cx, etx) = (state.clone(), ctx.clone(), engine_tx.clone());
+                        tokio::spawn(async move {
+                            place_oco(&client, &st, &req, &etx).await;
+                            st.set_busy("place", false);
+                            repaint(&cx);
+                        });
+                    } else {
+                        no_client_err(&state);
+                        state.set_busy("place", false);
+                    }
+                }
                 Command::CancelOrder {
                     market,
                     symbol,
@@ -407,7 +430,8 @@ async fn cmd_loop(
                     if let Some(client) = c.client.clone() {
                         let (st, cx, etx) = (state.clone(), ctx.clone(), engine_tx.clone());
                         tokio::spawn(async move {
-                            cancel_all_orders(&client, &st, market, &symbol, &etx).await;
+                            cancel_all_orders(&client, &st, market, symbol.as_deref(), &etx)
+                                .await;
                             repaint(&cx);
                         });
                     } else {
@@ -593,6 +617,9 @@ async fn handle_cmd(
                 }
                 md.ws = ConnState::Connecting;
             });
+            // 先读磁盘缓存立即渲染（秒开）：REST 快照返回后再整体覆盖。
+            // 缓存只在本市场本周期有效，切换交易对/周期时上面已清空旧数据
+            load_kline_cache(&state, market, &symbol, interval.as_str());
             // 初始快照并发拉取（原先 5 个串行 await，网络差时切换交易对要等
             // 最坏 5×超时才出第一份数据）
             let kl_path = format!("{}/klines", market.api_prefix());
@@ -631,6 +658,7 @@ async fn handle_cmd(
                         .iter()
                         .filter_map(|r| r.as_array().and_then(|a| parse_kline_row(a)))
                         .collect();
+                    save_kline_cache(market, &symbol, interval.as_str(), &candles);
                     state.with_symbol_md(market, &symbol, |md| {
                         apply_kline_snapshot(md, candles);
                     });
@@ -783,12 +811,18 @@ async fn handle_cmd(
                     }
                 }
                 if let Ok(v) = sc {
-                    // 杠杆配置整体替换：与服务器状态保持一致（SetLeverage 本地
-                    // 写入的值会被下一次 RefreshAccount 的服务器值校正）
+                    // 杠杆/保证金模式配置整体替换：与服务器状态保持一致
+                    // （SetLeverage/SetMarginType 本地写入的值会被下一次
+                    // RefreshAccount 的服务器值校正）
                     if let Ok(list) = serde_json::from_value::<Vec<SymbolConfig>>(v) {
-                        state.acct.lock().fut_leverage = list
+                        let mut acct = state.acct.lock();
+                        acct.fut_leverage = list
+                            .iter()
+                            .map(|x| (x.symbol.clone(), x.leverage))
+                            .collect();
+                        acct.fut_margin_type = list
                             .into_iter()
-                            .map(|x| (x.symbol, x.leverage))
+                            .map(|x| (x.symbol, x.margin_type))
                             .collect();
                     }
                 }
@@ -958,6 +992,50 @@ async fn handle_cmd(
             }
             repaint(ctx);
         }
+        Command::SetMarginType { symbol, isolated } => {
+            if !state.has_creds() {
+                return;
+            }
+            let cfg = state.cfg_snapshot();
+            let rc = RestCtx {
+                market: Market::UmFutures,
+                testnet: cfg.testnet,
+                recv_window_ms: cfg.recv_window_ms,
+            };
+            let target = if isolated { "ISOLATED" } else { "CROSSED" };
+            let params = vec![
+                ("symbol".into(), symbol.clone()),
+                ("marginType".into(), target.to_string()),
+            ];
+            let res = client
+                .signed(reqwest::Method::POST, rc, &cfg, "/fapi/v1/marginType", params)
+                .await;
+            match res {
+                Ok(_) => {
+                    state.acct.lock().fut_margin_type.insert(symbol.clone(), target.into());
+                    state.push_toast(
+                        ToastKind::Ok,
+                        format!(
+                            "{symbol} {}{target}",
+                            crate::i18n::tr("保证金模式已切为 ")
+                        ),
+                    );
+                    engine_tx.send(Command::RefreshAccount).ok();
+                }
+                // -4046 = 无需修改（已是目标模式），按成功提示
+                Err(BinanceError::Api {
+                    code: -4046,
+                    ..
+                }) => {
+                    state.push_toast(
+                        ToastKind::Info,
+                        crate::i18n::tr("保证金模式无需修改").to_string(),
+                    );
+                }
+                Err(e) => toast_err(&state, &e),
+            }
+            repaint(ctx);
+        }
         Command::SetDualSide { dual } => {
             if !state.has_creds() {
                 return;
@@ -1026,6 +1104,7 @@ async fn handle_cmd(
                         .iter()
                         .filter_map(|r| r.as_array().and_then(|a| parse_kline_row(a)))
                         .collect();
+                    save_kline_cache(market, &symbol, interval.as_str(), &candles);
                     state.with_symbol_md(market, &symbol, |md| {
                         apply_kline_snapshot(md, candles);
                     });
@@ -1034,7 +1113,10 @@ async fn handle_cmd(
             }
         }
         // 订单类命令已在 cmd_loop 中并发派发，不会进入 handle_cmd
-        Command::PlaceOrder { .. } | Command::CancelOrder { .. } | Command::CancelAll { .. } => {}
+        Command::PlaceOrder { .. }
+        | Command::CancelOrder { .. }
+        | Command::CancelAll { .. }
+        | Command::PlaceOco { .. } => {}
     }
 }
 
@@ -1090,6 +1172,11 @@ async fn place_order(
                 *trigger = quantize_with_note(*trigger, r.tick, true, &mut note)?;
                 *qty = quantize_with_note(*qty, r.step, false, &mut note)?;
             }
+            OrderKind::TrailingStop { callback_rate, qty } => {
+                // 回调幅度一位小数（0.1 步进），只需量化数量
+                *callback_rate = callback_rate.round_dp(1);
+                *qty = quantize_with_note(*qty, r.step, false, &mut note)?;
+            }
         }
         Some(())
     })();
@@ -1113,6 +1200,45 @@ async fn place_order(
         testnet: cfg.testnet,
         recv_window_ms: cfg.recv_window_ms,
     };
+    // WS-API 通道（可选，仅合约）：任何失败自动回退 REST，资金路径不赌单通道
+    if market == Market::UmFutures && cfg.ws_order {
+        let url = crate::binance::ws_api_order(cfg.testnet);
+        let proxy = cfg.proxy.clone();
+        match client
+            .place_order_ws(url, &proxy, market, req, cfg.recv_window_ms)
+            .await
+        {
+            Ok(v) => {
+                let id = v.get("orderId").and_then(|x| x.as_i64()).unwrap_or(0);
+                tracing::info!("WS 下单成功 {} {:?} id={id}", req.symbol, req.side);
+                if !note.is_empty() {
+                    state.push_toast(ToastKind::Warn, note);
+                }
+                state.push_toast(
+                    ToastKind::Ok,
+                    format!(
+                        "{} {} {}{id})",
+                        req.symbol,
+                        req.side.label(),
+                        crate::i18n::tr("委托已提交 (#")
+                    ),
+                );
+                engine_tx.send(Command::RefreshOpenOrders { market }).ok();
+                engine_tx.send(Command::RefreshAccount).ok();
+                return;
+            }
+            Err(e) => {
+                tracing::warn!("WS 下单失败，回退 REST: {e}");
+                state.push_toast(
+                    ToastKind::Warn,
+                    format!(
+                        "{}{e}",
+                        crate::i18n::tr("WS 下单失败，已回退 REST: ")
+                    ),
+                );
+            }
+        }
+    }
     let path = format!("{}/order", market.api_prefix());
     let res = client
         .signed(reqwest::Method::POST, rc, &cfg, &path, params)
@@ -1186,12 +1312,107 @@ async fn cancel_order(
     }
 }
 
-/// 撤销该交易对全部挂单（busy 置位/释放由本函数负责；命令循环可并发派发）
+/// 现货 OCO 下单：限价腿 + 止损限价腿（busy 置位/释放由调用方负责）
+async fn place_oco(
+    client: &BinanceRest,
+    state: &Arc<SharedState>,
+    req: &crate::binance::client::OcoRequest,
+    engine_tx: &mpsc::UnboundedSender<Command>,
+) {
+    if !state.has_creds() {
+        state.push_toast(ToastKind::Err, crate::i18n::tr("未配置 API 密钥"));
+        return;
+    }
+    let cfg = state.cfg_snapshot();
+    let rc = RestCtx {
+        market: Market::Spot,
+        testnet: cfg.testnet,
+        recv_window_ms: cfg.recv_window_ms,
+    };
+    // 作用域内取规则：parking_lot 读守卫非 Send，不能活到下方 await
+    let r = {
+        let rules = state.rules.read();
+        rules[Market::Spot as usize].get(&req.symbol).cloned()
+    };
+    let Some(r) = r else {
+        state.push_toast(
+            ToastKind::Err,
+            format!(
+                "{} {}{}",
+                crate::i18n::tr("缺少"),
+                req.symbol,
+                crate::i18n::tr(" 交易规则（等待行情初始化）")
+            ),
+        );
+        return;
+    };
+    let mut note = String::new();
+    let mut req = req.clone();
+    let quantized: Option<()> = (|| {
+        req.price = quantize_with_note(req.price, r.tick, true, &mut note)?;
+        req.stop_price = quantize_with_note(req.stop_price, r.tick, true, &mut note)?;
+        req.stop_limit_price =
+            quantize_with_note(req.stop_limit_price, r.tick, true, &mut note)?;
+        req.qty = quantize_with_note(req.qty, r.step, false, &mut note)?;
+        Some(())
+    })();
+    if quantized.is_none() {
+        state.push_toast(
+            ToastKind::Err,
+            crate::i18n::tr("价格/数量超出可表示范围，请检查输入"),
+        );
+        return;
+    }
+    state.set_busy("place", true);
+    let res = client
+        .signed(
+            reqwest::Method::POST,
+            rc,
+            &cfg,
+            "/api/v3/order/oco",
+            crate::binance::client::build_oco_params(&req),
+        )
+        .await;
+    state.set_busy("place", false);
+    match res {
+        Ok(v) => {
+            let id = v.get("orderListId").and_then(|x| x.as_i64()).unwrap_or(0);
+            tracing::info!("OCO 已提交 {} {:?} listId={id}", req.symbol, req.side);
+            if !note.is_empty() {
+                state.push_toast(ToastKind::Warn, note);
+            }
+            state.push_toast(
+                ToastKind::Ok,
+                format!(
+                    "{} OCO {}{id})",
+                    req.symbol,
+                    crate::i18n::tr("委托已提交 (#")
+                ),
+            );
+            engine_tx
+                .send(Command::RefreshOpenOrders {
+                    market: Market::Spot,
+                })
+                .ok();
+        }
+        Err(e) => {
+            toast_err(state, &e);
+            engine_tx
+                .send(Command::RefreshOpenOrders {
+                    market: Market::Spot,
+                })
+                .ok();
+        }
+    }
+}
+
+/// 撤销挂单（symbol=None 撤销该市场全部；busy 置位/释放由本函数负责，
+/// 命令循环可并发派发）
 async fn cancel_all_orders(
     client: &BinanceRest,
     state: &Arc<SharedState>,
     market: Market,
-    symbol: &str,
+    symbol: Option<&str>,
     engine_tx: &mpsc::UnboundedSender<Command>,
 ) {
     if !state.has_creds() {
@@ -1203,16 +1424,19 @@ async fn cancel_all_orders(
         testnet: cfg.testnet,
         recv_window_ms: cfg.recv_window_ms,
     };
-    let (path, params) = match market {
+    let (path, mut params) = match market {
         Market::Spot => (
             format!("{}/openOrders", market.api_prefix()),
-            vec![("symbol".into(), symbol.to_string())],
+            vec![],
         ),
         Market::UmFutures => (
             format!("{}/allOpenOrders", market.api_prefix()),
-            vec![("symbol".into(), symbol.to_string())],
+            vec![],
         ),
     };
+    if let Some(sym) = symbol {
+        params.push(("symbol".into(), sym.to_string()));
+    }
     state.set_busy("cancel", true);
     let res = client
         .signed(reqwest::Method::DELETE, rc, &cfg, &path, params)
@@ -1220,10 +1444,11 @@ async fn cancel_all_orders(
     state.set_busy("cancel", false);
     match res {
         Ok(_) => {
-            state.push_toast(
-                ToastKind::Ok,
-                format!("{}{symbol}", crate::i18n::tr("已撤销 ")),
-            );
+            let msg = match symbol {
+                Some(s) => format!("{} {s}", crate::i18n::tr("已撤销")),
+                None => crate::i18n::tr("已撤销本市场全部挂单").to_string(),
+            };
+            state.push_toast(ToastKind::Ok, msg);
             engine_tx.send(Command::RefreshOpenOrders { market }).ok();
         }
         Err(e) => toast_err(state, &e),
@@ -1267,6 +1492,7 @@ impl MarketWsSlot {
                     format!("{lower}@depth20@100ms"),
                     format!("{lower}@aggTrade"),
                     format!("{lower}@kline_{interval}"),
+                    "!miniTicker@arr".to_string(),
                 ];
                 let url = format!("{base}/stream?streams={}", s.join("/"));
                 (s, url)
@@ -1277,13 +1503,14 @@ impl MarketWsSlot {
                 let url = format!("{base}/public/stream?streams={}", s.join("/"));
                 (s, url)
             }
-            // 期货 market 类：成交/K线/ticker/标记价
+            // 期货 market 类：成交/K线/ticker/标记价 + 全市场迷你 ticker（侧栏）
             (MarketWsSlot::B, true) => {
                 let s = vec![
                     format!("{lower}@ticker"),
                     format!("{lower}@aggTrade"),
                     format!("{lower}@kline_{interval}"),
                     format!("{lower}@markPrice@1s"),
+                    "!miniTicker@arr".to_string(),
                 ];
                 let url = format!("{base}/market/stream?streams={}", s.join("/"));
                 (s, url)
@@ -1525,6 +1752,48 @@ fn apply_kline_snapshot(md: &mut crate::engine::state::SymbolMd, candles: Vec<Ca
     }
 }
 
+// ---------------------------------------------------------------- K 线磁盘缓存
+
+/// 缓存文件路径：cache/klines/{市场}_{交易对}_{周期}.json。
+/// 切换交易对时先读缓存立即渲染（秒开），REST 快照随后覆盖
+fn kline_cache_path(market: Market, symbol: &str, interval: &str) -> Option<std::path::PathBuf> {
+    let dir = crate::config::data_dir().join("cache").join("klines");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(format!("{}_{}_{}.json", market as u8, symbol, interval)))
+}
+
+/// 写缓存（临时文件 + 原子改名），保留最近 1000 根
+fn save_kline_cache(market: Market, symbol: &str, interval: &str, candles: &[Candle]) {
+    const CAP: usize = 1000;
+    let Some(path) = kline_cache_path(market, symbol, interval) else {
+        return;
+    };
+    let start = candles.len().saturating_sub(CAP);
+    let body = match serde_json::to_string(&candles[start..]) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, body).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
+}
+
+/// 读缓存并应用到活跃订阅槽位（须在 active_sub 设置之后调用）
+fn load_kline_cache(state: &SharedState, market: Market, symbol: &str, interval: &str) {
+    let Some(path) = kline_cache_path(market, symbol, interval) else {
+        return;
+    };
+    let candles: Vec<Candle> = match std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<Candle>>(&s).ok())
+    {
+        Some(c) if !c.is_empty() => c,
+        _ => return,
+    };
+    state.with_symbol_md(market, symbol, |md| apply_kline_snapshot(md, candles));
+}
+
 /// 按规则量化并记录变化说明；溢出返回 None
 fn quantize_with_note(
     v: Decimal,
@@ -1566,6 +1835,11 @@ fn handle_market_msg_text(state: &SharedState, spec: &SubSpec, text: &str) {
     if stream.ends_with("@ticker") {
         if let Ok(t) = serde_json::from_str::<Ticker24>(data) {
             state.with_symbol_md(spec.market, &spec.symbol, |md| md.ticker = Some(t));
+        }
+    } else if stream.ends_with("!miniTicker@arr") {
+        // 全市场迷你 ticker（侧栏实时价格），与活跃订阅无关
+        if let Ok(list) = serde_json::from_str::<Vec<MiniTicker>>(data) {
+            state.apply_mini_tickers(spec.market, list);
         }
     } else if stream.contains("@depth20") {
         if let Ok(d) = serde_json::from_str::<Depth>(data) {
