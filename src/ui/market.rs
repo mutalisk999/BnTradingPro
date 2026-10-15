@@ -596,9 +596,11 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         w_time = tw_short;
     }
     let time_full = w_time > tw_short;
-    let total = w_price + w_qty + w_time + 24.0;
-    if total > avail {
-        let k = avail / total;
+    // 列宽随面板可用宽等比收缩：Grid 最小宽一旦超过面板内宽，egui 会把内容
+    // 宽度持久化进 PanelState，切到成交页签面板就被撑宽且切不回去。
+    // 表头与数据行用同一组列宽，纵向对齐不受影响（此前存在两段重复收缩）
+    if w_price + w_qty + w_time + 24.0 > avail && avail > 0.0 {
+        let k = avail / (w_price + w_qty + w_time + 24.0);
         w_price *= k;
         w_qty *= k;
         w_time *= k;
@@ -620,13 +622,6 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         widgets::empty_state(ui, "◍", crate::i18n::tr("暂无成交"), "");
         return;
     }
-    // 列宽随面板可用宽等比收缩：Grid 最小宽一旦超过面板内宽，egui 会把内容
-    // 宽度持久化进 PanelState，切到成交页签面板就被撑宽且切不回去。
-    // 表头与数据行用同一组列宽，纵向对齐不受影响
-    let col_k = (ui.available_width() / (w_price + w_qty + w_time + 24.0)).min(1.0);
-    w_price *= col_k;
-    w_qty *= col_k;
-    w_time *= col_k;
     egui::Grid::new("trades_grid")
         .num_columns(3)
         .spacing([12.0, 2.0])
@@ -695,8 +690,14 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
                 let ts = widgets::fmt_time_short(t.time);
                 num_cell(
                     ui,
-                    // 窄面板时间降级：省略秒（HH:MM），与列宽决策一致
-                    if time_full { ts } else { ts[..5].to_string() },
+                    // 窄面板时间降级：省略秒（HH:MM），与列宽决策一致。
+                    // 越界时间戳 fmt_time_short 返回 "—"：用 get 而非固定切片，
+                    // "—".len() < 5 时固定切片会 byte-index panic 整窗崩溃
+                    if time_full {
+                        ts
+                    } else {
+                        ts.get(..5).unwrap_or(&ts).to_string()
+                    },
                     data_font.clone(),
                     theme::cur().text_dim,
                     w_time,

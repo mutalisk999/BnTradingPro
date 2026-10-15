@@ -320,7 +320,8 @@ fn symbol_row(
                 ui.label(
                     egui::RichText::new(format!("{chg:+.2}%"))
                         .monospace()
-                        .size(9.5)
+                        // 与同行价格统一 FONT_SM（此前硬编码 9.5 脱离字号阶梯）
+                        .size(theme::FONT_SM)
                         .color(c),
                 );
             });

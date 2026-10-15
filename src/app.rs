@@ -586,10 +586,13 @@ impl BnApp {
                 egui::Frame::default()
                     .fill(theme::cur().panel)
                     .stroke(egui::Stroke::new(1.0_f32, theme::cur().border))
-                    .inner_margin(egui::Margin::symmetric(14, 8)),
+                    // 纵向内边距 4：内容（28pt 按钮/页签）+ 8 = 36pt 总高，
+                    // 比此前 46pt 省 10pt 给图表/订单区
+                    .inner_margin(egui::Margin::symmetric(14, 4)),
             )
             .show(ui, |ui| {
-                ui.set_min_height(46.0);
+                // 最小高度仅兜底（低于内容自然高无效果）
+                ui.set_min_height(34.0);
                 self.topbar(ui);
             });
 
@@ -830,15 +833,6 @@ impl BnApp {
                         self.sidebar_width =
                             (self.sidebar_width + strip.drag_delta().x).clamp(190.0, 240.0);
                     }
-            if strip.hovered() || strip.dragged() {
-                ui.painter().line_segment(
-                    [
-                        egui::pos2(strip_rect.center().x, strip_rect.top()),
-                        egui::pos2(strip_rect.center().x, strip_rect.bottom()),
-                    ],
-                    egui::Stroke::new(2.0, theme::cur().accent.gamma_multiply(0.6)),
-                );
-            }
             strip.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
         } else {
             // 折叠态：窄条面板只放展开按钮，中央区随之扩大
@@ -895,15 +889,6 @@ impl BnApp {
             );
             if strip.dragged() {
                 self.book_width = (self.book_width + strip.drag_delta().x).clamp(180.0, 340.0);
-            }
-            if strip.hovered() || strip.dragged() {
-                ui.painter().line_segment(
-                    [
-                        egui::pos2(strip_rect.center().x, strip_rect.top()),
-                        egui::pos2(strip_rect.center().x, strip_rect.bottom()),
-                    ],
-                    egui::Stroke::new(2.0, theme::cur().accent.gamma_multiply(0.6)),
-                );
             }
             strip.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
 
