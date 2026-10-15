@@ -246,6 +246,10 @@ pub struct BnApp {
     pub book_width: f32,
     /// 图表最大化（隐藏右侧下单/盘口面板，仅保留页头 + 图表）
     pub chart_maximized: bool,
+    /// 右侧下单面板展开（false 时收起为右缘窄条，» / « 按钮切换）
+    pub trade_expanded: bool,
+    /// 右侧下单面板宽度（pt），左缘把手拖动调节，范围 236~360
+    pub trade_width: f32,
     /// 盘口逐档价格变动高亮（按 BookSite 分组，长度随 BOOK_LEVELS）
     pub flash_book: crate::ui::flash::FlashBook,
     /// 逐笔成交最新行价格变动高亮
@@ -324,6 +328,8 @@ impl BnApp {
             sidebar_width: 190.0,
             book_width: 230.0,
             chart_maximized: false,
+            trade_expanded: true,
+            trade_width: 272.0,
             flash_book: Default::default(),
             flash_trade: Default::default(),
             flash_header: Default::default(),
@@ -862,7 +868,9 @@ impl BnApp {
             // 盘口（左，全高）：一直显示到 UI 最下面，不被底部订单区挤上去。
             // 面板按显示顺序瓜分空间——盘口先于底部订单区显示才能拿到全高。
             // 宽度用 exact_size 锁死 + 自绘把手（同侧栏）：egui 可调面板会把
-            // 内容宽度持久化，盘口/成交页签来回切面板会越撑越宽
+            // 内容宽度持久化，盘口/成交页签来回切面板会越撑越宽。
+            // 内部结构（show_book_panel）：页签在顶、盘口在中间（下限档数
+            // 溢出时滚动兜底）、档位胶囊钉在最下方
             let book = egui::Panel::left("book_panel")
                 .exact_size(self.book_width)
                 .frame(
@@ -871,17 +879,7 @@ impl BnApp {
                         .inner_margin(8),
                 )
                 .show(ui, |ui| {
-                    if self.book_tab == crate::ui::market::BookTab::Trades {
-                        // 成交明细行数已按面板高度自适应（能显示多少显示多少），
-                        // 再套 ScrollArea 只会占掉右侧约一个条宽的行宽并常显滚动条。
-                        // 直接绘制：行宽吃满面板，无滚动条
-                        crate::ui::market::show_book_panel(self, ui);
-                    } else {
-                        // 盘口档位同样随高度自适应，但下限 10 档在极矮面板仍会溢出，
-                        // 保留滚动兜底
-                        egui::ScrollArea::vertical()
-                            .show(ui, |ui| crate::ui::market::show_book_panel(self, ui));
-                    }
+                    crate::ui::market::show_book_panel(self, ui);
                 });
 
             // 自绘拖宽把手：面板右缘内侧 8px 竖条，注册在外层 ui 上，
@@ -915,21 +913,73 @@ impl BnApp {
                 )
                 .show(ui, |ui| self.sub_tabs(ui));
 
-            egui::Panel::right("trade_panel")
-                .resizable(true)
-                // 收窄：下单卡内部已弹性填宽（num_field_flex），面板更窄时
-                // 输入框自适应收缩而非互相挤压
-                .default_size(272.0)
-                .min_size(236.0)
-                .max_size(360.0)
-                .frame(
-                    egui::Frame::default()
-                        .fill(theme::cur().panel)
-                        .inner_margin(8),
-                )
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| trade::show(self, ui));
-                });
+            // 右侧下单面板（与左侧交易对列表同构的折叠形态）：
+            // 展开态顶部「»」收起、左缘拖宽把手；收起态退为右缘 36pt 窄条「«」展开。
+            // 宽度同样用 exact_size 锁死 + 自绘把手：resizable 面板会把内容宽
+            // 持久化进 PanelState，下单卡内外宽度不同来回切面板会越撑越宽
+            if self.trade_expanded {
+                let trade = egui::Panel::right("trade_panel")
+                    .exact_size(self.trade_width)
+                    .frame(
+                        egui::Frame::default()
+                            .fill(theme::cur().panel)
+                            .inner_margin(8),
+                    )
+                    .show(ui, |ui| {
+                        // 收起按钮固定在下单卡顶部；表单状态都在 app.page，
+                        // 折叠不丢输入
+                        ui.horizontal(|ui| {
+                            if ui
+                                .small_button("»")
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(crate::i18n::tr("收起下单面板"))
+                                .clicked()
+                            {
+                                self.trade_expanded = false;
+                            }
+                        });
+                        egui::ScrollArea::vertical().show(ui, |ui| trade::show(self, ui));
+                    });
+                // 拖拽把手：注册在外层 ui（面板内 ui 的裁剪只到 Frame 内边距，
+                // 在里面注册会被裁掉而收不到手势）。把手 = 面板左缘内侧 8px
+                let outer = trade.response.rect;
+                let strip_rect = egui::Rect::from_min_max(
+                    egui::pos2(outer.left(), outer.top()),
+                    egui::pos2(outer.left() + 8.0, outer.bottom()),
+                );
+                let strip = ui.interact(
+                    strip_rect,
+                    egui::Id::new("trade_resize"),
+                    egui::Sense::click_and_drag(),
+                );
+                if strip.dragged() {
+                    // 指针左移 = 面板变宽（min 236 保证输入框与买卖按钮不挤换行）
+                    self.trade_width =
+                        (self.trade_width - strip.drag_delta().x).clamp(236.0, 360.0);
+                }
+                strip.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+            } else {
+                // 折叠态：右缘窄条只放展开按钮，中央区随之扩到右缘
+                egui::Panel::right("trade_panel_collapsed")
+                    .exact_size(36.0)
+                    .frame(
+                        egui::Frame::default()
+                            .fill(theme::cur().panel)
+                            .inner_margin(4),
+                    )
+                    .show(ui, |ui| {
+                        ui.vertical_centered(|ui| {
+                            if ui
+                                .small_button("«")
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(crate::i18n::tr("展开下单面板"))
+                                .clicked()
+                            {
+                                self.trade_expanded = true;
+                            }
+                        });
+                    });
+            }
         }
 
         // 中央：页头 + 图表

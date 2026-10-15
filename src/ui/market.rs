@@ -12,8 +12,8 @@ use eframe::egui;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 
-/// 每侧显示档数下限（面板过矮时的保底）
-pub const BOOK_LEVELS: usize = 10;
+/// 每侧显示档数下限（面板过矮时的保底）。按用户要求每侧比此前多显一档
+pub const BOOK_LEVELS: usize = 11;
 /// 每侧显示档数上限：订阅的 depth20@100ms 推满 20 档，
 /// 实际档位数随面板高度在两者之间自适应
 pub const BOOK_MAX_LEVELS: usize = 20;
@@ -32,8 +32,34 @@ pub enum BookTab {
     Trades,
 }
 
-/// 右栏：盘口 / 成交明细 双页签，互斥显示
+/// 「档位」胶囊条的固定占位高度（含上方分隔线）：盘口的自适应档数须按此
+/// 扣除，胶囊永远钉在盘口下方、不被顶出可视区
+pub const BOOK_GROUP_H: f32 = 36.0;
+
+/// 右栏：页签 + 内容双页签，互斥显示。盘口页 = 页签 / 盘口（滚动兜底）/
+/// 底部钉住的档位胶囊；成交明细页行数已随面板高度自适应，直接绘制
 pub fn show_book_panel(app: &mut BnApp, ui: &mut egui::Ui) {
+    show_book_tabs(app, ui);
+    match app.book_tab {
+        BookTab::Trades => show_trades(app, ui),
+        BookTab::Book => {
+            // 先扣除底部胶囊条的固定高度，盘口在剩余高度内做档数自适应；
+            // 不扣除会把胶囊顶出面板底缘（egui 单遍布局不知道后续控件）
+            let body_h = (ui.available_height() - BOOK_GROUP_H).max(0.0);
+            ui.allocate_ui(egui::vec2(ui.available_width(), body_h), |ui| {
+                // 下限 11 档在极矮面板仍会溢出，保留滚动兜底
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| show_book(app, ui));
+            });
+            show_book_group(app, ui);
+        }
+    }
+}
+
+/// 页签行：盘口 / 成交明细。切页签会重置闪光/残影基线——旧页的
+/// 「上一帧」属于旧内容，切回时不应把缺失时段累积的价格变化整列闪一遍
+fn show_book_tabs(app: &mut BnApp, ui: &mut egui::Ui) {
     let prev = app.book_tab;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
@@ -53,9 +79,26 @@ pub fn show_book_panel(app: &mut BnApp, ui: &mut egui::Ui) {
         }
     });
     ui.separator();
-    // 盘口聚合档位步长（Binance 同款）：tick 的 1/10/100/1000 倍。独立一行
-    // 而非塞进页签行——面板窄时 RTL 溢出会叠到"成交明细"页签上
-    if app.book_tab == BookTab::Book {
+    if app.book_tab != prev {
+        app.flash_book = Default::default();
+        app.flash_trade = Default::default();
+        app.book_anim.clear();
+    }
+}
+
+/// 盘口聚合档位步长胶囊（Binance 同款）：tick 的 1/10/100/1000 倍，
+/// 钉在盘口面板最下方。与页签行同样独立一行而非塞进页签行——面板窄时
+/// RTL 溢出会叠到「成交明细」页签上
+pub fn show_book_group(app: &mut BnApp, ui: &mut egui::Ui) {
+    // 上分隔线手绘 + 固定高槽位：ui.separator() 的占位含 item_spacing，
+    // 与盘口扣除的 BOOK_GROUP_H 对不齐
+    let cur = ui.cursor().min;
+    ui.painter().line_segment(
+        [cur, egui::pos2(cur.x + ui.available_width(), cur.y)],
+        egui::Stroke::new(1.0, theme::cur().border),
+    );
+    ui.allocate_ui(egui::vec2(ui.available_width(), BOOK_GROUP_H), |ui| {
+        ui.add_space(7.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             let tick = app.state.with_rule(app.market, &app.page.symbol, |r| {
@@ -123,19 +166,7 @@ pub fn show_book_panel(app: &mut BnApp, ui: &mut egui::Ui) {
                 }
             }
         });
-        ui.separator();
-    }
-    // 切页签后闪光/残影的"上一帧"属于旧页内容：重置基线，
-    // 避免切回时把缺失时段累积的价格变化整列闪一遍
-    if app.book_tab != prev {
-        app.flash_book = Default::default();
-        app.flash_trade = Default::default();
-        app.book_anim.clear();
-    }
-    match app.book_tab {
-        BookTab::Book => show_book(app, ui),
-        BookTab::Trades => show_trades(app, ui),
-    }
+    });
 }
 
 /// 盘口面板：点击价格 → 填入下单价格
@@ -159,7 +190,9 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     const SPREAD_H: f32 = 24.0;
     const SPREAD_PAD: f32 = 8.0; // 价差行上下呼吸
     const SAFETY: f32 = 6.0;
-    const ROW_H: f32 = 18.0;
+    // 行高 17 与成交明细列表一致（同一字号的等宽行）：每侧多容纳一档，
+    // 全面板档位密度与成交明细对齐
+    const ROW_H: f32 = 17.0;
     let avail = ui.available_height();
     let n = (((avail - SPREAD_H - SPREAD_PAD - SAFETY) / (2.0 * ROW_H)).floor() as usize)
         .clamp(BOOK_LEVELS, BOOK_MAX_LEVELS);
@@ -580,9 +613,10 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         md.trades.iter().rev().take(n).cloned().collect()
     };
 
+    // 列宽 = 列内全部单元格实宽（含表头）——先整列统一测宽再绘制，同列所有
+    // 单元格文字缘严格成列，便于纵向扫读；不再设固定下限宽（72/64/58），
+    // 下限会把列撑过内容、把数量推离价格
     ui.set_min_width(0.0);
-    // 列宽 = max(设定宽, 列内全部单元格实宽)——含表头。先整列统一测宽再绘制，
-    // 同列所有单元格文字缘严格成列，便于纵向扫读
     let measure =
         |txt: &str, font: &egui::FontId| -> f32 {
             ui.painter()
@@ -594,9 +628,9 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     let head_font = egui::FontId::proportional(theme::FONT_SM);
     let data_font = egui::FontId::monospace(theme::FONT_MD);
     let (mut w_price, mut w_qty, mut w_time) = (
-        measure(crate::i18n::tr("价格"), &head_font).max(72.0),
-        measure(crate::i18n::tr("数量"), &head_font).max(64.0),
-        measure(crate::i18n::tr("时间"), &head_font).max(58.0),
+        measure(crate::i18n::tr("价格"), &head_font),
+        measure(crate::i18n::tr("数量"), &head_font),
+        measure(crate::i18n::tr("时间"), &head_font),
     );
     for t in &trades {
         w_price = w_price.max(measure(&format!("{:.*}", dp, widgets::f64_decimal(&t.price)), &data_font));
@@ -611,7 +645,7 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         w_time = tw_short;
     }
     let time_full = w_time > tw_short;
-    // 列布局：价格贴左（与盘口行一致）、时间贴右、数量右对齐在两列之间。
+    // 列布局：价格贴左（与盘口行一致）、时间贴右、数量左对齐紧跟价格之后。
     // 两侧间距 = 剩余空间均分：价格↔数量 与 数量↔时间 永远等宽，视觉平衡；
     // 内宽不足时先按预算（两侧各留 MIN_GAP）等比压列宽，绝不叠印
     const MIN_GAP: f32 = 8.0;
@@ -632,8 +666,8 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
             );
             let p = ui.painter();
             let cy = rect.center().y;
-            // 数量列右缘 = 时间列左缘 - gap；时间右缘 = 行右缘 - 2
-            let x_qty = rect.right() - 2.0 - w_time - gap;
+            // 数量左缘 = 价格列右缘 + gap；时间右缘 = 行右缘 - 2
+            let x_qty = rect.left() + 2.0 + w_price + gap;
             p.text(
                 egui::Pos2::new(rect.left() + 2.0, cy),
                 egui::Align2::LEFT_CENTER,
@@ -643,7 +677,7 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
             );
             p.text(
                 egui::Pos2::new(x_qty, cy),
-                egui::Align2::RIGHT_CENTER,
+                egui::Align2::LEFT_CENTER,
                 qty,
                 data_font.clone(),
                 theme::cur().text,
@@ -669,7 +703,7 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         );
         let p = ui.painter();
         let cy = rect.center().y;
-        let x_qty = rect.right() - 2.0 - w_time - gap;
+        let x_qty = rect.left() + 2.0 + w_price + gap;
         p.text(
             egui::Pos2::new(rect.left() + 2.0, cy),
             egui::Align2::LEFT_CENTER,
@@ -679,7 +713,7 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         );
         p.text(
             egui::Pos2::new(x_qty, cy),
-            egui::Align2::RIGHT_CENTER,
+            egui::Align2::LEFT_CENTER,
             crate::i18n::tr("数量").to_string(),
             head_font.clone(),
             theme::cur().text_dim,
@@ -755,8 +789,8 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
         }
     };
 
-    // 第一行：交易对 | 最新价/涨跌 | 周期直选按钮 | 自选星标
-    // wrapped：窄窗口时周期按钮换行而不是被裁掉
+    // 第一行：交易对 | 最新价/涨跌 | 自选星标 / 预警
+    // 周期直选拆到第二行独占一行（见下），本行只剩交易对信息成组
     ui.horizontal_wrapped(|ui| {
         // 交易对双色标题：base（标的）强调、quote（计价）弱化，
         // 与交易所惯例一致；规则未加载/结构不符时整体回退单色原文
@@ -865,9 +899,13 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 app.alerts_open = !app.alerts_open;
             }
         });
-        ui.separator();
-        // 周期直选（紧凑胶囊）：14 档缩到同一行，宽度约为此前大胶囊的 55%
-        ui.spacing_mut().item_spacing.x = 1.0;
+    });
+
+    // 第二行：周期直选（紧凑胶囊）独占一行。14 档挤在第一行会与交易对
+    // 信息抢宽度、窄窗口下还换行截断；独占一行后一行内排满、顺次切换
+    // 不换行（ui.horizontal 而非 wrapped）：极窄窗口宁可右侧裁掉也保持单行
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
         for iv in Interval::all() {
             if theme::pill_tab_sm(ui, iv.label(), app.page.interval == iv).clicked() {
                 app.switch_interval(iv);
@@ -875,24 +913,25 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
         }
     });
 
-    // 第二行：24h 统计 / 资金费率。每个统计项画成独立分组格 = 紧凑
+    // 第三行：24h 统计 / 资金费率。每个统计项画成独立分组格 = 紧凑
     // [标签 + 值] 横向对，格间细分隔线收束视线——此前 label value label value
     // 平铺成无结构的一长条，扫读时找不到各项的边界
+    // 分组内 label↔value 紧贴（3pt），整格作为一个整体随 wrapped 换行
+    let stat = |ui: &mut egui::Ui, label: &str, value: String, color: egui::Color32| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            ui.label(theme::card_label(label));
+            ui.label(
+                egui::RichText::new(value)
+                    .monospace()
+                    .size(theme::FONT_MD)
+                    .color(color),
+            );
+        })
+    };
+    // 第三行：24h 开/高/低/收（行情四要素独占一行，价格动得最快、也最常被扫读）
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        // 分组内 label↔value 紧贴（3pt），整格作为一个整体随 wrapped 换行
-        let stat = |ui: &mut egui::Ui, label: &str, value: String, color: egui::Color32| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 3.0;
-                ui.label(theme::card_label(label));
-                ui.label(
-                    egui::RichText::new(value)
-                        .monospace()
-                        .size(theme::FONT_MD)
-                        .color(color),
-                );
-            });
-        };
         if let Some(t) = &tick {
             let o = widgets::fmt_thousands(widgets::f64_decimal(&t.open_price), dp);
             let h = widgets::fmt_thousands(widgets::f64_decimal(&t.high_price), dp);
@@ -905,6 +944,12 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             stat(ui, crate::i18n::tr("24h 低"), l, theme::cur().down);
             ui.separator();
             stat(ui, crate::i18n::tr("24h 收"), c, theme::cur().text);
+        }
+    });
+    // 第四行：24h 量/额（成交宏观指标），合约再追加资金费率 + 下次结算倒计时
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        if let Some(t) = &tick {
             let base_txt = if base.is_empty() {
                 String::new()
             } else {
@@ -915,7 +960,6 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             } else {
                 format!(" {quote}")
             };
-            ui.separator();
             stat(
                 ui,
                 crate::i18n::tr("24h 量"),

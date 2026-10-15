@@ -461,6 +461,8 @@ fn en_lookup(zh: &'static str) -> &'static str {
         // ---- UI 重构补充（侧栏折叠 / 图表最大化与副图指标 / 空状态 / 步进提示）----
         "收起侧边栏" => "Collapse sidebar",
         "展开侧边栏" => "Expand sidebar",
+        "收起下单面板" => "Collapse order panel",
+        "展开下单面板" => "Expand order panel",
         "全屏" => "Fullscreen",
         "还原" => "Restore",
         "数量已按步进调整" => "Quantity adjusted to step",
