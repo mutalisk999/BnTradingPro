@@ -350,12 +350,12 @@ fn en_lookup(zh: &'static str) -> &'static str {
             "Left to right: symbol list (search + star favorites pinned), chart and order tabs, then order book, recent trades and the order panel. Each market remembers its own symbol, interval and form."
         }
         "K 线图" => "Chart",
-        "滚轮缩放、按住拖动平移、双击回到最新。MA5/10/20/60 均线可在图上方开关；图上叠加当前挂单价、止损触发价与合约持仓开仓价。悬停显示十字光标与 OHLC 详情。" => {
-            "Scroll to zoom, drag to pan, double-click to snap to latest. Toggle MA5/10/20/60 above the chart; open orders, stop triggers and futures entry prices are overlaid. Hover for crosshair and OHLC details."
+        "滚轮缩放、按住拖动平移、双击回到最新。MA5/10/20/60 均线可在图上方开关；图上叠加当前挂单价、止损触发价与合约持仓开仓价。悬停显示十字光标与 OHLC 详情。K 线缓存于本地磁盘，切换交易对或周期先秒开缓存，再增量刷新最新数据。" => {
+            "Scroll to zoom, drag to pan, double-click to snap to latest. Toggle MA5/10/20/60 above the chart; open orders, stop triggers and futures entry prices are overlaid. Hover for crosshair and OHLC details. Candles are cached on disk: switching symbol or interval opens instantly from cache, then refreshes with live data."
         }
         "下单面板" => "Order Panel",
-        "限价/市价/止损止盈；比例按钮按可用余额估算数量；提交前有确认弹窗（实盘红色警示）。价格与数量会按交易所过滤器自动量化。" => {
-            "Limit / market / stop-loss / take-profit; size buttons estimate from your available balance; every submit goes through a confirm dialog (red warning when live). Price and qty are auto-quantized to exchange filters."
+        "限价/市价/止损止盈；合约另有跟踪委托（回调幅度 0.1-10%），现货另有 OCO（限价 + 止损限价成组，一边成交另一边自动撤销）；限价单可选 GTC/IOC/FOK（合约另有 GTX Post-Only）；合约下单可附带止盈/止损一次提交。比例按钮按可用余额估算数量；提交前有确认弹窗（实盘红色警示）。价格与数量会按交易所过滤器自动量化。" => {
+            "Limit / market / stop-loss / take-profit; futures adds trailing stop (callback 0.1-10%), spot adds OCO (a limit + stop-limit pair — filling one side cancels the other). Limit orders take GTC/IOC/FOK (futures also GTX post-only); futures orders can attach TP/SL submitted in one go. Size buttons estimate from your available balance; every submit goes through a confirm dialog (red warning when live). Price and qty are auto-quantized to exchange filters."
         }
         "订单区" => "Orders",
         "汇总现货资产、合约资金概况与当前持仓。" => "Aggregates spot balances, futures funds overview and current positions.",
@@ -366,6 +366,24 @@ fn en_lookup(zh: &'static str) -> &'static str {
         }
         "自选按市场分别保存（现货与合约互不影响），持久化到本机配置" => {
             "Favorites are saved per market (spot and futures independent) and persisted to the local config"
+        }
+        // ---- 帮助页：阶段 2/3 功能导览 ----
+        "盘口与成交明细" => "Order Book & Trades",
+        "盘口聚合档位" => "Depth Grouping",
+        "盘口上方的档位胶囊按 1/10/100/1000 倍最小变动单位聚合挂单量，便于观察大单密集区" => {
+            "The step pills above the book merge orders by 1/10/100/1000 × tick size, making large-order clusters easy to spot"
+        }
+        "历史订单与成交历史可一键导出 CSV（UTF-8 带 BOM，Excel 可直接打开），文件保存在数据目录 exports/ 下" => {
+            "Order and trade history export to CSV in one click (UTF-8 with BOM, opens directly in Excel); files land in the exports/ folder of the data directory"
+        }
+        "交易页顶部的「预警」按钮打开当前交易对的预警面板：输入目标价即可添加，上破/下破方向按当前价自动判断，同价位不会重复添加" => {
+            "Open the alert panel for the current symbol via the \"Alert\" button at the top of the trading page: type a target price to add one; direction (above/below) is inferred from the last price and duplicates are rejected"
+        }
+        "预警在本地对最新价实时评估，到价弹出提示并自动移除（一次性触发）；列表随配置持久化，重启后仍生效" => {
+            "Alerts are evaluated locally against the latest price; on trigger a toast pops and the alert is removed (one-shot). The list persists with your config and survives restarts"
+        }
+        "设置页「WS 下单」开启后，合约订单经 WebSocket 通道提交（延迟更低）；任何失败会自动回退 REST" => {
+            "With \"WS orders\" enabled in Settings, futures orders are submitted over the WebSocket channel (lower latency); any failure falls back to REST automatically"
         }
         "网络与代理" => "Network & Proxy",
         "程序直连 Binance；如需代理，在设置页启用并填写 http:// 或 socks5:// 地址（支持用户名密码），REST 与 WebSocket 全部生效" => {
@@ -523,8 +541,8 @@ fn en_lookup(zh: &'static str) -> &'static str {
         }
         "Ctrl+Shift+C" => "Ctrl+Shift+C",
         "撤销当前交易对的全部挂单" => "Cancel all open orders for the current symbol",
-        "当前挂单可单笔撤销、一键撤销该交易对全部挂单或本市场全部挂单；合约持仓支持行内 TP/SL 附加、单笔平仓与一键全部平仓（均走确认弹窗）。" => {
-            "Open orders: cancel one by one, per symbol, or wipe the whole market; futures positions: inline TP/SL, close one, or close all (all with confirm dialogs)."
+        "当前挂单可单笔撤销、一键撤销该交易对全部挂单或本市场全部挂单；合约持仓支持行内 TP/SL、平仓、反手（市价平仓后反向开同等数量）与全部平仓（均走确认弹窗）。" => {
+            "Open orders: cancel one by one, per symbol, or wipe the whole market; futures positions: inline TP/SL, close, reverse (market-close then reopen the same size on the other side) or close all (all with confirm dialogs)."
         }
         // ---- Phase 2：盘口聚合 / 价格预警 / CSV 导出 ----
         "档位" => "Step",
