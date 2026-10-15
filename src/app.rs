@@ -871,8 +871,17 @@ impl BnApp {
                         .inner_margin(8),
                 )
                 .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .show(ui, |ui| crate::ui::market::show_book_panel(self, ui));
+                    if self.book_tab == crate::ui::market::BookTab::Trades {
+                        // 成交明细行数已按面板高度自适应（能显示多少显示多少），
+                        // 再套 ScrollArea 只会占掉右侧约一个条宽的行宽并常显滚动条。
+                        // 直接绘制：行宽吃满面板，无滚动条
+                        crate::ui::market::show_book_panel(self, ui);
+                    } else {
+                        // 盘口档位同样随高度自适应，但下限 10 档在极矮面板仍会溢出，
+                        // 保留滚动兜底
+                        egui::ScrollArea::vertical()
+                            .show(ui, |ui| crate::ui::market::show_book_panel(self, ui));
+                    }
                 });
 
             // 自绘拖宽把手：面板右缘内侧 8px 竖条，注册在外层 ui 上，
@@ -908,9 +917,11 @@ impl BnApp {
 
             egui::Panel::right("trade_panel")
                 .resizable(true)
-                .default_size(300.0)
-                .min_size(250.0)
-                .max_size(420.0)
+                // 收窄：下单卡内部已弹性填宽（num_field_flex），面板更窄时
+                // 输入框自适应收缩而非互相挤压
+                .default_size(272.0)
+                .min_size(236.0)
+                .max_size(360.0)
                 .frame(
                     egui::Frame::default()
                         .fill(theme::cur().panel)

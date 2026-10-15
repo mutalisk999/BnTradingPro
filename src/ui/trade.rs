@@ -202,7 +202,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             theme::cur().border.gamma_multiply(0.7),
         ))
         .corner_radius(f32::from(theme::R_LG))
-        .inner_margin(egui::Margin::symmetric(12, 6))
+        .inner_margin(egui::Margin::symmetric(10, 6))
         .show(ui, |ui| {
         compact_row(ui, |ui| {
             field_label(ui, crate::i18n::tr("类型"));
@@ -214,7 +214,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             };
             egui::ComboBox::from_id_salt("order_kind")
                 .selected_text(crate::i18n::tr(cur.label()))
-                .width(110.0)
+                .width(ui.available_width().max(60.0))
                 .show_ui(ui, |ui| {
                     for k in kinds {
                         ui.selectable_value(&mut app.page.form.kind, k, crate::i18n::tr(k.label()));
@@ -295,21 +295,22 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     ui.checkbox(&mut app.page.form.reduce_only, "");
                 });
             }
-            // 杠杆
+            // 杠杆：拆成两行——信息行（倍数 + 保证金模式徽章）、操作行（输入 + 设定）。
+            // 此前单行塞 杠杆/倍数/全仓/输入/设定 五件，窄面板互相挤压、输入框被压没
+            let lev = state
+                .acct
+                .lock()
+                .fut_leverage
+                .get(&symbol)
+                .and_then(|d| d.to_string().parse::<u32>().ok())
+                .unwrap_or(0);
+            let mt = state.acct.lock().fut_margin_type.get(&symbol).cloned();
             compact_row(ui, |ui| {
                 field_label(ui, crate::i18n::tr("杠杆"));
-                let lev = state
-                    .acct
-                    .lock()
-                    .fut_leverage
-                    .get(&symbol)
-                    .and_then(|d| d.to_string().parse::<u32>().ok())
-                    .unwrap_or(0);
                 if lev > 0 {
                     ui.label(egui::RichText::new(format!("{lev}x")).strong());
                 }
                 // 保证金模式（symbolConfig）：点击在 全仓/逐仓 间切换
-                let mt = state.acct.lock().fut_margin_type.get(&symbol).cloned();
                 if let Some(mt) = mt {
                     let isolated = mt == "ISOLATED";
                     if theme::btn_ghost(
@@ -330,12 +331,28 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         });
                     }
                 }
-                widgets::num_field_h(
+            });
+            compact_row(ui, |ui| {
+                // 空标签占位对齐：输入框左缘与其他表单行输入齐平
+                field_label(ui, "");
+                // 弹性填宽：输入吃满"设定"按钮左侧的剩余行宽
+                let set_w = ui
+                    .painter()
+                    .layout_no_wrap(
+                        crate::i18n::tr("设定").to_string(),
+                        egui::FontId::proportional(theme::FONT_MD),
+                        theme::cur().text,
+                    )
+                    .size()
+                    .x
+                    + 18.0;
+                widgets::num_field_flex(
                     ui,
                     "lev_in",
                     &mut app.page.leverage_input,
                     crate::i18n::tr("杠杆倍数"),
                     22.0,
+                    set_w + 8.0,
                 );
                 if theme::btn_ghost(ui, crate::i18n::tr("设定"), true).clicked() {
                     match app.page.leverage_input.trim().parse::<u32>() {
@@ -362,15 +379,22 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         ) {
             compact_row(ui, |ui| {
                 field_label(ui, crate::i18n::tr("价格"));
-                widgets::num_field_h(
-                    ui,
-                    "price_in",
-                    &mut app.page.form.price,
-                    crate::i18n::tr("价格"),
-                    22.0,
+                // RTL：先放右侧的一键填价按钮，输入框弹性吃掉左侧剩余宽——
+                // 面板无论多宽，输入框右缘总紧贴按钮组
+                ui.with_layout(
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        best_px_buttons(ui, app, market, &symbol);
+                        widgets::num_field_flex(
+                            ui,
+                            "price_in",
+                            &mut app.page.form.price,
+                            crate::i18n::tr("价格"),
+                            22.0,
+                            6.0,
+                        );
+                    },
                 );
-                // 一键填价：盘口最优买卖一价 + 最新价
-                best_px_buttons(ui, app, market, &symbol);
             });
         }
         if matches!(
@@ -383,46 +407,69 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         ) {
             compact_row(ui, |ui| {
                 field_label(ui, crate::i18n::tr("触发价"));
-                widgets::num_field_h(
+                widgets::num_field_flex(
                     ui,
                     "trig_in",
                     &mut app.page.form.trigger,
                     crate::i18n::tr("触发价"),
                     22.0,
+                    0.0,
                 );
             });
         }
         // OCO 止损腿限价（触发后挂出的限价单）
         if app.page.form.kind == UiKind::Oco {
             compact_row(ui, |ui| {
-                field_label(ui, crate::i18n::tr("止损委托价"));
-                widgets::num_field_h(
+                field_label(ui, crate::i18n::tr("止损限价"));
+                widgets::num_field_flex(
                     ui,
                     "sl_limit_in",
                     &mut app.page.form.stop_limit,
                     crate::i18n::tr("委托价"),
                     22.0,
+                    0.0,
                 );
             });
         }
         compact_row(ui, |ui| {
             field_label(ui, crate::i18n::tr("数量"));
-            widgets::num_field_h(
+            // 尾部步进标签宽度先量再让输入框弹性填剩余：行宽变化时右缘仍成列
+            let step_txt = rule
+                .as_ref()
+                .map(|r| {
+                    format!(
+                        "{} {}",
+                        crate::i18n::tr("步进"),
+                        r.step.normalize()
+                    )
+                })
+                .unwrap_or_default();
+            let tail = if step_txt.is_empty() {
+                0.0
+            } else {
+                ui.painter()
+                    .layout_no_wrap(
+                        step_txt.clone(),
+                        egui::FontId::proportional(theme::FONT_SM),
+                        theme::cur().text_dim,
+                    )
+                    .size()
+                    .x
+                    + 16.0
+            };
+            widgets::num_field_flex(
                 ui,
                 "qty_in",
                 &mut app.page.form.qty,
                 crate::i18n::tr("数量"),
                 22.0,
+                tail,
             );
-            if let Some(r) = &rule {
+            if !step_txt.is_empty() {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} {}",
-                        crate::i18n::tr("步进"),
-                        r.step.normalize()
-                    ))
-                    .size(theme::FONT_SM)
-                    .color(theme::cur().text_dim),
+                    egui::RichText::new(step_txt)
+                        .size(theme::FONT_SM)
+                        .color(theme::cur().text_dim),
                 );
             }
         });
@@ -431,12 +478,23 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         if app.page.form.kind == UiKind::TrailingStop {
             compact_row(ui, |ui| {
                 field_label(ui, crate::i18n::tr("回调幅度"));
-                widgets::num_field_h(
+                let tail = ui
+                    .painter()
+                    .layout_no_wrap(
+                        crate::i18n::tr("%（0.1-10）").to_string(),
+                        egui::FontId::proportional(theme::FONT_SM),
+                        theme::cur().text_dim,
+                    )
+                    .size()
+                    .x
+                    + 16.0;
+                widgets::num_field_flex(
                     ui,
                     "cb_rate_in",
                     &mut app.page.form.callback_rate,
                     crate::i18n::tr("百分比"),
                     22.0,
+                    tail,
                 );
                 ui.label(
                     egui::RichText::new(crate::i18n::tr("%（0.1-10）"))
@@ -467,22 +525,24 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             if app.page.form.tpsl_on {
                 compact_row(ui, |ui| {
                     field_label(ui, crate::i18n::tr("止盈触发"));
-                    widgets::num_field_h(
+                    widgets::num_field_flex(
                         ui,
                         "tp_in",
                         &mut app.page.form.tp_price,
                         crate::i18n::tr("触发价"),
                         22.0,
+                        0.0,
                     );
                 });
                 compact_row(ui, |ui| {
                     field_label(ui, crate::i18n::tr("止损触发"));
-                    widgets::num_field_h(
+                    widgets::num_field_flex(
                         ui,
                         "sl_in",
                         &mut app.page.form.sl_price,
                         crate::i18n::tr("触发价"),
                         22.0,
+                        0.0,
                     );
                 });
             }
@@ -742,10 +802,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     }
 }
 
-/// 表单行标签：固定宽度，让价格/触发价/数量等输入框左缘对齐；
-/// 紧凑行高 22（theme::row_label 用 ROW_H=30，下单面板高度预算紧张）
+/// 表单行标签：固定宽度（48pt 容下"止损限价"四字 + 留白），让价格/触发价/
+/// 数量等输入框左缘对齐；紧凑行高 22（theme::row_label 用 ROW_H=30，下单面板高度预算紧张）
 fn field_label(ui: &mut egui::Ui, text: &str) {
-    ui.allocate_ui(egui::vec2(46.0, 22.0), |ui| {
+    ui.allocate_ui(egui::vec2(48.0, 22.0), |ui| {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.label(theme::card_label(text));
         });

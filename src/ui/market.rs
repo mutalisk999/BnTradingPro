@@ -4,7 +4,7 @@
 //! 这里统一"短锁拷贝 → 释放 → 绘制"，绝不在面板构建期间持有锁。
 
 use crate::app::BnApp;
-use crate::binance::{Interval, Market};
+use crate::binance::Interval;
 use crate::ui::flash;
 use crate::ui::theme;
 use crate::ui::widgets;
@@ -17,6 +17,11 @@ pub const BOOK_LEVELS: usize = 10;
 /// 每侧显示档数上限：订阅的 depth20@100ms 推满 20 档，
 /// 实际档位数随面板高度在两者之间自适应
 pub const BOOK_MAX_LEVELS: usize = 20;
+
+/// 盘口行闪光/残影强度：取全局 FLASH_ALPHA 的一半——盘口是整列大量行同时
+/// 更新，0.28 的整行底色在高频推送下连成整片红/绿，压到一半后只剩
+/// "这一格刚变化"的提示意味，不再抢占视线。深度条颜色不走此值
+const BOOK_FLASH_ALPHA: f32 = theme::FLASH_ALPHA * 0.5;
 
 /// 右栏内容页签：盘口 / 成交明细
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,58 +57,71 @@ pub fn show_book_panel(app: &mut BnApp, ui: &mut egui::Ui) {
     // 而非塞进页签行——面板窄时 RTL 溢出会叠到"成交明细"页签上
     if app.book_tab == BookTab::Book {
         ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                let tick = app.state.with_rule(app.market, &app.page.symbol, |r| {
-                    r.map(|x| x.tick).unwrap_or_default()
-                });
-                if tick.is_zero() {
-                    return;
-                }
-                let steps = [
-                    tick,
-                    tick * Decimal::from(10),
-                    tick * Decimal::from(100),
-                    tick * Decimal::from(1000),
-                ];
-                let group_idx = app.page.book_group.min(steps.len() - 1);
-                ui.label(
-                    egui::RichText::new(crate::i18n::tr("档位"))
-                        .size(theme::FONT_SM)
-                        .color(theme::cur().text_dim),
-                );
-                for (i, s) in steps.iter().enumerate().rev() {
-                    let label =
-                        widgets::fmt_dec_fixed(s, s.normalize().scale() as usize);
-                    let selected = i == group_idx;
-                    let txt = egui::RichText::new(label)
-                        .size(theme::FONT_SM)
-                        .color(if selected {
-                            theme::cur().accent
-                        } else {
-                            theme::cur().text_dim
-                        });
-                    let btn = egui::Button::new(txt)
-                        .fill(if selected {
-                            theme::cur().row_hover
-                        } else {
-                            egui::Color32::TRANSPARENT
-                        })
-                        .stroke(egui::Stroke::NONE)
-                        .corner_radius(3)
-                        .min_size(egui::vec2(0.0, 18.0));
-                    if ui
-                        .add(btn)
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
-                        app.page.book_group = i;
-                        // 桶价与原始价不同源：切换聚合后闪光/残影基线一并重置
-                        app.flash_book = Default::default();
-                        app.book_anim.clear();
-                    }
-                }
+            ui.spacing_mut().item_spacing.x = 3.0;
+            let tick = app.state.with_rule(app.market, &app.page.symbol, |r| {
+                r.map(|x| x.tick).unwrap_or_default()
             });
+            if tick.is_zero() {
+                return;
+            }
+            let steps = [
+                tick,
+                tick * Decimal::from(10),
+                tick * Decimal::from(100),
+                tick * Decimal::from(1000),
+            ];
+            let group_idx = app.page.book_group.min(steps.len() - 1);
+            ui.label(
+                egui::RichText::new(crate::i18n::tr("档位"))
+                    .size(theme::FONT_SM)
+                    .color(theme::cur().text_dim),
+            );
+            // 等宽胶囊：四个步长标签自然宽不一（"0.1" vs "100"），按最宽标签
+            // 统一槽宽，选中态同色块，视觉上才成一组协调的切换条
+            let labels: Vec<String> = steps
+                .iter()
+                .map(|s| widgets::fmt_dec_fixed(s, s.normalize().scale() as usize))
+                .collect();
+            let head = egui::FontId::proportional(theme::FONT_SM);
+            let widest = labels
+                .iter()
+                .map(|t| {
+                    ui.painter()
+                        .layout_no_wrap(t.clone(), head.clone(), theme::cur().text)
+                        .size()
+                        .x
+                })
+                .fold(0.0f32, f32::max);
+            let btn_w = widest + 12.0;
+            for (i, label) in labels.iter().enumerate() {
+                let selected = i == group_idx;
+                let txt = egui::RichText::new(label)
+                    .size(theme::FONT_SM)
+                    .color(if selected {
+                        theme::cur().accent
+                    } else {
+                        theme::cur().text_dim
+                    });
+                let btn = egui::Button::new(txt)
+                    .fill(if selected {
+                        theme::cur().row_hover
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    })
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(theme::R_SM)
+                    .min_size(egui::vec2(btn_w, 20.0));
+                if ui
+                    .add(btn)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    app.page.book_group = i;
+                    // 桶价与原始价不同源：切换聚合后闪光/残影基线一并重置
+                    app.flash_book = Default::default();
+                    app.book_anim.clear();
+                }
+            }
         });
         ui.separator();
     }
@@ -231,6 +249,12 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     let mut bid_rects = [egui::Rect::NOTHING; BOOK_MAX_LEVELS];
 
     // 卖盘（高→低）：asks 升序（最近档在前），显示时倒序遍历
+    let gap = (avail - SAFETY - SPREAD_PAD - SPREAD_H - 2.0 * n as f32 * ROW_H).max(0.0);
+    // 弹性留白集中于面板最顶部：卖盘末行（卖一）紧贴价差行，与买盘首行
+    // （买一）对称——两侧最优价都贴着价差，远端档位的剩余空间留到顶部
+    if gap > 0.5 {
+        ui.add_space(gap);
+    }
     for (i, (price, qty)) in asks.iter().enumerate().rev() {
         ask_rects[i] = book_row(
             ui,
@@ -270,13 +294,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     } else {
         format!("{:.*} ({:.3}%)", dp, spread_f, spread_pct)
     };
-    // 弹性留白：价差行与买盘贴面板底部，剩余空间集中在其上方——
-    // 最优价/价差/买盘（交易重心）聚在底部，远端卖档留在顶部作参考
-    // （主流交易所布局）；档位未到上限时 gap≈0，布局退化为自上而下顺排
-    let gap = (avail - SAFETY - SPREAD_PAD - SPREAD_H - 2.0 * n as f32 * ROW_H).max(0.0);
-    if gap > 0.5 {
-        ui.add_space(gap);
-    }
+    // 弹性留白已移到卖盘之前（见上方 gap 注释），价差行与买盘直接相接
     ui.add_space(SPREAD_PAD / 2.0);
     ui.allocate_ui(egui::vec2(w, SPREAD_H), |ui| {
         ui.horizontal(|ui| {
@@ -356,7 +374,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             theme::cur().up
         };
         let p = ui.painter();
-        p.rect_filled(rect, 0.0, base.gamma_multiply(theme::FLASH_ALPHA * k * 0.7));
+        p.rect_filled(rect, 0.0, base.gamma_multiply(BOOK_FLASH_ALPHA * k * 0.7));
         let bw = (rect.width() as f64 * g.ratio.clamp(0.0, 1.0)) as f32;
         if bw > 0.5 {
             p.rect_filled(
@@ -365,7 +383,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
                     egui::vec2(bw, rect.height()),
                 ),
                 0.0,
-                base.gamma_multiply(theme::FLASH_ALPHA * k),
+                base.gamma_multiply(BOOK_FLASH_ALPHA * k),
             );
         }
     }
@@ -486,7 +504,7 @@ fn book_row(
         ui.painter().rect_filled(
             rect,
             0.0,
-            price_color.gamma_multiply(theme::FLASH_ALPHA * intensity),
+            price_color.gamma_multiply(BOOK_FLASH_ALPHA * intensity),
         );
     }
     // 深度条（悬停高亮画在其上层，避免右半区悬停反馈被半透明深度条冲淡）
@@ -563,11 +581,8 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     };
 
     ui.set_min_width(0.0);
-    // 数字列右对齐 + 最小列宽：价格/数量纵向成列，便于扫读。
-    // 列宽 = max(设定宽, 列内全部单元格实宽)——含表头。Grid 列宽取列内
-    // 最宽单元格，但各单元格若只按自身文本设宽，窄单元格（如表头"时间"）
-    // 会停在自身右缘而非列右缘，出现 1-2pt 的错位；先整列统一测宽再绘制，
-    // 同列所有单元格右缘严格一致
+    // 列宽 = max(设定宽, 列内全部单元格实宽)——含表头。先整列统一测宽再绘制，
+    // 同列所有单元格文字缘严格成列，便于纵向扫读
     let measure =
         |txt: &str, font: &egui::FontId| -> f32 {
             ui.painter()
@@ -592,120 +607,126 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     // 溢出、与数量列叠印）。放不下完整 HH:MM:SS 时省略秒，再不够才等比压缩
     let avail = ui.available_width();
     let tw_short = measure("00:00", &data_font);
-    if w_price + w_qty + w_time + 24.0 > avail && w_price + w_qty + tw_short + 24.0 <= avail {
+    if w_price + w_qty + w_time + 20.0 > avail && w_price + w_qty + tw_short + 20.0 <= avail {
         w_time = tw_short;
     }
     let time_full = w_time > tw_short;
-    // 列宽随面板可用宽等比收缩：Grid 最小宽一旦超过面板内宽，egui 会把内容
-    // 宽度持久化进 PanelState，切到成交页签面板就被撑宽且切不回去。
-    // 表头与数据行用同一组列宽，纵向对齐不受影响（此前存在两段重复收缩）
-    if w_price + w_qty + w_time + 24.0 > avail && avail > 0.0 {
-        let k = avail / (w_price + w_qty + w_time + 24.0);
+    // 列布局：价格贴左（与盘口行一致）、时间贴右、数量右对齐在两列之间。
+    // 两侧间距 = 剩余空间均分：价格↔数量 与 数量↔时间 永远等宽，视觉平衡；
+    // 内宽不足时先按预算（两侧各留 MIN_GAP）等比压列宽，绝不叠印
+    const MIN_GAP: f32 = 8.0;
+    let content = w_price + w_qty + w_time;
+    if content + 4.0 + 2.0 * MIN_GAP > avail && avail > 0.0 {
+        let k = (avail - 4.0 - 2.0 * MIN_GAP) / content;
         w_price *= k;
         w_qty *= k;
         w_time *= k;
     }
-    let num_cell =
-        |ui: &mut egui::Ui, txt: String, font: egui::FontId, color: egui::Color32, w: f32, h: f32| {
-            // 精确占位 + 手绘 galley：单元格右缘 = 列右缘，文本右对齐到
-            // rect.right()，不依赖 RTL 布局的落位细节（Grid 按各单元格
-            // 自身内容定列宽时，set_min_size 的窄单元格会差出几 pt）
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
-            let galley = ui.painter().layout_no_wrap(txt.clone(), font, color);
-            let pos = egui::pos2(
-                rect.right() - galley.size().x,
-                rect.center().y - galley.size().y * 0.5,
+    let gap = ((avail - 4.0 - w_price - w_qty - w_time) * 0.5).max(MIN_GAP);
+    let paint_row =
+        |ui: &mut egui::Ui, price: String, qty: String, time: String, h: f32, col: egui::Color32| {
+            // 整行占位：三列文字按固定锚位手绘，不依赖 Grid 列分配
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), h),
+                egui::Sense::hover(),
             );
-            ui.painter().galley(pos, galley, color);
+            let p = ui.painter();
+            let cy = rect.center().y;
+            // 数量列右缘 = 时间列左缘 - gap；时间右缘 = 行右缘 - 2
+            let x_qty = rect.right() - 2.0 - w_time - gap;
+            p.text(
+                egui::Pos2::new(rect.left() + 2.0, cy),
+                egui::Align2::LEFT_CENTER,
+                price,
+                data_font.clone(),
+                col,
+            );
+            p.text(
+                egui::Pos2::new(x_qty, cy),
+                egui::Align2::RIGHT_CENTER,
+                qty,
+                data_font.clone(),
+                theme::cur().text,
+            );
+            p.text(
+                egui::Pos2::new(rect.right() - 2.0, cy),
+                egui::Align2::RIGHT_CENTER,
+                time,
+                data_font.clone(),
+                theme::cur().text_dim,
+            );
         };
     if trades.is_empty() {
         widgets::empty_state(ui, "◍", crate::i18n::tr("暂无成交"), "");
         return;
     }
-    egui::Grid::new("trades_grid")
-        .num_columns(3)
-        .spacing([12.0, 2.0])
-        .show(ui, |ui| {
-            // 表头与数据同列对齐：价格/数量/时间均右对齐（与 num_cell 同宽）
-            num_cell(
-                ui,
-                crate::i18n::tr("价格").to_string(),
-                head_font.clone(),
-                theme::cur().text_dim,
-                w_price,
-                HEADER_H,
-            );
-            num_cell(
-                ui,
-                crate::i18n::tr("数量").to_string(),
-                head_font.clone(),
-                theme::cur().text_dim,
-                w_qty,
-                HEADER_H,
-            );
-            num_cell(
-                ui,
-                crate::i18n::tr("时间").to_string(),
-                head_font.clone(),
-                theme::cur().text_dim,
-                w_time,
-                HEADER_H,
-            );
-            ui.end_row();
-
-            for (row, t) in trades.iter().enumerate() {
-                // 买方主动（buyer_maker=true）→ 主动卖单 → 跌色；反之为涨色。
-                // 与盘口涨跌色同源（theme::trade_color），随 price_dir 翻转
-                let mut col = theme::trade_color(t.buyer_maker);
-                // 最新一行（row 0）：新成交到达时文字向主题文字色短暂提亮后渐回原色。
-                // 不混入涨跌方向色（Grid 无法铺行底色，混色会红绿互相污染）
-                if row == 0 {
-                    let (intensity, _) =
-                        app.flash_trade_top(ui.ctx(), widgets::f64_decimal(&t.price));
-                    if intensity > 0.0 {
-                        col = flash::lerp_color(
-                            col,
-                            theme::cur().text,
-                            intensity * theme::FLASH_BRIGHTEN,
-                        );
-                    }
-                }
-                num_cell(
-                    ui,
-                    // 不做千分位分组，与盘口一致按规则精度定长显示，纵向小数点对齐
-                    format!("{:.*}", dp, widgets::f64_decimal(&t.price)),
-                    data_font.clone(),
+    // 表头与数据行共用同一组锚位；行距 2pt
+    ui.spacing_mut().item_spacing.y = 2.0;
+    {
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), HEADER_H),
+            egui::Sense::hover(),
+        );
+        let p = ui.painter();
+        let cy = rect.center().y;
+        let x_qty = rect.right() - 2.0 - w_time - gap;
+        p.text(
+            egui::Pos2::new(rect.left() + 2.0, cy),
+            egui::Align2::LEFT_CENTER,
+            crate::i18n::tr("价格").to_string(),
+            head_font.clone(),
+            theme::cur().text_dim,
+        );
+        p.text(
+            egui::Pos2::new(x_qty, cy),
+            egui::Align2::RIGHT_CENTER,
+            crate::i18n::tr("数量").to_string(),
+            head_font.clone(),
+            theme::cur().text_dim,
+        );
+        p.text(
+            egui::Pos2::new(rect.right() - 2.0, cy),
+            egui::Align2::RIGHT_CENTER,
+            crate::i18n::tr("时间").to_string(),
+            head_font.clone(),
+            theme::cur().text_dim,
+        );
+    }
+    for (row, t) in trades.iter().enumerate() {
+        // 买方主动（buyer_maker=true）→ 主动卖单 → 跌色；反之为涨色。
+        // 与盘口涨跌色同源（theme::trade_color），随 price_dir 翻转
+        let mut col = theme::trade_color(t.buyer_maker);
+        // 最新一行（row 0）：新成交到达时文字向主题文字色短暂提亮后渐回原色。
+        // 不混入行底色，混色会红绿互相污染
+        if row == 0 {
+            let (intensity, _) =
+                app.flash_trade_top(ui.ctx(), widgets::f64_decimal(&t.price));
+            if intensity > 0.0 {
+                col = flash::lerp_color(
                     col,
-                    w_price,
-                    ROW_H,
-                );
-                num_cell(
-                    ui,
-                    format!("{:.*}", qdp, widgets::f64_decimal(&t.qty)),
-                    data_font.clone(),
                     theme::cur().text,
-                    w_qty,
-                    ROW_H,
+                    intensity * theme::FLASH_BRIGHTEN,
                 );
-                let ts = widgets::fmt_time_short(t.time);
-                num_cell(
-                    ui,
-                    // 窄面板时间降级：省略秒（HH:MM），与列宽决策一致。
-                    // 越界时间戳 fmt_time_short 返回 "—"：用 get 而非固定切片，
-                    // "—".len() < 5 时固定切片会 byte-index panic 整窗崩溃
-                    if time_full {
-                        ts
-                    } else {
-                        ts.get(..5).unwrap_or(&ts).to_string()
-                    },
-                    data_font.clone(),
-                    theme::cur().text_dim,
-                    w_time,
-                    ROW_H,
-                );
-                ui.end_row();
             }
-        });
+        }
+        let ts = widgets::fmt_time_short(t.time);
+        paint_row(
+            ui,
+            // 不做千分位分组，与盘口一致按规则精度定长显示，纵向小数点对齐
+            format!("{:.*}", dp, widgets::f64_decimal(&t.price)),
+            format!("{:.*}", qdp, widgets::f64_decimal(&t.qty)),
+            // 窄面板时间降级：省略秒（HH:MM），与列宽决策一致。
+            // 越界时间戳 fmt_time_short 返回 "—"：用 get 而非固定切片，
+            // "—".len() < 5 时固定切片会 byte-index panic 整窗崩溃
+            if time_full {
+                ts
+            } else {
+                ts.get(..5).unwrap_or(&ts).to_string()
+            },
+            ROW_H,
+            col,
+        );
+    }
 }
 
 /// 页头：交易对 / 最新价与涨跌 / 周期直选 + 24h 统计（合约附资金费率）
@@ -781,15 +802,10 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                     .color(c),
             );
         }
-        ui.separator();
-        // 周期直选（胶囊页签）
-        for iv in Interval::all() {
-            if theme::pill_tab(ui, iv.label(), app.page.interval == iv).clicked() {
-                app.switch_interval(iv);
-            }
-        }
-        // F1：自选星标固定在行最右；其左侧为账户条（钱包/可用/未实现盈亏）
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        // F1：自选星标与价格预警紧跟交易对名称/最新价，与交易对信息成组；
+        // 此前置于此行最右、与交易对之间隔着整排周期按钮，关联感太弱
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
             let is_fav = app.state.favorites(app.market).contains(&app.page.symbol);
             // 价格预警入口：本交易对已有 N 条时高亮
             let alert_n = app
@@ -800,6 +816,30 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 .iter()
                 .filter(|a| a.market == app.market as u8 && a.symbol == app.page.symbol)
                 .count();
+            let star_txt = egui::RichText::new(if is_fav { "★" } else { "☆" })
+                .size(theme::FONT_BODY)
+                .color(if is_fav {
+                    theme::cur().accent
+                } else {
+                    theme::cur().text_dim
+                });
+            if ui
+                .add(
+                    egui::Button::new(star_txt)
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::NONE)
+                        .corner_radius(3),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(if is_fav {
+                    crate::i18n::tr("取消自选")
+                } else {
+                    crate::i18n::tr("加入自选")
+                })
+                .clicked()
+            {
+                app.state.toggle_favorite(app.market, &app.page.symbol);
+            }
             let bell_txt = egui::RichText::new(if alert_n > 0 {
                 format!("{}({alert_n})", crate::i18n::tr("预警"))
             } else {
@@ -815,6 +855,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 .add(
                     egui::Button::new(bell_txt)
                         .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::NONE)
                         .corner_radius(3),
                 )
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -823,107 +864,47 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             {
                 app.alerts_open = !app.alerts_open;
             }
-            let star_txt = egui::RichText::new(if is_fav { "★" } else { "☆" })
-                .size(theme::FONT_BODY)
-                .color(if is_fav {
-                    theme::cur().accent
-                } else {
-                    theme::cur().text_dim
-                });
-            if ui
-                .add(
-                    egui::Button::new(star_txt)
-                        .fill(egui::Color32::TRANSPARENT)
-                        .corner_radius(3),
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(if is_fav {
-                    crate::i18n::tr("取消自选")
-                } else {
-                    crate::i18n::tr("加入自选")
-                })
-                .clicked()
-            {
-                app.state.toggle_favorite(app.market, &app.page.symbol);
-            }
-            // 账户条：交易页抬头直接可见资金（WS 事件驱动刷新，准实时）
-            let acct = app.state.acct.lock();
-            let chip = |ui: &mut egui::Ui, label: &str, v: String, c: egui::Color32| {
-                ui.label(theme::card_label(label));
-                ui.label(
-                    egui::RichText::new(v)
-                        .monospace()
-                        .size(theme::FONT_MD)
-                        .color(c),
-                );
-                ui.separator();
-            };
-            match app.market {
-                Market::UmFutures => {
-                    if let Some(a) = &acct.fut {
-                        let f = widgets::f64_decimal;
-                        chip(
-                            ui,
-                            crate::i18n::tr("钱包"),
-                            widgets::fmt_compact(f(&a.total_wallet)),
-                            theme::cur().text,
-                        );
-                        chip(
-                            ui,
-                            crate::i18n::tr("可用"),
-                            widgets::fmt_compact(f(&a.available)),
-                            theme::cur().text,
-                        );
-                        chip(
-                            ui,
-                            crate::i18n::tr("未实现"),
-                            format!(
-                                "{:+.2}",
-                                f(&a.total_unrealized)
-                            ),
-                            theme::signed_color(f(&a.total_unrealized)),
-                        );
-                    }
-                }
-                Market::Spot => {
-                    if let Some(a) = &acct.spot {
-                        if let Some(b) = a.balances.iter().find(|b| b.asset == "USDT") {
-                            chip(
-                                ui,
-                                crate::i18n::tr("USDT 可用"),
-                                widgets::fmt_compact(widgets::f64_decimal(&b.free)),
-                                theme::cur().text,
-                            );
-                        }
-                    }
-                }
-            }
         });
+        ui.separator();
+        // 周期直选（紧凑胶囊）：14 档缩到同一行，宽度约为此前大胶囊的 55%
+        ui.spacing_mut().item_spacing.x = 1.0;
+        for iv in Interval::all() {
+            if theme::pill_tab_sm(ui, iv.label(), app.page.interval == iv).clicked() {
+                app.switch_interval(iv);
+            }
+        }
     });
 
-    // 第二行：24h OHLC / 交易量 / 交易额 /（合约）资金费率（wrapped 防窄窗截断）
+    // 第二行：24h 统计 / 资金费率。每个统计项画成独立分组格 = 紧凑
+    // [标签 + 值] 横向对，格间细分隔线收束视线——此前 label value label value
+    // 平铺成无结构的一长条，扫读时找不到各项的边界
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        // 分组内 label↔value 紧贴（3pt），整格作为一个整体随 wrapped 换行
+        let stat = |ui: &mut egui::Ui, label: &str, value: String, color: egui::Color32| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                ui.label(theme::card_label(label));
+                ui.label(
+                    egui::RichText::new(value)
+                        .monospace()
+                        .size(theme::FONT_MD)
+                        .color(color),
+                );
+            });
+        };
         if let Some(t) = &tick {
-            // Extend：值标签不在数字内部断行，horizontal_wrapped 会把整个标签挪到下一行
-            let ext =
-                |rt: egui::RichText| egui::Label::new(rt).wrap_mode(egui::TextWrapMode::Extend);
-            let stat = |ui: &mut egui::Ui, label: &str, value: String, color: egui::Color32| {
-                ui.add(ext(theme::card_label(label)));
-                ui.add(ext(egui::RichText::new(value)
-                    .monospace()
-                    .size(theme::FONT_MD)
-                    .color(color)));
-                ui.add_space(4.0);
-            };
             let o = widgets::fmt_thousands(widgets::f64_decimal(&t.open_price), dp);
             let h = widgets::fmt_thousands(widgets::f64_decimal(&t.high_price), dp);
             let l = widgets::fmt_thousands(widgets::f64_decimal(&t.low_price), dp);
             let c = widgets::fmt_thousands(widgets::f64_decimal(&t.last_price), dp);
             stat(ui, crate::i18n::tr("24h 开"), o, theme::cur().text);
-            stat(ui, crate::i18n::tr("24h 高"), h, theme::cur().up);
-            stat(ui, crate::i18n::tr("24h 低"), l, theme::cur().down);
-            stat(ui, crate::i18n::tr("24h 收"), c, theme::cur().text);
             ui.separator();
+            stat(ui, crate::i18n::tr("24h 高"), h, theme::cur().up);
+            ui.separator();
+            stat(ui, crate::i18n::tr("24h 低"), l, theme::cur().down);
+            ui.separator();
+            stat(ui, crate::i18n::tr("24h 收"), c, theme::cur().text);
             let base_txt = if base.is_empty() {
                 String::new()
             } else {
@@ -934,6 +915,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             } else {
                 format!(" {quote}")
             };
+            ui.separator();
             stat(
                 ui,
                 crate::i18n::tr("24h 量"),
@@ -943,6 +925,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 ),
                 theme::cur().text,
             );
+            ui.separator();
             stat(
                 ui,
                 crate::i18n::tr("24h 额"),
@@ -953,7 +936,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 theme::cur().text,
             );
         }
-        // 合约：资金费率（正/负着色 + 显式符号）
+        // 合约：资金费率（正/负着色 + 显式符号）+ 下次结算倒计时
         if let (crate::binance::Market::UmFutures, Some(r)) = (app.market, funding) {
             // Binance 的 lastFundingRate 是名义价值比例（0.0001 = 0.01%），换算成百分比展示
             let rf = widgets::f64_decimal(&r) * 100.0;
@@ -964,41 +947,39 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             } else {
                 theme::cur().text_dim
             };
+            // 倒计时：费率旁直接可见距离收/付资金费的剩余时间
+            let cd = funding_at
+                .filter(|&next| next > 0)
+                .map(|next| {
+                    let left = (next - chrono::Utc::now().timestamp_millis()).max(0) / 1000;
+                    format!(
+                        " · {:02}:{:02}:{:02}",
+                        left / 3600,
+                        (left % 3600) / 60,
+                        left % 60
+                    )
+                })
+                .unwrap_or_default();
             ui.separator();
-            ui.add(
-                egui::Label::new(theme::card_label(crate::i18n::tr("资金费率")))
-                    .wrap_mode(egui::TextWrapMode::Extend),
-            );
-            ui.add(
-                egui::Label::new(
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                ui.label(theme::card_label(crate::i18n::tr("资金费率")));
+                ui.label(
                     egui::RichText::new(format!("{rf:+.4}%"))
                         .monospace()
                         .size(theme::FONT_MD)
                         .strong()
                         .color(color),
-                )
-                .wrap_mode(egui::TextWrapMode::Extend),
-            );
-            // 下次结算倒计时：费率旁直接可见距离收/付资金费的剩余时间
-            if let Some(next) = funding_at {
-                if next > 0 {
-                    let left = (next - chrono::Utc::now().timestamp_millis()).max(0) / 1000;
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(format!(
-                                " · {:02}:{:02}:{:02}",
-                                left / 3600,
-                                (left % 3600) / 60,
-                                left % 60
-                            ))
+                );
+                if !cd.is_empty() {
+                    ui.label(
+                        egui::RichText::new(cd)
                             .monospace()
                             .size(theme::FONT_MD)
                             .color(theme::cur().text_dim),
-                        )
-                        .wrap_mode(egui::TextWrapMode::Extend),
                     );
                 }
-            }
+            });
         }
     });
 

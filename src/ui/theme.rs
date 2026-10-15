@@ -460,7 +460,33 @@ pub fn pill_tab(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response 
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-// ---------- 字体 ----------
+/// 紧凑胶囊页签：周期直选等需要在一行内放下大量档位的场景。
+/// FONT_SM + 5pt 横向内边距 + 22pt 行高，宽度约为 pill_tab 的 55%
+pub fn pill_tab_sm(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
+    let t = cur();
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(FONT_SM),
+        if active { t.accent } else { t.text_dim },
+    );
+    let pad_x = 5.0;
+    let size = egui::vec2(galley.size().x + pad_x * 2.0, 22.0);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let anim = ui
+        .ctx()
+        .animate_bool(egui::Id::new("pill_tab_sm").with(label), active);
+    let mut fill = t.accent.gamma_multiply(0.16 * anim);
+    if resp.hovered() && !active {
+        fill = t.row_hover;
+    }
+    ui.painter().rect_filled(rect, f32::from(R_SM), fill);
+    ui.painter().galley(
+        rect.center() - galley.size() / 2.0,
+        galley,
+        if active { t.accent } else { t.text_dim },
+    );
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
 
 /// 从 Windows 字体目录按优先级加载第一个存在的字体
 fn load_font(fonts: &mut FontDefinitions, key: &str, candidates: &[&str]) -> bool {

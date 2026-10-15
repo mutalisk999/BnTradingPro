@@ -5,8 +5,10 @@ use crate::ui::{theme, widgets};
 use eframe::egui;
 
 /// 统一行高：小节标题与交易对行共用同一滚动列表、同一槽位高度。
-/// 交易对行两行显示：名称 / 价格+涨跌
-const SYMBOL_ROW_H: f32 = 36.0;
+/// 交易对行两行显示：名称 / 价格+涨跌（17 + 2 间距 + ~15 文本行 = 34）
+const SYMBOL_ROW_H: f32 = 34.0;
+/// 第一行（名称 + 星标）高度
+const L1_H: f32 = 17.0;
 /// 星标按钮固定宽度：不依赖字形自然宽度（等宽字体优先下 "☆" 可能回落到
 /// 全角字形），确保星标永远落在行槽裁剪区内、热区完整可点击
 const STAR_W: f32 = 24.0;
@@ -195,10 +197,17 @@ fn apply_actions(app: &mut BnApp, switched: Option<String>, toggled: Option<Stri
     }
 }
 
-/// 小节标题行：与交易对行同槽高、垂直居中，风格与行一致
+/// 小节标题行：与交易对行同槽高、垂直居中，整行淡色带与下方列表分隔
 fn section_row(ui: &mut egui::Ui, title: &str) {
+    let band = egui::Rect::from_min_size(
+        ui.cursor().min,
+        egui::vec2(ui.available_width(), SYMBOL_ROW_H - 2.0),
+    );
+    // 淡色带 0.35 alpha：比悬停行更弱，只作视觉分隔不作交互暗示
+    ui.painter()
+        .rect_filled(band, 3.0, theme::cur().row_hover.gamma_multiply(0.35));
     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-        ui.add_space(1.0);
+        ui.add_space(7.0);
         theme::section(ui, title);
     });
 }
@@ -261,7 +270,7 @@ fn symbol_row(
         // Label 而非 Button：Button 会把文本在定宽槽内居中，观察列表名称应左对齐；
         // Label::truncate 按槽宽截断，sense(click) 保留点击切换交易对
         let name_clicked = ui
-            .allocate_ui(egui::vec2(name_w, 18.0), |ui| {
+            .allocate_ui(egui::vec2(name_w, L1_H), |ui| {
                 ui.add(
                     egui::Label::new(name_txt)
                         .truncate()
@@ -288,7 +297,7 @@ fn symbol_row(
                     .fill(egui::Color32::TRANSPARENT)
                     .stroke(egui::Stroke::NONE)
                     .corner_radius(3)
-                    .min_size(egui::vec2(STAR_W, 18.0)),
+                    .min_size(egui::vec2(STAR_W, L1_H)),
             )
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(if is_fav {
@@ -325,6 +334,17 @@ fn symbol_row(
                         .color(c),
                 );
             });
+        });
+    } else {
+        // 无行情时占住第二行槽位，避免有/无数据的行高不一致造成列表跳动
+        ui.horizontal(|ui| {
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new("—")
+                    .monospace()
+                    .size(theme::FONT_SM)
+                    .color(theme::cur().text_dim),
+            );
         });
     }
 }

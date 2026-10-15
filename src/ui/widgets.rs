@@ -64,11 +64,14 @@ pub fn status_dot_bare(ui: &mut egui::Ui, ok: bool) {
     });
 }
 
-/// 数字输入框：等宽字体 + 提示；h = 控件高度（标准行 CONTROL_H，下单面板压到 22）
-pub fn num_field_h(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str, h: f32) {
+/// 弹性填宽数字输入框：desired_width 取本行剩余可用宽减去 tail（行尾
+/// 伴随控件的总宽），输入框总是占满行内空隙、右缘与伴随控件对齐。
+/// fixed 120 宽在任意面板宽下右缘参差不齐；flex 后面板宽变化亦成列
+pub fn num_field_flex(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str, h: f32, tail: f32) {
+    let w = (ui.available_width() - tail).max(56.0);
     egui::TextEdit::singleline(text)
         .id_salt(id)
-        .desired_width(120.0)
+        .desired_width(w)
         .min_size(egui::vec2(0.0, h))
         .font(egui::TextStyle::Monospace)
         .text_color(theme::cur().text)
