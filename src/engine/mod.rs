@@ -129,8 +129,24 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) -> Engine {
                         sub_tx.clone(),
                         tx.clone(),
                     ));
-                    let h_market =
-                        tokio::spawn(market_ws_loop(ctx.clone(), state.clone(), sub_rx.clone()));
+                    // 期货行情须拆 public/market 两条连接（Binance 2026-03 起
+                    // WS 入口分流，legacy 入口只剩 /public 类推送）；现货仅
+                    // 槽位 A 承载，槽位 B 空转。pair 合并两槽状态供 UI 展示
+                    let ws_pair = Arc::new(parking_lot::Mutex::new(WsPairState::default()));
+                    let h_market = tokio::spawn(market_ws_loop(
+                        ctx.clone(),
+                        state.clone(),
+                        sub_rx.clone(),
+                        ws_pair.clone(),
+                        MarketWsSlot::A,
+                    ));
+                    let h_market_b = tokio::spawn(market_ws_loop(
+                        ctx.clone(),
+                        state.clone(),
+                        sub_rx.clone(),
+                        ws_pair.clone(),
+                        MarketWsSlot::B,
+                    ));
                     let h_user_spot = tokio::spawn(user_ws_loop(
                         ctx.clone(),
                         state.clone(),
@@ -155,7 +171,8 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) -> Engine {
                          state: Arc<SharedState>,
                          ctx: egui::Context,
                          tx: mpsc::UnboundedSender<Command>,
-                         sub_rx: watch::Receiver<Option<SubSpec>>| {
+                         sub_rx: watch::Receiver<Option<SubSpec>>,
+                         pair: Arc<parking_lot::Mutex<WsPairState>>| {
                             tokio::spawn(async move {
                                 let result = h.await;
                                 tracing::error!("引擎后台任务退出({name}): {result:?}");
@@ -181,6 +198,15 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) -> Engine {
                                             ctx.clone(),
                                             state.clone(),
                                             sub_rx.clone(),
+                                            pair.clone(),
+                                            MarketWsSlot::A,
+                                        )),
+                                        "market-b" => tokio::spawn(market_ws_loop(
+                                            ctx.clone(),
+                                            state.clone(),
+                                            sub_rx.clone(),
+                                            pair.clone(),
+                                            MarketWsSlot::B,
                                         )),
                                         "user-spot" => tokio::spawn(user_ws_loop(
                                             ctx.clone(),
@@ -224,6 +250,7 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) -> Engine {
                         ctx.clone(),
                         tx.clone(),
                         sub_rx.clone(),
+                        ws_pair.clone(),
                     );
                     supervise(
                         "market",
@@ -232,6 +259,16 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) -> Engine {
                         ctx.clone(),
                         tx.clone(),
                         sub_rx.clone(),
+                        ws_pair.clone(),
+                    );
+                    supervise(
+                        "market-b",
+                        h_market_b,
+                        state.clone(),
+                        ctx.clone(),
+                        tx.clone(),
+                        sub_rx.clone(),
+                        ws_pair.clone(),
                     );
                     supervise(
                         "user-spot",
@@ -240,6 +277,7 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) -> Engine {
                         ctx.clone(),
                         tx.clone(),
                         sub_rx.clone(),
+                        ws_pair.clone(),
                     );
                     supervise(
                         "user-futures",
@@ -248,6 +286,7 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) -> Engine {
                         ctx.clone(),
                         tx.clone(),
                         sub_rx.clone(),
+                        ws_pair.clone(),
                     );
                     // 常驻
                     loop {
@@ -697,7 +736,18 @@ async fn handle_cmd(
                     reqwest::Method::GET,
                     rc,
                     &cfg,
-                    "/fapi/v2/positionRisk",
+                    // v3 相比 v2 多返回损益两平价（breakEvenPrice），
+                    // 且只返回有持仓/挂单的 symbol（UI 本就过滤零持仓）；
+                    // 注意 v3 已移除 leverage 等配置字段，杠杆另查 symbolConfig
+                    "/fapi/v3/positionRisk",
+                    vec![],
+                );
+                // 杠杆/保证金模式等配置（v3 positionRisk 不再返回）
+                let sc_f = client.signed(
+                    reqwest::Method::GET,
+                    rc,
+                    &cfg,
+                    "/fapi/v1/symbolConfig",
                     vec![],
                 );
                 let dual_f = client.signed(
@@ -707,7 +757,7 @@ async fn handle_cmd(
                     "/fapi/v1/positionSide/dual",
                     vec![],
                 );
-                let (a, p, d) = tokio::join!(acct_f, pr_f, dual_f);
+                let (a, p, sc, d) = tokio::join!(acct_f, pr_f, sc_f, dual_f);
                 let mut ok = true;
                 let mut fut_err: Option<String> = None;
                 match a {
@@ -732,11 +782,26 @@ async fn handle_cmd(
                         }
                     }
                 }
+                if let Ok(v) = sc {
+                    // 杠杆配置整体替换：与服务器状态保持一致（SetLeverage 本地
+                    // 写入的值会被下一次 RefreshAccount 的服务器值校正）
+                    if let Ok(list) = serde_json::from_value::<Vec<SymbolConfig>>(v) {
+                        state.acct.lock().fut_leverage = list
+                            .into_iter()
+                            .map(|x| (x.symbol, x.leverage))
+                            .collect();
+                    }
+                }
                 if let Ok(v) = p {
-                    if let Ok(list) = serde_json::from_value::<Vec<PositionRisk>>(v) {
+                    if let Ok(mut list) = serde_json::from_value::<Vec<PositionRisk>>(v) {
+                        // v3 响应无 leverage 字段（默认 0）：从 fut_leverage 补齐，
+                        // 供持仓表杠杆列展示
                         let mut acct = state.acct.lock();
-                        acct.fut_leverage
-                            .extend(list.iter().map(|x| (x.symbol.clone(), x.leverage)));
+                        for r in &mut list {
+                            if let Some(l) = acct.fut_leverage.get(&r.symbol) {
+                                r.leverage = *l;
+                            }
+                        }
                         acct.fut_positions = list;
                     }
                 }
@@ -1167,10 +1232,116 @@ async fn cancel_all_orders(
 
 // ---------------------------------------------------------------- 行情 WebSocket
 
+/// 期货行情连接槽位：Binance 自 2026-03 起把 USDⓈ-M WebSocket 拆为
+/// /public /market /private 三类入口，legacy 入口只剩 public 类
+/// （depth/bookTicker）继续推送，成交/K线/ticker/标记价必须走 /market。
+/// 现货无此拆分：槽位 A 单连接承载全部流，槽位 B 空转
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MarketWsSlot {
+    A,
+    B,
+}
+
+impl MarketWsSlot {
+    fn idx(self) -> usize {
+        match self {
+            MarketWsSlot::A => 0,
+            MarketWsSlot::B => 1,
+        }
+    }
+
+    /// 本槽位的流列表与组合流 URL（base 为市场 WS 根端点，期货为
+    /// fstream.binance.com[.testnet]，可被 override_fut_ws 覆盖）
+    fn streams_and_url(
+        self,
+        base: &str,
+        lower: &str,
+        interval: &str,
+        fut: bool,
+    ) -> (Vec<String>, String) {
+        match (self, fut) {
+            // 现货：legacy 组合流承载全部
+            (MarketWsSlot::A, false) => {
+                let s = vec![
+                    format!("{lower}@ticker"),
+                    format!("{lower}@depth20@100ms"),
+                    format!("{lower}@aggTrade"),
+                    format!("{lower}@kline_{interval}"),
+                ];
+                let url = format!("{base}/stream?streams={}", s.join("/"));
+                (s, url)
+            }
+            // 期货 public 类：部分深度（bookTicker 未用，不订阅）
+            (MarketWsSlot::A, true) => {
+                let s = vec![format!("{lower}@depth20@100ms")];
+                let url = format!("{base}/public/stream?streams={}", s.join("/"));
+                (s, url)
+            }
+            // 期货 market 类：成交/K线/ticker/标记价
+            (MarketWsSlot::B, true) => {
+                let s = vec![
+                    format!("{lower}@ticker"),
+                    format!("{lower}@aggTrade"),
+                    format!("{lower}@kline_{interval}"),
+                    format!("{lower}@markPrice@1s"),
+                ];
+                let url = format!("{base}/market/stream?streams={}", s.join("/"));
+                (s, url)
+            }
+            // 现货 B 槽位不建连接（调用方跳过该订阅周期）
+            (MarketWsSlot::B, false) => (Vec::new(), String::new()),
+        }
+    }
+}
+
+/// 双槽行情连接状态合并（UI/状态栏仍按单一市场状态展示）：
+/// 任一 Failed → Failed；任一 Connecting → Connecting；其余（含现货
+/// B 槽未使用的 None）视为已连接；兜底 Disconnected
+#[derive(Default)]
+struct WsPairState {
+    st: [Option<ConnState>; 2],
+}
+
+impl WsPairState {
+    fn set(&mut self, slot: usize, s: ConnState) -> ConnState {
+        self.st[slot] = Some(s);
+        // None = 该槽位对当前市场不适用（现货 B 槽），不参与合并；
+        // 失败优先展示，其次连接中，全部已连接才算已连接
+        let mut failed = None;
+        let mut connecting = false;
+        let mut connected = 0usize;
+        let mut seen = 0usize;
+        for st in self.st.iter().flatten() {
+            seen += 1;
+            match st {
+                ConnState::Failed(m) => failed = Some(m.clone()),
+                ConnState::Connecting => connecting = true,
+                ConnState::Connected => connected += 1,
+                ConnState::Disconnected => {}
+            }
+        }
+        if seen == 0 {
+            return ConnState::Disconnected;
+        }
+        if let Some(m) = failed {
+            return ConnState::Failed(m);
+        }
+        if connecting {
+            return ConnState::Connecting;
+        }
+        if connected == seen {
+            return ConnState::Connected;
+        }
+        ConnState::Disconnected
+    }
+}
+
 async fn market_ws_loop(
     ctx: egui::Context,
     state: Arc<SharedState>,
     mut rx_sub: watch::Receiver<Option<SubSpec>>,
+    pair: Arc<parking_lot::Mutex<WsPairState>>,
+    slot: MarketWsSlot,
 ) {
     let mut backoff = Duration::from_secs(1);
     loop {
@@ -1186,33 +1357,31 @@ async fn market_ws_loop(
                 }
             }
         };
+        // 现货只需槽位 A 一条连接；B 槽静候下一次订阅变化
+        if slot == MarketWsSlot::B && spec.market != Market::UmFutures {
+            if rx_sub.changed().await.is_err() {
+                return;
+            }
+            continue;
+        }
         let cfg = state.cfg_snapshot();
         let ep = endpoints(spec.market, cfg.testnet, &cfg);
         let lower = spec.symbol.to_lowercase();
-        let mut streams = vec![
-            format!("{lower}@ticker"),
-            format!("{lower}@depth20@100ms"),
-            format!("{lower}@aggTrade"),
-            format!("{lower}@kline_{}", spec.interval.as_str()),
-        ];
-        if spec.market == Market::UmFutures {
-            streams.push(format!("{lower}@markPrice@1s"));
-        }
-        let url = format!("{}/stream?streams={}", ep.ws, streams.join("/"));
+        let fut = spec.market == Market::UmFutures;
+        let (_, url) = slot.streams_and_url(&ep.ws, &lower, spec.interval.as_str(), fut);
 
-        state.set_market_ws(spec.market, ConnState::Connecting);
-        state.with_symbol_md(spec.market, &spec.symbol, |md| {
-            md.ws = ConnState::Connecting
-        });
+        let st = pair.lock().set(slot.idx(), ConnState::Connecting);
+        state.set_market_ws(spec.market, st.clone());
+        state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
         repaint(&ctx);
 
         match crate::binance::ws::connect(&url, &cfg.proxy).await {
             Err(e) => {
                 tracing::warn!("行情WS连接失败({}): {e}", spec.market);
-                state.set_market_ws(spec.market, ConnState::Failed(short_err(&e)));
-                state.with_symbol_md(spec.market, &spec.symbol, |md| {
-                    md.ws = ConnState::Failed(short_err(&e))
-                });
+                let msg = short_err(&e);
+                let st = pair.lock().set(slot.idx(), ConnState::Failed(msg.clone()));
+                state.set_market_ws(spec.market, st.clone());
+                state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
                 repaint(&ctx);
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(Duration::from_secs(30));
@@ -1220,8 +1389,9 @@ async fn market_ws_loop(
             Ok(ws) => {
                 tracing::info!("行情WS已连接: {}", spec.market);
                 let connected_at = std::time::Instant::now();
-                state.set_market_ws(spec.market, ConnState::Connected);
-                state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = ConnState::Connected);
+                let st = pair.lock().set(slot.idx(), ConnState::Connected);
+                state.set_market_ws(spec.market, st.clone());
+                state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
                 repaint(&ctx);
 
                 let (_, mut read) = futures_util::StreamExt::split(ws);
@@ -1245,13 +1415,28 @@ async fn market_ws_loop(
                                     tracing::warn!("行情WS错误: {e}");
                                     let msg = short_err(&e.to_string());
                                     read_fail = Some(msg.clone());
+                                    let st = pair
+                                        .lock()
+                                        .set(slot.idx(), ConnState::Failed(msg.clone()));
                                     state.with_symbol_md(spec.market, &spec.symbol, |md| {
-                                        md.ws = ConnState::Failed(msg)
+                                        md.ws = st
                                     });
                                     break;
                                 }
                                 Some(Ok(m)) => {
-                                    if let tokio_tungstenite::tungstenite::Message::Text(txt) = m {
+                                    // 组合流载荷按帧类型统一取 UTF-8 文本
+                                    // （实测均为 text 帧；Binary 分支留作
+                                    // 服务端行为变化的兜底）
+                                    let txt = match m {
+                                        tokio_tungstenite::tungstenite::Message::Text(t) => {
+                                            Some(t)
+                                        }
+                                        tokio_tungstenite::tungstenite::Message::Binary(b) => {
+                                            String::from_utf8(b).ok()
+                                        }
+                                        _ => None,
+                                    };
+                                    if let Some(txt) = txt {
                                         handle_market_msg_text(&state, &spec, &txt);
                                         // 行情帧可达每秒数百条（depth20@100ms +
                                         // aggTrade），逐帧立即重绘会让 UI 在无输入
@@ -1281,11 +1466,11 @@ async fn market_ws_loop(
                     });
                 }
                 if let Some(msg) = read_fail {
-                    state.set_market_ws(spec.market, ConnState::Failed(msg));
+                    let st = pair.lock().set(slot.idx(), ConnState::Failed(msg));
+                    state.set_market_ws(spec.market, st);
                 } else {
-                    state.with_symbol_md(spec.market, &spec.symbol, |md| {
-                        md.ws = ConnState::Disconnected
-                    });
+                    let st = pair.lock().set(slot.idx(), ConnState::Disconnected);
+                    state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
                 }
                 // 连接未稳定（<2min）即断开 → 指数退避，防止对端抖动时重连风暴；
                 // 稳定运行过的连接则重置退避
@@ -1298,7 +1483,8 @@ async fn market_ws_loop(
             }
         }
         if !matches!(state.md.lock().market_ws(spec.market), ConnState::Failed(_)) {
-            state.set_market_ws(spec.market, ConnState::Disconnected);
+            let st = pair.lock().set(slot.idx(), ConnState::Disconnected);
+            state.set_market_ws(spec.market, st);
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
@@ -1461,7 +1647,12 @@ async fn user_ws_loop(
             tokio::time::sleep(Duration::from_secs(10)).await;
             continue;
         };
-        let url = format!("{}/ws/{}", ep.ws, key);
+        // 用户数据流 URL：现货走 legacy /ws/<listenKey>；期货自 2026-03 起
+        // 私有事件迁至 /private/ws/<listenKey>（legacy 入口已停止推送）
+        let url = match market {
+            Market::UmFutures => format!("{}/private/ws/{}", ep.ws, key),
+            Market::Spot => format!("{}/ws/{}", ep.ws, key),
+        };
         // 建连前采样版本号：循环顶部比对，避免被高频事件饿死
         let last_seen = last_version(&state);
         state.set_user_ws(market, ConnState::Connecting);
@@ -1512,7 +1703,16 @@ async fn user_ws_loop(
                             }
                             Some(Ok(m)) => {
                                 last_frame = Instant::now();
-                                if let tokio_tungstenite::tungstenite::Message::Text(txt) = m {
+                                // 组合流载荷按帧类型统一取 UTF-8 文本（Binary
+                                // 分支留作服务端行为变化的兜底）
+                                let txt = match m {
+                                    tokio_tungstenite::tungstenite::Message::Text(t) => Some(t),
+                                    tokio_tungstenite::tungstenite::Message::Binary(b) => {
+                                        String::from_utf8(b).ok()
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(txt) = txt {
                                     handle_user_event(&state, market, &txt, &engine_tx);
                                     // 用户事件多为对账推送，成交风暴时可能高频；
                                     // 合帧 100ms 与行情流一致，避免满帧率空转

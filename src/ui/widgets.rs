@@ -86,6 +86,18 @@ pub fn fmt_dec_grouped(d: &Decimal) -> String {
     }
 }
 
+/// 按交易对规则精度定长显示：小数位固定 dp，≥1000 附千分位分组。
+/// 价格用 quote 资产侧精度（tickSize 小数位）、数量用 base 资产侧精度
+/// （stepSize 小数位），同一列表格纵向小数点对齐
+pub fn fmt_dec_fixed(d: &Decimal, dp: usize) -> String {
+    let f = f64_decimal(d);
+    if f.abs() >= 1000.0 {
+        fmt_thousands(f, dp)
+    } else {
+        format!("{:.*}", dp, f)
+    }
+}
+
 /// 千分位分组格式化（用于展示层；精确值仍走 Decimal）
 pub fn fmt_thousands(v: f64, dp: usize) -> String {
     let s = format!("{:.*}", dp, v);

@@ -426,28 +426,52 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .unwrap_or(4);
 
-    // 短锁拷贝最近 30 笔后绘制
+    // 行数随面板高度自适应（同盘口思路：内容刚好占满、无需滚动条），
+    // 上限为行情缓冲的 100 笔；留 4px 余量防止取整溢出顶出滚动条
+    const ROW_H: f32 = 17.0; // 数据行内容高（FONT_MD 文本行）
+    const HEADER_H: f32 = 14.0; // 表头内容高（FONT_SM 文本行）
+    let row_pitch = ROW_H + 2.0; // Grid spacing.y = 2
+    let n = (((ui.available_height() - HEADER_H - 4.0) / row_pitch).floor() as usize)
+        .clamp(1, 100);
+
+    // 短锁拷贝最近 n 笔后绘制
     let trades: Vec<crate::binance::model::TradeTick> = {
         let md = state.md.lock();
         let Some(md) = md.get(app.market, &app.page.symbol) else {
             widgets::loading_state(ui, crate::i18n::tr("加载中…"));
             return;
         };
-        md.trades.iter().rev().take(30).cloned().collect()
+        md.trades.iter().rev().take(n).cloned().collect()
     };
 
     ui.set_min_width(0.0);
-    // 数字列右对齐 + 最小列宽：价格/数量纵向成列，便于扫读
-    let num_cell = |ui: &mut egui::Ui, text: egui::RichText, w: f32| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.set_min_width(w);
-            ui.label(text);
-        });
-    };
+    // 数字列右对齐 + 最小列宽：价格/数量纵向成列，便于扫读。
+    // 列宽下限必须 ≥ 内容实宽：RTL 布局里内容贴 set_min_size 撑出的
+    // 右缘对齐，文本超宽时向左溢出（时间列 HH:MM:SS 等宽 8 字符 > 设定
+    // 列宽 58），窄内容的表头"时间"却停在设定右缘——表头会相对数据行
+    // 整体左偏。取 max(设定宽, 文本实宽) 后同列所有单元格右缘一致
+    let num_cell =
+        |ui: &mut egui::Ui, txt: String, font: egui::FontId, color: egui::Color32, w: f32, h: f32| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // 实宽测量 + 固定行高：Grid 行高由最高单元格决定，统一高度后
+                // 节距稳定可预算
+                let galley = ui.painter().layout_no_wrap(txt.clone(), font.clone(), color);
+                ui.set_min_size(egui::vec2(w.max(galley.size().x), h));
+                ui.label(egui::RichText::new(txt).font(font).color(color));
+            });
+        };
+    // 表头/数据两套字体：表头小号正体，数据等宽正文
+    let head_font = egui::FontId::proportional(theme::FONT_SM);
+    let data_font = egui::FontId::monospace(theme::FONT_MD);
     if trades.is_empty() {
         widgets::empty_state(ui, "◍", crate::i18n::tr("暂无成交"), "");
         return;
     }
+    // 列宽随面板可用宽等比收缩：Grid 最小宽一旦超过面板内宽，egui 会把内容
+    // 宽度持久化进 PanelState，切到成交页签面板就被撑宽且切不回去。
+    // 表头与数据行用同一组列宽，纵向对齐不受影响
+    let col_k = (ui.available_width() / (72.0 + 64.0 + 58.0 + 24.0)).min(1.0);
+    let (w_price, w_qty, w_time) = (72.0 * col_k, 64.0 * col_k, 58.0 * col_k);
     egui::Grid::new("trades_grid")
         .num_columns(3)
         .spacing([12.0, 2.0])
@@ -455,24 +479,27 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
             // 表头与数据同列对齐：价格/数量/时间均右对齐（与 num_cell 同宽）
             num_cell(
                 ui,
-                egui::RichText::new(crate::i18n::tr("价格"))
-                    .size(theme::FONT_SM)
-                    .color(theme::cur().text_dim),
-                72.0,
+                crate::i18n::tr("价格").to_string(),
+                head_font.clone(),
+                theme::cur().text_dim,
+                w_price,
+                HEADER_H,
             );
             num_cell(
                 ui,
-                egui::RichText::new(crate::i18n::tr("数量"))
-                    .size(theme::FONT_SM)
-                    .color(theme::cur().text_dim),
-                64.0,
+                crate::i18n::tr("数量").to_string(),
+                head_font.clone(),
+                theme::cur().text_dim,
+                w_qty,
+                HEADER_H,
             );
             num_cell(
                 ui,
-                egui::RichText::new(crate::i18n::tr("时间"))
-                    .size(theme::FONT_SM)
-                    .color(theme::cur().text_dim),
-                58.0,
+                crate::i18n::tr("时间").to_string(),
+                head_font.clone(),
+                theme::cur().text_dim,
+                w_time,
+                HEADER_H,
             );
             ui.end_row();
 
@@ -496,27 +523,27 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
                 num_cell(
                     ui,
                     // 不做千分位分组，与盘口一致按规则精度定长显示，纵向小数点对齐
-                    egui::RichText::new(format!("{:.*}", dp, widgets::f64_decimal(&t.price)))
-                        .monospace()
-                        .size(theme::FONT_MD)
-                        .color(col),
-                    72.0,
+                    format!("{:.*}", dp, widgets::f64_decimal(&t.price)),
+                    data_font.clone(),
+                    col,
+                    w_price,
+                    ROW_H,
                 );
                 num_cell(
                     ui,
-                    egui::RichText::new(format!("{:.*}", qdp, widgets::f64_decimal(&t.qty)))
-                        .monospace()
-                        .size(theme::FONT_MD)
-                        .color(theme::cur().text),
-                    64.0,
+                    format!("{:.*}", qdp, widgets::f64_decimal(&t.qty)),
+                    data_font.clone(),
+                    theme::cur().text,
+                    w_qty,
+                    ROW_H,
                 );
                 num_cell(
                     ui,
-                    egui::RichText::new(widgets::fmt_time_short(t.time))
-                        .monospace()
-                        .size(theme::FONT_MD)
-                        .color(theme::cur().text_dim),
-                    58.0,
+                    widgets::fmt_time_short(t.time),
+                    data_font.clone(),
+                    theme::cur().text_dim,
+                    w_time,
+                    ROW_H,
                 );
                 ui.end_row();
             }

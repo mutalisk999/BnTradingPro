@@ -20,11 +20,12 @@ pub struct SymbolRules {
 }
 
 impl SymbolRules {
-    /// tick 的小数位数（用于展示）
+    /// tick 的小数位数 = 价格（quote 资产侧）显示精度
     pub fn price_dp(&self) -> u32 {
         self.tick.normalize().scale()
     }
 
+    /// step 的小数位数 = 数量（base 资产侧）显示精度
     pub fn qty_dp(&self) -> u32 {
         self.step.normalize().scale()
     }

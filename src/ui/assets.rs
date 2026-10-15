@@ -178,6 +178,10 @@ fn show_spot(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) 
         return;
     }
     TableBuilder::new(ui)
+        // TableBuilder 默认 id_salt 固定 "__table_state"：同一 ui 下两张表会撞 id
+        // （现货/合约两栏、下方持仓表都各需唯一 salt），冲突时 egui 会画出
+        // "First use of Table ID …" 调试错误
+        .id_salt("spot_assets")
         .striped(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .column(Column::auto().at_least(70.0))
@@ -253,6 +257,8 @@ fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui
     }
     let f = |d: &Decimal| widgets::f64_decimal(d);
     TableBuilder::new(ui)
+        // 同上：与现货表/持仓表区分 id
+        .id_salt("fut_assets")
         .striped(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .column(Column::auto().at_least(60.0))
@@ -319,6 +325,15 @@ fn show_fut_assets(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui
 
 fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
+    // 持仓均为 U 本位合约；价格小数位 = quote 资产侧精度（tick 小数位），
+    // 数量 = base 资产侧精度（step 小数位），与订单页持仓表一致
+    let market = crate::binance::Market::UmFutures;
+    let pxd = |sym: &str| {
+        state.with_rule(market, sym, |r| r.map(|x| x.price_dp() as usize).unwrap_or(2))
+    };
+    let qtd = |sym: &str| {
+        state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4))
+    };
     let positions: Vec<crate::binance::model::PositionRisk> = state
         .acct
         .lock()
@@ -343,11 +358,14 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
         crate::binance::FutPosSide,
     )> = None;
     TableBuilder::new(ui)
+        // 同上：与现货/合约资产表区分 id
+        .id_salt("fut_positions")
         .striped(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .column(Column::auto().at_least(85.0))
         .column(Column::auto().at_least(50.0))
         .column(Column::auto().at_least(85.0))
+        .column(Column::auto().at_least(95.0))
         .column(Column::auto().at_least(95.0))
         .column(Column::auto().at_least(95.0))
         .column(Column::auto().at_least(105.0))
@@ -360,6 +378,7 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                 "方向",
                 "数量",
                 "开仓价",
+                "损益两平价",
                 "标记价",
                 "未实现盈亏",
                 "强平价",
@@ -369,9 +388,9 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
             .into_iter()
             .enumerate()
             {
-                // 数值列（数量/开仓价/标记价/盈亏/强平价/杠杆）表头同步右对齐
+                // 数值列（数量/开仓价/损益两平价/标记价/盈亏/强平价/杠杆）表头同步右对齐
                 h.col(|ui| {
-                    if (2..=7).contains(&i) {
+                    if (2..=8).contains(&i) {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(theme::card_label(crate::i18n::tr(t)));
                         });
@@ -386,8 +405,8 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                 // 行高 28：容纳 btn_danger（BTN_H）按钮（与订单页持仓表一致）
                 body.row(28.0, |mut row| {
                     let long = p.amt > Decimal::ZERO;
-                    // 价格/盈亏用 fmt_dec_grouped 全精度展示（≥1000 附千分位）：
-                    // 固定 {:.4} 会把低价币（<0.0001）的开仓价、盈亏、强平价全部显示成 0
+                    // 价格/盈亏按交易对规则精度（tick 小数位 = quote 侧）定长显示：
+                    // 低价币规则精度高，不会出现固定小数位把价格/盈亏显示成 0 的问题
                     row.col(|ui| {
                         ui.label(egui::RichText::new(&p.symbol).strong().size(theme::FONT_MD));
                     });
@@ -405,16 +424,37 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                         );
                     });
                     row.col(|ui| {
-                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.amt.abs()), None);
+                        widgets::num_cell(
+                            ui,
+                            widgets::fmt_dec_fixed(&p.amt.abs(), qtd(&p.symbol)),
+                            None,
+                        );
                     });
                     row.col(|ui| {
-                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.entry_price), None);
+                        widgets::num_cell(
+                            ui,
+                            widgets::fmt_dec_fixed(&p.entry_price, pxd(&p.symbol)),
+                            None,
+                        );
                     });
                     row.col(|ui| {
-                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.mark_price), None);
+                        // 损益两平价（含手续费/资金费；接口无值时为 0 → 显示 —）
+                        let bep = if p.break_even_price.is_zero() {
+                            "—".to_string()
+                        } else {
+                            widgets::fmt_dec_fixed(&p.break_even_price, pxd(&p.symbol))
+                        };
+                        widgets::num_cell(ui, bep, None);
                     });
                     row.col(|ui| {
-                        let s = widgets::fmt_dec_grouped(&p.unrealized);
+                        widgets::num_cell(
+                            ui,
+                            widgets::fmt_dec_fixed(&p.mark_price, pxd(&p.symbol)),
+                            None,
+                        );
+                    });
+                    row.col(|ui| {
+                        let s = widgets::fmt_dec_fixed(&p.unrealized, pxd(&p.symbol));
                         let sign = if p.unrealized >= Decimal::ZERO {
                             "+"
                         } else {
@@ -430,7 +470,7 @@ fn show_positions_table(app: &mut BnApp, ui: &mut egui::Ui) {
                         let liq = if p.liquidation_price.is_zero() {
                             "—".to_string()
                         } else {
-                            widgets::fmt_dec_grouped(&p.liquidation_price)
+                            widgets::fmt_dec_fixed(&p.liquidation_price, pxd(&p.symbol))
                         };
                         widgets::num_cell(ui, liq, None);
                     });

@@ -189,7 +189,8 @@ pub struct FutAccount {
     pub assets: Vec<FutBalance>,
 }
 
-/// 持仓风险（GET /fapi/v2/positionRisk）
+/// 持仓风险（GET /fapi/v3/positionRisk；v3 含损益两平价且只返回有
+/// 持仓/挂单的 symbol）
 #[derive(Debug, Clone, Deserialize)]
 pub struct PositionRisk {
     #[serde(rename = "symbol")]
@@ -198,6 +199,9 @@ pub struct PositionRisk {
     pub amt: Decimal,
     #[serde(rename = "entryPrice", deserialize_with = "dec", default)]
     pub entry_price: Decimal,
+    /// 损益两平价（含手续费/资金费的保本价；无持仓时为 0）
+    #[serde(rename = "breakEvenPrice", deserialize_with = "dec", default)]
+    pub break_even_price: Decimal,
     #[serde(rename = "markPrice", deserialize_with = "dec", default)]
     pub mark_price: Decimal,
     #[serde(rename = "unRealizedProfit", deserialize_with = "dec", default)]
@@ -208,6 +212,16 @@ pub struct PositionRisk {
     pub leverage: Decimal,
     #[serde(rename = "positionSide", default)]
     pub side: String,
+}
+
+/// 交易对配置（GET /fapi/v1/symbolConfig）：杠杆/保证金模式等配置类字段
+/// 自 v3 positionRisk 移出后改由此接口提供
+#[derive(Debug, Clone, Deserialize)]
+pub struct SymbolConfig {
+    #[serde(rename = "symbol")]
+    pub symbol: String,
+    #[serde(rename = "leverage", deserialize_with = "dec", default)]
+    pub leverage: Decimal,
 }
 
 /// 双向持仓模式状态（GET /fapi/v1/positionSide/dual）

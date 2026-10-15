@@ -58,6 +58,13 @@ fn head_cell(ui: &mut egui::Ui, t: &str, right: bool) {
 pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
     let market = app.market;
+    // 价格小数位 = quote 资产侧精度（tick 小数位）；数量 = base 资产侧精度（step 小数位）
+    let pxd = |sym: &str| {
+        state.with_rule(market, sym, |r| r.map(|x| x.price_dp() as usize).unwrap_or(2))
+    };
+    let qtd = |sym: &str| {
+        state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4))
+    };
     if !state.has_creds() {
         widgets::empty_state(
             ui,
@@ -185,12 +192,12 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                     row.col(|ui| {
                         // 止损/止盈市价单 price 为 0，真实价格在 stopPrice
                         let p = match o.price.filter(|p| !p.is_zero()) {
-                            Some(p) => widgets::fmt_dec_grouped(&p),
+                            Some(p) => widgets::fmt_dec_fixed(&p, pxd(&o.symbol)),
                             None => match o.stop_price.filter(|s| !s.is_zero()) {
                                 Some(s) => format!(
                                     "{} {}",
                                     crate::i18n::tr("触发"),
-                                    widgets::fmt_dec_grouped(&s)
+                                    widgets::fmt_dec_fixed(&s, pxd(&o.symbol))
                                 ),
                                 None => crate::i18n::tr("市价").into(),
                             },
@@ -198,10 +205,18 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         widgets::num_cell(ui, p, None);
                     });
                     row.col(|ui| {
-                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&o.orig_qty), None);
+                        widgets::num_cell(
+                            ui,
+                            widgets::fmt_dec_fixed(&o.orig_qty, qtd(&o.symbol)),
+                            None,
+                        );
                     });
                     row.col(|ui| {
-                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&o.executed_qty), None);
+                        widgets::num_cell(
+                            ui,
+                            widgets::fmt_dec_fixed(&o.executed_qty, qtd(&o.symbol)),
+                            None,
+                        );
                     });
                     row.col(|ui| {
                         ui.label(
@@ -232,6 +247,15 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
 /// 合约持仓
 pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
+    // 持仓均为 U 本位合约；价格小数位 = quote 资产侧精度（tick 小数位），
+    // 数量 = base 资产侧精度（step 小数位）
+    let market = crate::binance::Market::UmFutures;
+    let pxd = |sym: &str| {
+        state.with_rule(market, sym, |r| r.map(|x| x.price_dp() as usize).unwrap_or(2))
+    };
+    let qtd = |sym: &str| {
+        state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4))
+    };
     if !state.has_creds() {
         widgets::empty_state(
             ui,
@@ -299,6 +323,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
         .column(Column::auto().at_least(36.0))
         .column(Column::auto().at_least(66.0))
         .column(Column::auto().at_least(70.0))
+        .column(Column::auto().at_least(95.0))
         .column(Column::auto().at_least(70.0))
         .column(Column::auto().at_least(70.0))
         .column(Column::auto().at_least(70.0))
@@ -310,6 +335,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                 "方向",
                 "数量",
                 "开仓价",
+                "损益两平价",
                 "标记价",
                 "未实现盈亏",
                 "强平价",
@@ -319,7 +345,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
             .into_iter()
             .enumerate()
             {
-                h.col(|ui| head_cell(ui, crate::i18n::tr(t), (2..=7).contains(&i)));
+                h.col(|ui| head_cell(ui, crate::i18n::tr(t), (2..=8).contains(&i)));
             }
         })
         .body(|mut body| {
@@ -344,13 +370,34 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                         );
                     });
                     row.col(|ui| {
-                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.amt.abs()), None);
+                        widgets::num_cell(
+                            ui,
+                            widgets::fmt_dec_fixed(&p.amt.abs(), qtd(&p.symbol)),
+                            None,
+                        );
                     });
                     row.col(|ui| {
-                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.entry_price), None);
+                        widgets::num_cell(
+                            ui,
+                            widgets::fmt_dec_fixed(&p.entry_price, pxd(&p.symbol)),
+                            None,
+                        );
                     });
                     row.col(|ui| {
-                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&p.mark_price), None);
+                        // 损益两平价（含手续费/资金费；接口无值时为 0 → 显示 —）
+                        let bep = if p.break_even_price.is_zero() {
+                            "—".to_string()
+                        } else {
+                            widgets::fmt_dec_fixed(&p.break_even_price, pxd(&p.symbol))
+                        };
+                        widgets::num_cell(ui, bep, None);
+                    });
+                    row.col(|ui| {
+                        widgets::num_cell(
+                            ui,
+                            widgets::fmt_dec_fixed(&p.mark_price, pxd(&p.symbol)),
+                            None,
+                        );
                     });
                     row.col(|ui| {
                         let c = if p.unrealized >= Decimal::ZERO {
@@ -358,7 +405,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                         } else {
                             theme::cur().down
                         };
-                        let s = widgets::fmt_dec_grouped(&p.unrealized);
+                        let s = widgets::fmt_dec_fixed(&p.unrealized, pxd(&p.symbol));
                         let sign = if p.unrealized >= Decimal::ZERO {
                             "+"
                         } else {
@@ -370,7 +417,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                         let liq = if p.liquidation_price.is_zero() {
                             "—".to_string()
                         } else {
-                            widgets::fmt_dec_grouped(&p.liquidation_price)
+                            widgets::fmt_dec_fixed(&p.liquidation_price, pxd(&p.symbol))
                         };
                         widgets::num_cell(ui, liq, None);
                     });
@@ -412,6 +459,15 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
     let (hist, key) = {
         let o = state.orders.lock();
         (o.history.clone(), o.history_symbol.clone())
+    };
+    // 价格小数位 = quote 资产侧精度（tick 小数位）；数量 = base 资产侧精度（step 小数位）。
+    // 历史按 (市场, 交易对) 查询，行内交易对即查询键，市场取查询键的市场
+    let market = key.as_ref().map(|(m, _)| *m).unwrap_or(app.market);
+    let pxd = |sym: &str| {
+        state.with_rule(market, sym, |r| r.map(|x| x.price_dp() as usize).unwrap_or(2))
+    };
+    let qtd = |sym: &str| {
+        state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4))
     };
     theme::form_row(ui, |ui| {
         match &key {
@@ -511,12 +567,12 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     row.col(|ui| {
                         // 止损/止盈单 price 为 0 时展示触发价
                         let p = match o.price.filter(|p| !p.is_zero()) {
-                            Some(p) => widgets::fmt_dec_grouped(&p),
+                            Some(p) => widgets::fmt_dec_fixed(&p, pxd(&o.symbol)),
                             None => match o.stop_price.filter(|s| !s.is_zero()) {
                                 Some(s) => format!(
                                     "{} {}",
                                     crate::i18n::tr("触发"),
-                                    widgets::fmt_dec_grouped(&s)
+                                    widgets::fmt_dec_fixed(&s, pxd(&o.symbol))
                                 ),
                                 None => crate::i18n::tr("市价").into(),
                             },
@@ -524,10 +580,18 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         widgets::num_cell(ui, p, None);
                     });
                     row.col(|ui| {
-                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&o.orig_qty), None);
+                        widgets::num_cell(
+                            ui,
+                            widgets::fmt_dec_fixed(&o.orig_qty, qtd(&o.symbol)),
+                            None,
+                        );
                     });
                     row.col(|ui| {
-                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&o.executed_qty), None);
+                        widgets::num_cell(
+                            ui,
+                            widgets::fmt_dec_fixed(&o.executed_qty, qtd(&o.symbol)),
+                            None,
+                        );
                     });
                     row.col(|ui| {
                         let c = match o.status.as_str() {
@@ -561,6 +625,15 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
     let (trades, hist_key) = {
         let o = state.orders.lock();
         (o.trades.clone(), o.history_symbol.clone())
+    };
+    // 价格小数位 = quote 资产侧精度（tick 小数位）；数量 = base 资产侧精度（step 小数位）。
+    // 成交按 (市场, 交易对) 查询，行内交易对即查询键，市场取查询键的市场
+    let market = hist_key.as_ref().map(|(m, _)| *m).unwrap_or(app.market);
+    let pxd = |sym: &str| {
+        state.with_rule(market, sym, |r| r.map(|x| x.price_dp() as usize).unwrap_or(2))
+    };
+    let qtd = |sym: &str| {
+        state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4))
     };
     theme::form_row(ui, |ui| {
         ui.label(
@@ -644,10 +717,14 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         ui.label(egui::RichText::new(txt).color(c).size(theme::FONT_MD));
                     });
                     row.col(|ui| {
-                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&t.price), None);
+                        widgets::num_cell(
+                            ui,
+                            widgets::fmt_dec_fixed(&t.price, pxd(&t.symbol)),
+                            None,
+                        );
                     });
                     row.col(|ui| {
-                        widgets::num_cell(ui, widgets::fmt_dec_grouped(&t.qty), None);
+                        widgets::num_cell(ui, widgets::fmt_dec_fixed(&t.qty, qtd(&t.symbol)), None);
                     });
                     row.col(|ui| {
                         let q = if t.quote_qty.is_zero() {
@@ -657,7 +734,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         };
                         widgets::num_cell(
                             ui,
-                            widgets::fmt_dec_grouped(&q.normalize().round_dp(8)),
+                            widgets::fmt_dec_fixed(&q, pxd(&t.symbol)),
                             None,
                         );
                     });

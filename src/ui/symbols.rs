@@ -155,6 +155,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         }
     }
 
+    // show_rows 按「行高 + item_spacing.y」节距推算可见行范围与内容总高，
+    // 下方画行用的却是纯 SYMBOL_ROW_H 节距：间距不归零时两者错位，
+    // 视口底部会永远差几行不渲染（列表未到底就出现空白）
+    ui.spacing_mut().item_spacing.y = 0.0;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show_rows(ui, SYMBOL_ROW_H, rows.len(), |ui, range| {

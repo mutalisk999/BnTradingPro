@@ -220,6 +220,10 @@ pub struct BnApp {
     pub sidebar_expanded: bool,
     /// 左侧交易对列表宽度（pt），右缘把手拖动调节，范围 190~240
     pub sidebar_width: f32,
+    /// 盘口面板宽度（pt），右缘把手拖动调节，范围 180~340。
+    /// 用 exact_size 锁死而非 resizable：egui 会把面板内容宽持久化进
+    /// PanelState，盘口/成交两页签内容宽不同，来回切换面板会越撑越宽
+    pub book_width: f32,
     /// 图表最大化（隐藏右侧下单/盘口面板，仅保留页头 + 图表）
     pub chart_maximized: bool,
     /// 盘口逐档价格变动高亮（按 BookSite 分组，长度随 BOOK_LEVELS）
@@ -294,6 +298,7 @@ impl BnApp {
             auth_card_h: 300.0,
             sidebar_expanded: true,
             sidebar_width: 190.0,
+            book_width: 230.0,
             chart_maximized: false,
             flash_book: Default::default(),
             flash_trade: Default::default(),
@@ -672,12 +677,11 @@ impl BnApp {
         // 图表最大化：右侧下单/盘口/成交与底部订单区全部隐藏，图表占满中央区
         if !self.chart_maximized {
             // 盘口（左，全高）：一直显示到 UI 最下面，不被底部订单区挤上去。
-            // 面板按显示顺序瓜分空间——盘口先于底部订单区显示才能拿到全高
-            egui::Panel::left("book_panel")
-                .resizable(true)
-                .default_size(230.0)
-                .min_size(180.0)
-                .max_size(340.0)
+            // 面板按显示顺序瓜分空间——盘口先于底部订单区显示才能拿到全高。
+            // 宽度用 exact_size 锁死 + 自绘把手（同侧栏）：egui 可调面板会把
+            // 内容宽度持久化，盘口/成交页签来回切面板会越撑越宽
+            let book = egui::Panel::left("book_panel")
+                .exact_size(self.book_width)
                 .frame(
                     egui::Frame::default()
                         .fill(theme::cur().panel)
@@ -687,6 +691,32 @@ impl BnApp {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| crate::ui::market::show_book_panel(self, ui));
                 });
+
+            // 自绘拖宽把手：面板右缘内侧 8px 竖条，注册在外层 ui 上，
+            // 避免内容区 ScrollArea 吃掉手势
+            let outer = book.response.rect;
+            let strip_rect = egui::Rect::from_min_max(
+                egui::pos2(outer.right() - 8.0, outer.top()),
+                egui::pos2(outer.right(), outer.bottom()),
+            );
+            let strip = ui.interact(
+                strip_rect,
+                egui::Id::new("book_resize"),
+                egui::Sense::click_and_drag(),
+            );
+            if strip.dragged() {
+                self.book_width = (self.book_width + strip.drag_delta().x).clamp(180.0, 340.0);
+            }
+            if strip.hovered() || strip.dragged() {
+                ui.painter().line_segment(
+                    [
+                        egui::pos2(strip_rect.center().x, strip_rect.top()),
+                        egui::pos2(strip_rect.center().x, strip_rect.bottom()),
+                    ],
+                    egui::Stroke::new(2.0, theme::cur().accent.gamma_multiply(0.6)),
+                );
+            }
+            strip.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
 
             // 底部订单区：盘口右边、K线与下单下面（在右侧面板之前显示，才能
             // 从盘口右缘一直铺到窗口右缘，持仓/挂单表格的列才放得下）
