@@ -4,7 +4,7 @@ use crate::app::{BnApp, ConfirmOrder};
 use crate::binance::client::{OrderKind, OrderRequest};
 use crate::binance::{FutPosSide, Market, Side};
 use crate::engine::{state::ToastKind, Command};
-use crate::ui::{theme, widgets};
+use crate::ui::{flash, theme, widgets};
 use eframe::egui;
 use rust_decimal::Decimal;
 use std::sync::Arc;
@@ -114,12 +114,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let side_w = ((ui.available_width() - side_gap) / 2.0).max(60.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = side_gap;
+        // 选中态经 animate_bool 渐变（色块淡入淡出，与全站选中态动画一致），
         // 未选中侧用主题文字色：浅色主题下 btn_idle 底近白，白字对比度不足
-        let buy_txt_color = if app.page.form.side == Side::Buy {
-            theme::cur().on_fill
-        } else {
-            theme::cur().text
-        };
+        let buy_on = app.page.form.side == Side::Buy;
+        let buy_anim = ui.ctx().animate_bool(egui::Id::new("side_buy"), buy_on);
         let buy = egui::RichText::new(if market == Market::UmFutures {
             crate::i18n::tr("买入 / 开多")
         } else {
@@ -127,14 +125,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .strong()
         .size(theme::FONT_MD)
-        .color(buy_txt_color);
+        .color(if buy_on {
+            theme::cur().on_fill
+        } else {
+            theme::cur().text
+        });
         let buy = egui::Button::new(buy)
-            .fill(if app.page.form.side == Side::Buy {
-                theme::cur().up
-            } else {
-                theme::cur().btn_idle
-            })
-            .corner_radius(5);
+            .fill(flash::lerp_color(theme::cur().btn_idle, theme::cur().up, buy_anim))
+            .corner_radius(f32::from(theme::R_MD));
         if ui
             .add_sized([side_w, theme::BTN_H], buy)
             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -142,11 +140,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         {
             app.page.form.side = Side::Buy;
         }
-        let sell_txt_color = if app.page.form.side == Side::Sell {
-            theme::cur().on_fill
-        } else {
-            theme::cur().text
-        };
+        let sell_on = app.page.form.side == Side::Sell;
+        let sell_anim = ui.ctx().animate_bool(egui::Id::new("side_sell"), sell_on);
         let sell = egui::RichText::new(if market == Market::UmFutures {
             crate::i18n::tr("卖出 / 开空")
         } else {
@@ -154,14 +149,18 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .strong()
         .size(theme::FONT_MD)
-        .color(sell_txt_color);
+        .color(if sell_on {
+            theme::cur().on_fill
+        } else {
+            theme::cur().text
+        });
         let sell = egui::Button::new(sell)
-            .fill(if app.page.form.side == Side::Sell {
-                theme::cur().down
-            } else {
-                theme::cur().btn_idle
-            })
-            .corner_radius(5);
+            .fill(flash::lerp_color(
+                theme::cur().btn_idle,
+                theme::cur().down,
+                sell_anim,
+            ))
+            .corner_radius(f32::from(theme::R_MD));
         if ui
             .add_sized([side_w, theme::BTN_H], sell)
             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -179,7 +178,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             1.0_f32,
             theme::cur().border.gamma_multiply(0.7),
         ))
-        .corner_radius(8)
+        .corner_radius(f32::from(theme::R_LG))
         .inner_margin(egui::Margin::symmetric(12, 6))
         .show(ui, |ui| {
         compact_row(ui, |ui| {
@@ -248,11 +247,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     crate::i18n::tr("杠杆倍数"),
                     22.0,
                 );
-                if ui
-                    .button(crate::i18n::tr("设定"))
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
+                if theme::btn_ghost(ui, crate::i18n::tr("设定"), true).clicked() {
                     match app.page.leverage_input.trim().parse::<u32>() {
                         Ok(l) if (1..=125).contains(&l) => {
                             state.send_cmd(Command::SetLeverage {
@@ -328,9 +323,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         compact_row(ui, |ui| {
             field_label(ui, crate::i18n::tr("比例"));
             for pct in [25.0, 50.0, 75.0, 100.0] {
-                if ui
-                    .small_button(format!("{}%", pct as i32))
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                if theme::btn_ghost(ui, &format!("{}%", pct as i32), true)
                     .on_hover_text(crate::i18n::tr("按可用余额估算"))
                     .clicked()
                 {
@@ -473,7 +466,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             .color(theme::cur().on_fill),
     )
     .fill(color)
-    .corner_radius(5)
+    .corner_radius(f32::from(theme::R_MD))
     .min_size(egui::vec2(ui.available_width(), 30.0));
     let resp = ui
         .add_enabled(btn_enabled, btn)
@@ -571,9 +564,7 @@ fn best_px_buttons(ui: &mut egui::Ui, app: &mut BnApp, market: Market, symbol: &
         show_mid = true;
     }
     let mut fill = |ui: &mut egui::Ui, label: &str, price: Decimal| {
-        if ui
-            .small_button(label)
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
+        if theme::btn_ghost(ui, label, true)
             .on_hover_text(crate::i18n::tr("点击填入下单价格"))
             .clicked()
         {

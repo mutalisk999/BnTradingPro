@@ -12,26 +12,29 @@ use eframe::egui;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 
-/// 每侧显示档数
+/// 每侧显示档数下限（面板过矮时的保底）
 pub const BOOK_LEVELS: usize = 10;
+/// 每侧显示档数上限：订阅的 depth20@100ms 推满 20 档，
+/// 实际档位数随面板高度在两者之间自适应
+pub const BOOK_MAX_LEVELS: usize = 20;
 
 /// 右栏内容页签：盘口 / 成交明细
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BookTab {
-    /// 盘口 10 档
+    /// 盘口（档位随面板高度自适应，10~20 档）
     Book,
     /// 成交明细
     Trades,
 }
 
-/// 右栏：盘口 10 档 / 成交明细 双页签，互斥显示
+/// 右栏：盘口 / 成交明细 双页签，互斥显示
 pub fn show_book_panel(app: &mut BnApp, ui: &mut egui::Ui) {
     let prev = app.book_tab;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         if theme::nav_tab(
             ui,
-            crate::i18n::tr("盘口 10 档"),
+            crate::i18n::tr("盘口"),
             app.book_tab == BookTab::Book,
         ) {
             app.book_tab = BookTab::Book;
@@ -72,6 +75,18 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
         })
         .unwrap_or(4);
 
+    // 行距收紧为无缝 + 档位随面板高度自适应（同成交明细思路：内容恰好占满、
+    // 无需滚动条）。上限 20 档 = depth20 推送的完整档数，下限 10 档保底；
+    // SAFETY 防取整溢出顶出滚动条
+    ui.spacing_mut().item_spacing.y = 0.0;
+    const SPREAD_H: f32 = 24.0;
+    const SPREAD_PAD: f32 = 8.0; // 价差行上下呼吸
+    const SAFETY: f32 = 6.0;
+    const ROW_H: f32 = 18.0;
+    let avail = ui.available_height();
+    let n = (((avail - SPREAD_H - SPREAD_PAD - SAFETY) / (2.0 * ROW_H)).floor() as usize)
+        .clamp(BOOK_LEVELS, BOOK_MAX_LEVELS);
+
     // 短锁拷贝（价格, 数量）
     let (asks, bids) = {
         let md = state.md.lock();
@@ -85,7 +100,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
         }
         let take = |side: &Vec<crate::binance::model::Level>| {
             side.iter()
-                .take(BOOK_LEVELS)
+                .take(n)
                 .map(|l| (l.price, l.qty))
                 .collect::<Vec<(Decimal, Decimal)>>()
         };
@@ -109,7 +124,6 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     let max_cum = ask_total.max(bid_total).max(0.000001);
     let now = ui.ctx().input(|i| i.time);
 
-    let row_h = 18.0;
     // egui 的滚动条悬浮在内容上层，行宽要主动让出滚动条宽度，否则数量列被压住
     let w = ui.available_width() - 10.0;
 
@@ -118,15 +132,15 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     app.book_anim.update(now, false, &bids, &bid_cums, max_cum);
 
     // 各档矩形（按升序下标存），残影据此定位
-    let mut ask_rects = [egui::Rect::NOTHING; BOOK_LEVELS];
-    let mut bid_rects = [egui::Rect::NOTHING; BOOK_LEVELS];
+    let mut ask_rects = [egui::Rect::NOTHING; BOOK_MAX_LEVELS];
+    let mut bid_rects = [egui::Rect::NOTHING; BOOK_MAX_LEVELS];
 
     // 卖盘（高→低）：asks 升序（最近档在前），显示时倒序遍历
     for (i, (price, qty)) in asks.iter().enumerate().rev() {
         ask_rects[i] = book_row(
             ui,
             app,
-            row_h,
+            ROW_H,
             w,
             ask_cums[i] / max_cum,
             theme::cur().down.gamma_multiply(0.28),
@@ -161,7 +175,15 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     } else {
         format!("{:.*} ({:.3}%)", dp, spread_f, spread_pct)
     };
-    ui.allocate_ui(egui::vec2(w, 24.0), |ui| {
+    // 弹性留白：价差行与买盘贴面板底部，剩余空间集中在其上方——
+    // 最优价/价差/买盘（交易重心）聚在底部，远端卖档留在顶部作参考
+    // （主流交易所布局）；档位未到上限时 gap≈0，布局退化为自上而下顺排
+    let gap = (avail - SAFETY - SPREAD_PAD - SPREAD_H - 2.0 * n as f32 * ROW_H).max(0.0);
+    if gap > 0.5 {
+        ui.add_space(gap);
+    }
+    ui.add_space(SPREAD_PAD / 2.0);
+    ui.allocate_ui(egui::vec2(w, SPREAD_H), |ui| {
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(format!("{:.*}", dp, mid_f))
@@ -188,13 +210,14 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             });
         });
     });
+    ui.add_space(SPREAD_PAD / 2.0);
 
     // 买盘（低→高）
     for (i, (price, qty)) in bids.iter().enumerate() {
         bid_rects[i] = book_row(
             ui,
             app,
-            row_h,
+            ROW_H,
             w,
             bid_cums[i] / max_cum,
             theme::cur().up.gamma_multiply(0.28),
@@ -229,7 +252,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             }
             (g.slot, bid_rects[g.slot])
         };
-        if i >= BOOK_LEVELS || rect == egui::Rect::NOTHING {
+        if i >= BOOK_MAX_LEVELS || rect == egui::Rect::NOTHING {
             continue;
         }
         let base = if g.is_ask {
@@ -578,11 +601,26 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
     // 第一行：交易对 | 最新价/涨跌 | 周期直选按钮 | 自选星标
     // wrapped：窄窗口时周期按钮换行而不是被裁掉
     ui.horizontal_wrapped(|ui| {
-        ui.label(
-            egui::RichText::new(app.page.symbol.clone())
-                .strong()
-                .size(theme::FONT_LG),
-        );
+        // 交易对双色标题：base（标的）强调、quote（计价）弱化，
+        // 与交易所惯例一致；规则未加载/结构不符时整体回退单色原文
+        if !base.is_empty() && app.page.symbol.starts_with(&base) {
+            ui.label(
+                egui::RichText::new(&base)
+                    .strong()
+                    .size(theme::FONT_LG),
+            );
+            ui.label(
+                egui::RichText::new(&app.page.symbol[base.len()..])
+                    .size(theme::FONT_LG)
+                    .color(theme::cur().text_dim),
+            );
+        } else {
+            ui.label(
+                egui::RichText::new(app.page.symbol.clone())
+                    .strong()
+                    .size(theme::FONT_LG),
+            );
+        }
         ui.separator();
         if let Some(t) = &tick {
             let chg = widgets::f64_decimal(&t.price_change_percent);

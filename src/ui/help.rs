@@ -90,7 +90,7 @@ pub fn show(_app: &mut BnApp, ui: &mut egui::Ui) {
     section(ui, "交易对与自选", |ui| {
         bullet(
             ui,
-            "左侧列表顶部搜索框实时过滤；输入 ⭐ 旁的星标可将交易对加入自选，自选排在列表最顶部",
+            "左侧列表顶部搜索框实时过滤；点击行尾的星标可将交易对加入自选，自选排在列表最顶部",
         );
         bullet(
             ui,

@@ -14,10 +14,20 @@ pub const FONT_BODY: f32 = 14.0;
 pub const FONT_XL: f32 = 20.0;
 pub const FONT_LG: f32 = 16.5;
 pub const FONT_HERO: f32 = 20.0;
+/// 解锁/配钥页的品牌标题（页面级展示字，不属于常规字号阶梯）
+pub const FONT_BRAND: f32 = 34.0;
 /// 常规按钮/页签高度
 pub const BTN_H: f32 = 28.0;
 /// 主操作按钮高度（买卖切换、下单提交）
 pub const BTN_LG: f32 = 36.0;
+
+// ---------- 圆角半径 token ----------
+/// 小徽标 / 行内幽灵按钮
+pub const R_SM: u8 = 4;
+/// 常规按钮 / 胶囊页签
+pub const R_MD: u8 = 6;
+/// 卡片 / 弹窗 / Toast
+pub const R_LG: u8 = 8;
 
 // ---------- 价格变动高亮（flash）token ----------
 /// flash 高亮持续时长：价格变化后行底色在此时间内渐变回原色
@@ -297,7 +307,7 @@ pub fn badge(ui: &mut egui::Ui, text: &str, fg: Color32) {
     egui::Frame::default()
         .fill(fg.gamma_multiply(0.22))
         .stroke(Stroke::new(1.0_f32, fg.gamma_multiply(0.85)))
-        .corner_radius(3)
+        .corner_radius(R_SM)
         .inner_margin(egui::Margin::symmetric(7, 2))
         .show(ui, |ui| {
             ui.label(txt.color(fg));
@@ -315,30 +325,31 @@ pub fn btn_primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respon
             .color(cur().on_accent),
     )
     .fill(cur().accent)
-    .corner_radius(5)
+    .corner_radius(R_MD)
     .min_size(egui::vec2(ui.available_width(), BTN_LG));
     ui.add_enabled(enabled, btn)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// 普通按钮：card 底 + 边框，中性文字
+/// 普通按钮：card 底 + 中性文字。不显式设 stroke——交给 egui 按交互状态
+/// 取 theme::apply 预置的 widgets.<state>.bg_stroke，hover 时边框自动提亮
 pub fn btn_default(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
     let btn = egui::Button::new(egui::RichText::new(text).size(FONT_BODY))
         .fill(cur().card)
-        .stroke(Stroke::new(1.0_f32, cur().border))
-        .corner_radius(6)
+        .corner_radius(R_MD)
         .min_size(egui::vec2(0.0, BTN_H));
     ui.add_enabled(enabled, btn)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// 次按钮：全宽、金色描边 —— 认证页的替代路径（跳过 / 仅看行情）。
-/// small_button 的默认底色与卡片底色几乎相同，辨识度太差
+/// small_button 的默认底色与卡片底色几乎相同，辨识度太差。
+/// 字号与 btn_primary 同为 FONT_BODY：两者同为 BTN_LG 高的主/次一对
 pub fn btn_secondary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
-    let btn = egui::Button::new(egui::RichText::new(text).size(FONT_MD).color(cur().text))
+    let btn = egui::Button::new(egui::RichText::new(text).size(FONT_BODY).color(cur().text))
         .fill(cur().panel2)
         .stroke(Stroke::new(1.0_f32, cur().accent.gamma_multiply(0.55)))
-        .corner_radius(5)
+        .corner_radius(R_MD)
         .min_size(egui::vec2(ui.available_width(), BTN_LG));
     ui.add_enabled(enabled, btn)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -352,7 +363,7 @@ pub fn btn_danger(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respons
     let btn = egui::Button::new(egui::RichText::new(text).size(FONT_BODY).color(cur().err))
         .fill(fill)
         .stroke(Stroke::new(1.0_f32, cur().err.gamma_multiply(0.55)))
-        .corner_radius(6)
+        .corner_radius(R_MD)
         .min_size(egui::vec2(0.0, BTN_H));
     ui.add_enabled(enabled, btn)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -368,10 +379,51 @@ pub fn btn_solid(ui: &mut egui::Ui, text: &str, fill: Color32, enabled: bool) ->
             .color(cur().on_fill),
     )
     .fill(fill)
-    .corner_radius(6)
+    .corner_radius(R_MD)
     .min_size(egui::vec2(0.0, BTN_H));
     ui.add_enabled(enabled, btn)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// 幽灵小按钮：透明底 + 细边框 + 小字，行内轻量操作
+/// （比例填充 / 买一卖一 / 设定等）。替代裸 small_button——egui 默认样式
+/// 的底色与 hover 反馈走 Visuals，与本主题色板脱节。
+/// 自绘而非 Button：显式 stroke 会吞掉 egui 的 on-hover 效果（官方文档
+/// 明示），这里手动画 hover 反馈（底色浮起 + 边框提亮一档）
+pub fn btn_ghost(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
+    let t = cur();
+    let txt_c = if enabled { t.text } else { t.text_dim };
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::proportional(FONT_SM),
+        txt_c,
+    );
+    let pad_x = 8.0;
+    let size = egui::vec2(galley.size().x + pad_x * 2.0, 22.0);
+    let (rect, resp) = ui.allocate_exact_size(
+        size,
+        if enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        },
+    );
+    let active = resp.hovered() && enabled;
+    if active {
+        ui.painter().rect_filled(rect, f32::from(R_SM), t.row_hover);
+    }
+    ui.painter().rect_stroke(
+        rect,
+        R_SM,
+        Stroke::new(1.0_f32, if active { t.text_dim } else { t.border }),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, txt_c);
+    if enabled {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        resp
+    }
 }
 
 /// 固定字号的小加载圈（统一 13px，避免调用点出现裸 .size()）
@@ -399,7 +451,7 @@ pub fn pill_tab(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response 
     if resp.hovered() && !active {
         fill = t.row_hover;
     }
-    ui.painter().rect_filled(rect, 6.0, fill);
+    ui.painter().rect_filled(rect, f32::from(R_MD), fill);
     ui.painter().galley(
         rect.center() - galley.size() / 2.0,
         galley,
@@ -591,7 +643,7 @@ pub fn card<R>(
         .fill(cur().card)
         // 边框压暗一档：卡片轮廓更实，与面板底色拉开层次
         .stroke(Stroke::new(1.0_f32, cur().border.gamma_multiply(0.7)))
-        .corner_radius(8)
+        .corner_radius(R_LG)
         .inner_margin(egui::Margin::symmetric(12, 10))
         .outer_margin(egui::Margin::symmetric(0, 4))
         .show(ui, add_contents)

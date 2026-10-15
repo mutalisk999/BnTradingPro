@@ -96,20 +96,20 @@ pub enum BookSite {
 /// 盘口各档位点：定长数组，启动时一次分配，运行期无堆操作
 #[derive(Debug, Clone)]
 pub struct FlashBook {
-    slots: [Flash; 4 * crate::ui::market::BOOK_LEVELS],
+    slots: [Flash; 4 * crate::ui::market::BOOK_MAX_LEVELS],
 }
 
 impl Default for FlashBook {
     fn default() -> Self {
         Self {
-            slots: [Flash::default(); 4 * crate::ui::market::BOOK_LEVELS],
+            slots: [Flash::default(); 4 * crate::ui::market::BOOK_MAX_LEVELS],
         }
     }
 }
 
 impl FlashBook {
     const fn idx(site: BookSite, i: usize) -> usize {
-        (site as usize) * crate::ui::market::BOOK_LEVELS + i
+        (site as usize) * crate::ui::market::BOOK_MAX_LEVELS + i
     }
 
     /// 是否仍有位点在衰减中（供重绘调度判断）
@@ -167,7 +167,7 @@ impl BnApp {
         idx: usize,
         v: f64,
     ) -> (f32, i8) {
-        if idx >= crate::ui::market::BOOK_LEVELS {
+        if idx >= crate::ui::market::BOOK_MAX_LEVELS {
             return (0.0, 0);
         }
         let now = ctx.input(|i| i.time);

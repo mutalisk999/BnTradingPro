@@ -200,12 +200,14 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "刷新账户" => "Refresh Account",
         "现货资产" => "Spot Assets",
         "合约资产" => "Futures Assets",
+        "合约资产 · U本位" => "Futures Assets (USDT-M)",
         "合约持仓" => "Futures Positions",
         "资产" => "Asset",
         "可用" => "Available",
         "冻结" => "Locked",
         "钱包余额" => "Wallet",
         "暂无非零资产" => "No non-zero assets",
+        "个非零资产" => "non-zero assets",
         "（该 Key 无交易权限）" => " (key has no trade permission)",
         "未配置 API 密钥，无法查看资产（可在设置页配置）" => {
             "No API key configured — set one in Settings to view assets"
@@ -418,6 +420,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "已实现盈亏: " => "Realized PnL: ",
         // ---- 补充（评审缺口）----
         "盘口 10 档" => "Order Book (10)",
+        "盘口" => "Order Book",
         "切换主题" => "Toggle theme",
         "切换语言" => "Toggle language",
         "实盘环境 · 真实资金" => "LIVE · Real Funds",

@@ -48,6 +48,22 @@ pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
     );
 }
 
+/// 简化状态灯（布尔、无文字标签）：顶栏 REST 等紧凑场合
+pub fn status_dot_bare(ui: &mut egui::Ui, ok: bool) {
+    let c = if ok {
+        theme::cur().up
+    } else {
+        theme::cur().err
+    };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 4.5, c);
+    resp.on_hover_text(if ok {
+        crate::i18n::tr("REST 接口正常")
+    } else {
+        crate::i18n::tr("REST 接口异常")
+    });
+}
+
 /// 数字输入框：等宽字体 + 提示；h = 控件高度（标准行 CONTROL_H，下单面板压到 22）
 pub fn num_field_h(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str, h: f32) {
     egui::TextEdit::singleline(text)
@@ -236,7 +252,7 @@ fn draw_toast(ui: &mut egui::Ui, ctx: &egui::Context, state: &SharedState, i: us
             spread: 0,
             color: shadow_color,
         })
-        .corner_radius(8)
+        .corner_radius(f32::from(theme::R_LG))
         .inner_margin(egui::Margin::symmetric(12, 9));
     let inner = frame.show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {

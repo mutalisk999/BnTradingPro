@@ -234,7 +234,7 @@ pub struct BnApp {
     pub flash_header: crate::ui::flash::FlashHeader,
     /// 盘口消失档位残影（淡出动画 + 上一帧价格集合）
     pub book_anim: crate::ui::market::BookAnim,
-    /// 右栏内容页签：盘口 10 档 / 成交明细
+    /// 右栏内容页签：盘口 / 成交明细
     pub book_tab: crate::ui::market::BookTab,
     /// 缩放防抖：上一帧窗口物理尺寸（zoom 切换不改变物理尺寸，仅 resize 改变）
     ppp_last_phys: Option<(f32, f32)>,
@@ -383,10 +383,11 @@ impl BnApp {
             return;
         }
         self.page.symbol = s.clone();
-        // 表单残留清空 + 图表回到最新
+        // 表单残留清空 + 图表回到最新（校验红条一并清：其文案针对旧交易对）
         self.page.form.price.clear();
         self.page.form.qty.clear();
         self.page.form.trigger.clear();
+        self.page.form.err.clear();
         self.page.chart.right_off = 0.0;
         // 旧价位点的"上一次值"属于上一个交易对，清空后避免被误判为变动
         self.flash_reset();
@@ -567,7 +568,7 @@ impl BnApp {
                     .state
                     .rest_ok
                     .load(std::sync::atomic::Ordering::Relaxed);
-                status_dot_bare(ui, rest_ok);
+                widgets::status_dot_bare(ui, rest_ok);
                 if let Some(m) = self.tab.market() {
                     ui.label(
                         egui::RichText::new(crate::i18n::tr("行情"))
@@ -810,11 +811,47 @@ impl BnApp {
         let mut submit = false;
         let mut keep = true;
         let mut cancel = false;
+        // 全屏半透明遮罩：视觉聚焦弹窗 + 点击空白即取消（与 Esc 等效）。
+        // 遮罩在 Middle 层，弹窗在更高的 Tooltip 层（Toast 在 Foreground，
+        // 仍浮在弹窗之上）；Area 无内容，用 painter_at + allocate_rect 撑满全屏
+        let screen = ctx
+            .input(|i| i.raw.screen_rect)
+            .unwrap_or(egui::Rect::ZERO);
+        egui::Area::new(egui::Id::new("confirm_dim"))
+            .order(egui::Order::Middle)
+            .anchor(egui::Align2::LEFT_TOP, [0.0, 0.0])
+            .show(ctx, |ui| {
+                let alpha = if theme::is_light() { 70 } else { 120 };
+                ui.painter_at(screen).rect_filled(
+                    screen,
+                    0.0,
+                    egui::Color32::from_black_alpha(alpha),
+                );
+                if ui.allocate_rect(screen, egui::Sense::click()).clicked() {
+                    cancel = true;
+                }
+            });
+        // 弹窗描边随方向着色：买=涨色 / 卖=跌色，色即语义（与提交键同源）
+        let side_color = match self.confirm.as_ref().map(|c| c.side) {
+            Some(Side::Sell) => theme::cur().down,
+            _ => theme::cur().up,
+        };
         egui::Window::new(egui::RichText::new(crate::i18n::tr("确认下单")).strong())
             .open(&mut keep)
             .collapsible(false)
             .resizable(false)
+            .order(egui::Order::Tooltip)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::cur().panel2)
+                    .stroke(egui::Stroke::new(
+                        1.5_f32,
+                        side_color.gamma_multiply(0.55),
+                    ))
+                    .corner_radius(f32::from(theme::R_LG))
+                    .inner_margin(egui::Margin::same(14)),
+            )
             .show(ctx, |ui| {
                 if let Some(c) = &self.confirm {
                     let color = if c.side == Side::Buy {
@@ -911,22 +948,6 @@ impl BnApp {
     }
 }
 
-/// 简化状态灯（布尔）
-fn status_dot_bare(ui: &mut egui::Ui, ok: bool) {
-    let c = if ok {
-        theme::cur().up
-    } else {
-        theme::cur().err
-    };
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-    ui.painter().circle_filled(rect.center(), 4.5, c);
-    resp.on_hover_text(if ok {
-        crate::i18n::tr("REST 接口正常")
-    } else {
-        crate::i18n::tr("REST 接口异常")
-    });
-}
-
 impl eframe::App for BnApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone(); // Context 内部是 Arc，克隆廉价；避免与 ui 的可变借用冲突
@@ -972,10 +993,14 @@ impl eframe::App for BnApp {
                 self.applied_lang = cfg.lang.clone();
             }
         }
-        // 开发辅助：BTP_DEMO=1 跳过解锁直接进主界面，便于无凭据调试/截图（仅 debug 构建编译）
+        // 开发辅助：BTP_DEMO=1 跳过解锁直接进主界面，便于无凭据调试/截图（仅 debug 构建编译）；
+        // 同时注入假资产快照，让资产总览/持仓等需要凭据的页面也有完整布局可看
         #[cfg(debug_assertions)]
         if self.phase != Phase::Main && std::env::var("BTP_DEMO").ok().as_deref() == Some("1") {
             self.phase = Phase::Main;
+            // 演示模式直接落在资产总览页：该页布局最复杂，截图调试最常用
+            self.tab = Tab::Portfolio;
+            Self::seed_demo_accounts(&self.state);
         }
         if !matches!(self.phase, Phase::Main) {
             // 离开主界面（解锁页/换钥页）后重新进入时需要再做一次初始加载
@@ -1016,5 +1041,82 @@ impl BnApp {
     /// 是否有闪烁动画正在进行（任一位点未衰减完毕）
     fn flash_active(&self) -> bool {
         self.flash_book.active() || self.flash_trade.active() || self.flash_header.active()
+    }
+}
+
+/// BTP_DEMO 演示数据（仅 debug 构建编译）：注入假资产/持仓快照，
+/// 让资产总览/持仓等需要凭据的页面在无凭据环境也有完整布局可看
+#[cfg(debug_assertions)]
+impl BnApp {
+    fn seed_demo_accounts(state: &Arc<SharedState>) {
+        use crate::binance::model::{Balance, FutAccount, FutBalance, PositionRisk, SpotAccount};
+        use crate::security::vault::Creds;
+        let d = |s: &str| rust_decimal::Decimal::from_str_exact(s).unwrap_or_default();
+        // 假凭据让 has_creds 门槛放行（签名请求会失败并弹错误 toast，截图时可忽略）
+        if !state.has_creds() {
+            state.set_creds(Some(Creds {
+                api_key: "demo".into(),
+                api_secret: "demo".into(),
+            }));
+        }
+        let mut acct = state.acct.lock();
+        acct.spot = Some(SpotAccount {
+            can_trade: true,
+            balances: vec![
+                Balance {
+                    asset: "USDT".into(),
+                    free: d("12345.678"),
+                    locked: d("100.000"),
+                },
+                Balance { asset: "BNB".into(), free: d("12.5"), locked: d("0") },
+                Balance { asset: "BTC".into(), free: d("0.15"), locked: d("0") },
+            ],
+        });
+        acct.fut = Some(FutAccount {
+            total_wallet: d("12345.67890000"),
+            total_unrealized: d("-56.78000000"),
+            total_margin: d("12288.89890000"),
+            available: d("9876.54000000"),
+            assets: vec![
+                FutBalance {
+                    asset: "USDT".into(),
+                    wallet: d("12345.67890000"),
+                    unrealized: d("-56.78000000"),
+                    margin: d("12288.89890000"),
+                    available: d("9876.54000000"),
+                },
+            ],
+        });
+        acct.fut_dual_side = false;
+        acct.fut_leverage = [
+            ("BTCUSDT".to_string(), d("10")),
+            ("ETHUSDT".to_string(), d("5")),
+        ]
+        .into_iter()
+        .collect();
+        acct.fut_positions = vec![
+            PositionRisk {
+                symbol: "BTCUSDT".into(),
+                amt: d("0.150"),
+                entry_price: d("80123.50"),
+                break_even_price: d("80163.21"),
+                mark_price: d("80950.10"),
+                unrealized: d("123.99"),
+                liquidation_price: d("73500.00"),
+                leverage: d("10"),
+                side: "BOTH".into(),
+            },
+            PositionRisk {
+                symbol: "ETHUSDT".into(),
+                amt: d("-2.500"),
+                entry_price: d("3120.00"),
+                break_even_price: d("3116.44"),
+                mark_price: d("3050.25"),
+                unrealized: d("-174.37"),
+                liquidation_price: d("3620.00"),
+                leverage: d("5"),
+                side: "BOTH".into(),
+            },
+        ];
     }
 }

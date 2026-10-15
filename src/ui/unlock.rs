@@ -50,7 +50,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 Pos2::new(avail.center().x, title_y),
                 Align2::CENTER_CENTER,
                 "BnTradingPro",
-                FontId::proportional(34.0),
+                FontId::proportional(theme::FONT_BRAND),
                 theme::cur().accent,
             );
             p.text(

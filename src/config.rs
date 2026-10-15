@@ -94,7 +94,19 @@ impl AppConfig {
         let path = dir.join("config.toml");
         match std::fs::read_to_string(&path) {
             Ok(s) => toml::from_str(&s).unwrap_or_else(|e| {
-                tracing::warn!("解析配置失败({e})，使用默认配置: {}", path.display());
+                // 解析失败回退默认前，先把损坏文件改名备份：否则下一次
+                // PersistConfig 会用默认值直接覆盖，用户的自选列表/端点配置
+                // 将永久丢失且无从恢复
+                let bak = dir.join("config.toml.bak");
+                match std::fs::rename(&path, &bak) {
+                    Ok(()) => tracing::warn!(
+                        "解析配置失败({e})，原文件已备份为 {}，使用默认配置",
+                        bak.display()
+                    ),
+                    Err(be) => tracing::warn!(
+                        "解析配置失败({e})，且备份原文件失败({be})，使用默认配置"
+                    ),
+                }
                 Self::default()
             }),
             Err(_) => Self::default(),

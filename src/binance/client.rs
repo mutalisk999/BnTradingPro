@@ -3,11 +3,11 @@
 use crate::binance::{endpoints, Market, Side};
 use crate::config::ProxyConfig;
 use hmac::{Hmac, Mac};
+use parking_lot::Mutex;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::Sha256;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use zeroize::Zeroizing;
@@ -232,7 +232,7 @@ impl BinanceRest {
     async fn wait_for_weight(&self, market: Market) -> Result<(), BinanceError> {
         let i = market as usize;
         let wait = {
-            let mut window = self.weight_window[i].lock().unwrap();
+            let mut window = self.weight_window[i].lock();
             match *window {
                 None => None,
                 Some(start) => {
@@ -256,7 +256,7 @@ impl BinanceRest {
                 wait
             );
             tokio::time::sleep(wait).await;
-            let mut window = self.weight_window[i].lock().unwrap();
+            let mut window = self.weight_window[i].lock();
             *window = None;
             self.weight_used[i].store(0, Ordering::Relaxed);
         }
@@ -274,7 +274,7 @@ impl BinanceRest {
         {
             let i = market as usize;
             self.weight_used[i].store(w, Ordering::Relaxed);
-            let mut window = self.weight_window[i].lock().unwrap();
+            let mut window = self.weight_window[i].lock();
             if window.is_none() {
                 *window = Some(std::time::Instant::now());
             }
