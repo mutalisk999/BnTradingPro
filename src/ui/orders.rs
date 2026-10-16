@@ -341,6 +341,30 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
     }
 }
 
+/// 仓位止盈/止损触发价：v3 positionRisk 实测不返回 takeProfit/stopLos，
+/// 从挂单中的整仓条件单推导（TP/SL 按钮提交的就是这类单）——
+/// TAKE_PROFIT_MARKET → 止盈、STOP_MARKET → 止损（触发价即 stopPrice，
+/// 与持仓方向无关）。positionRisk 的同名字段（若未来恢复返回）作为兜底；
+/// 对冲模式下按 positionSide 匹配，单向模式（BOTH）接受全部
+fn pos_tpsl(p: &PositionRisk, open: &[crate::binance::model::OrderInfo]) -> (Decimal, Decimal) {
+    let mut tp = p.take_profit;
+    let mut sl = p.stop_loss;
+    for o in open.iter().filter(|o| o.symbol == p.symbol && o.status == "NEW") {
+        let side_ok =
+            o.position_side == "BOTH" || p.side == "BOTH" || o.position_side == p.side;
+        if !side_ok {
+            continue;
+        }
+        let Some(sp) = o.stop_price else { continue };
+        match o.order_type.as_str() {
+            "TAKE_PROFIT_MARKET" => tp = sp,
+            "STOP_MARKET" => sl = sp,
+            _ => continue,
+        }
+    }
+    (tp, sl)
+}
+
 /// 合约持仓
 pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
@@ -362,8 +386,9 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
         );
         return;
     }
-    let (positions, dual) = {
+    let (positions, dual, fut_open) = {
         let a = state.acct.lock();
+        let fut_open = state.orders.lock().open(market).clone();
         (
             a.fut_positions
                 .iter()
@@ -371,6 +396,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                 .cloned()
                 .collect::<Vec<PositionRisk>>(),
             a.fut_dual_side,
+            fut_open,
         )
     };
     theme::form_row(ui, |ui| {
@@ -567,9 +593,11 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                         });
                         row.col(|ui| {
                             // 仓位止盈/止损触发价（0 = 未设置）：止盈用涨色、
-                            // 止损用跌色，未设置显示 —。两值由 v3 positionRisk
-                            // 返回，与 TP/SL 按钮提交的条件单同源
-                            if p.take_profit.is_zero() && p.stop_loss.is_zero() {
+                            // 止损用跌色，未设置显示 —。v3 positionRisk 实测
+                            // 不返回该字段，从挂单中的整仓条件单推导（与
+                            // TP/SL 按钮提交的单子同源）
+                            let (tp_px, sl_px) = pos_tpsl(p, &fut_open);
+                            if tp_px.is_zero() && sl_px.is_zero() {
                                 widgets::num_cell(ui, "—".into(), None);
                             } else {
                                 let dp = pxd(&p.symbol);
@@ -577,15 +605,15 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
-                                        let tp = if p.take_profit.is_zero() {
+                                        let tp = if tp_px.is_zero() {
                                             "—".to_string()
                                         } else {
-                                            widgets::fmt_dec_fixed(&p.take_profit, dp)
+                                            widgets::fmt_dec_fixed(&tp_px, dp)
                                         };
-                                        let sl = if p.stop_loss.is_zero() {
+                                        let sl = if sl_px.is_zero() {
                                             "—".to_string()
                                         } else {
-                                            widgets::fmt_dec_fixed(&p.stop_loss, dp)
+                                            widgets::fmt_dec_fixed(&sl_px, dp)
                                         };
                                         // RTL 先加的贴最右：自左向右呈 止盈 / 止损，
                                         // 与表头「仓位止盈止损」语序一致

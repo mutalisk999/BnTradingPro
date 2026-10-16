@@ -827,16 +827,19 @@ async fn handle_cmd(
                     }
                 }
                 if let Ok(v) = p {
-                    if let Ok(mut list) = serde_json::from_value::<Vec<PositionRisk>>(v) {
-                        // v3 响应无 leverage 字段（默认 0）：从 fut_leverage 补齐，
-                        // 供持仓表杠杆列展示
-                        let mut acct = state.acct.lock();
-                        for r in &mut list {
-                            if let Some(l) = acct.fut_leverage.get(&r.symbol) {
-                                r.leverage = *l;
+                    match serde_json::from_value::<Vec<PositionRisk>>(v) {
+                        Ok(mut list) => {
+                            // v3 响应无 leverage 字段（默认 0）：从 fut_leverage 补齐，
+                            // 供持仓表杠杆列展示
+                            let mut acct = state.acct.lock();
+                            for r in &mut list {
+                                if let Some(l) = acct.fut_leverage.get(&r.symbol) {
+                                    r.leverage = *l;
+                                }
                             }
+                            acct.fut_positions = list;
                         }
-                        acct.fut_positions = list;
+                        Err(e) => tracing::warn!("解析 positionRisk 失败: {e}"),
                     }
                 }
                 if let Ok(v) = d {
@@ -2106,32 +2109,51 @@ async fn user_ws_loop(
             }
         };
         let lk_path = market.listen_key_path();
-        let key = match client
-            .key_auth(reqwest::Method::POST, rc, &cfg, lk_path, &[])
-            .await
-        {
-            Ok(v) => v
-                .get("listenKey")
-                .and_then(|x| x.as_str())
-                .map(|s| s.to_string()),
-            Err(e) => {
-                tracing::warn!("listenKey 获取失败({market}): {e}");
-                state.set_user_ws(market, ConnState::Failed(e.friendly()));
-                repaint(&ctx);
-                tokio::time::sleep(Duration::from_secs(10)).await;
-                continue;
+        // 用户数据流连接：现货 listenKey REST 端点已下线（2026-02-20 起
+        // 410 Gone），改为连 WS API 后以 userDataStream.subscribe.signature
+        // 订阅私有事件；期货仍走 listenKey（2026-03 起私有事件在
+        // /private/ws/<listenKey>，legacy 入口已停止推送）
+        let (url, mut sub_msg) = match market {
+            Market::Spot => {
+                let msg = match client.spot_user_sub_message(cfg.recv_window_ms) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::warn!("用户流订阅消息构建失败({market}): {e}");
+                        state.set_user_ws(market, ConnState::Failed(e.friendly()));
+                        repaint(&ctx);
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        continue;
+                    }
+                };
+                (
+                    crate::binance::ws_api_spot(cfg.testnet).to_string(),
+                    Some(msg),
+                )
             }
-        };
-        let Some(key) = key else {
-            state.set_user_ws(market, ConnState::Failed("listenKey 响应异常".into()));
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            continue;
-        };
-        // 用户数据流 URL：现货走 legacy /ws/<listenKey>；期货自 2026-03 起
-        // 私有事件迁至 /private/ws/<listenKey>（legacy 入口已停止推送）
-        let url = match market {
-            Market::UmFutures => format!("{}/private/ws/{}", ep.ws, key),
-            Market::Spot => format!("{}/ws/{}", ep.ws, key),
+            Market::UmFutures => {
+                let key = match client
+                    .key_auth(reqwest::Method::POST, rc, &cfg, lk_path, &[])
+                    .await
+                {
+                    Ok(v) => v
+                        .get("listenKey")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string()),
+                    Err(e) => {
+                        tracing::warn!("listenKey 获取失败({market}): {e}");
+                        state.set_user_ws(market, ConnState::Failed(e.friendly()));
+                        repaint(&ctx);
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        continue;
+                    }
+                };
+                let Some(key) = key else {
+                    state.set_user_ws(market, ConnState::Failed("listenKey 响应异常".into()));
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    continue;
+                };
+                (format!("{}/private/ws/{}", ep.ws, key), None)
+            }
         };
         // 建连前采样版本号：循环顶部比对，避免被高频事件饿死
         let last_seen = last_version(&state);
@@ -2146,24 +2168,92 @@ async fn user_ws_loop(
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
             Ok(ws) => {
-                tracing::info!("用户数据流已连接({market})");
                 let connected_at = std::time::Instant::now();
+                let (mut write, mut read) = futures_util::StreamExt::split(ws);
+                // 现货：建连后发送订阅请求并等待同 id 确认（status 200）；
+                // 期货无订阅握手，连上即已生效
+                if let Some(msg) = sub_msg.take() {
+                    use tokio_tungstenite::tungstenite::Message;
+                    let sub_id =
+                        msg.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let handshake = async {
+                        write.send(Message::text(msg.to_string())).await.map_err(|e| e.to_string())?;
+                        loop {
+                            match read.next().await {
+                                None => return Err("连接中断".to_string()),
+                                Some(Err(e)) => return Err(e.to_string()),
+                                Some(Ok(Message::Text(t))) => {
+                                    let Ok(d) = serde_json::from_str::<serde_json::Value>(&t) else {
+                                        continue;
+                                    };
+                                    if d.get("id").and_then(|x| x.as_str()) != Some(sub_id.as_str()) {
+                                        continue;
+                                    }
+                                    let status =
+                                        d.get("status").and_then(|x| x.as_i64()).unwrap_or(0);
+                                    if status == 200 {
+                                        tracing::info!(
+                                            "现货用户流订阅确认 {}",
+                                            d.pointer("/result/subscriptionId")
+                                                .map(|x| x.to_string())
+                                                .unwrap_or_default()
+                                        );
+                                        return Ok(());
+                                    }
+                                    // 错误体顶层或 error 子对象均有出现（不同版本行为）
+                                    let err =
+                                        d.get("error").cloned().unwrap_or_else(|| d.clone());
+                                    let code =
+                                        err.get("code").and_then(|x| x.as_i64()).unwrap_or(0);
+                                    let m = err
+                                        .get("msg")
+                                        .and_then(|x| x.as_str())
+                                        .unwrap_or("未知错误")
+                                        .to_string();
+                                    return Err(format!("({code}) {m}"));
+                                }
+                                Some(Ok(_)) => continue,
+                            }
+                        }
+                    };
+                    match tokio::time::timeout(Duration::from_secs(15), handshake).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => {
+                            tracing::warn!("现货用户流订阅失败: {e}");
+                            state.set_user_ws(market, ConnState::Failed(short_err(&e)));
+                            repaint(&ctx);
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            continue;
+                        }
+                        Err(_) => {
+                            tracing::warn!("现货用户流订阅确认超时");
+                            state
+                                .set_user_ws(market, ConnState::Failed("订阅确认超时".into()));
+                            repaint(&ctx);
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            continue;
+                        }
+                    }
+                }
+                tracing::info!("用户数据流已连接({market})");
                 state.set_user_ws(market, ConnState::Connected);
                 repaint(&ctx);
                 // 重连后立即对账
                 engine_tx.send(Command::RefreshAccount).ok();
                 engine_tx.send(Command::RefreshOpenOrders { market }).ok();
 
-                let (_, mut read) = futures_util::StreamExt::split(ws);
-                let mut keepalive = tokio::time::interval(Duration::from_secs(25 * 60));
+                // 保活：期货 REST PUT listenKey（25min，listenKey 60min 有效期）；
+                // 现货无 listenKey，改为每 2min 发一个轻量无签请求 session.status
+                // ——既防中间设备空闲断连，其响应帧也喂饱 300s 空闲看门狗
+                // （静默账户不会因无事件而被误判半开）
+                let keepalive_period = match market {
+                    Market::Spot => Duration::from_secs(120),
+                    Market::UmFutures => Duration::from_secs(25 * 60),
+                };
+                let mut keepalive = tokio::time::interval(keepalive_period);
                 keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 // interval 首个 tick 立即完成，先消费掉，避免建连即触发保活
                 keepalive.tick().await;
-                // 现货 PUT/DELETE 需携带 listenKey 参数，合约端点无参
-                let keepalive_params: Vec<(&str, &str)> = match market {
-                    Market::Spot => vec![("listenKey", key.as_str())],
-                    Market::UmFutures => vec![],
-                };
                 let mut alive = true;
                 // 空闲看门狗基准：每收到一帧（含协议 ping/pong）更新一次。
                 // 旧实现在 select! 里同时挂 300s sleep 与 5s sleep——每次迭代
@@ -2201,9 +2291,36 @@ async fn user_ws_loop(
                             }
                         },
                         _ = keepalive.tick() => {
-                            if let Err(e) = client.key_auth(reqwest::Method::PUT, rc, &cfg, lk_path, &keepalive_params).await {
-                                tracing::warn!("listenKey 保活失败({market}): {e}，将重建");
-                                alive = false;
+                            match market {
+                                Market::Spot => {
+                                    let ts_ms = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_millis() as i64)
+                                        .unwrap_or(0);
+                                    let ka = serde_json::json!({
+                                        "id": format!("btp-ka-{ts_ms}"),
+                                        "method": "session.status",
+                                        "params": {},
+                                    });
+                                    if let Err(e) = write
+                                        .send(tokio_tungstenite::tungstenite::Message::text(
+                                            ka.to_string(),
+                                        ))
+                                        .await
+                                    {
+                                        tracing::warn!("用户数据流保活发送失败({market}): {e}，将重建");
+                                        alive = false;
+                                    }
+                                }
+                                Market::UmFutures => {
+                                    if let Err(e) = client
+                                        .key_auth(reqwest::Method::PUT, rc, &cfg, lk_path, &[])
+                                        .await
+                                    {
+                                        tracing::warn!("listenKey 保活失败({market}): {e}，将重建");
+                                        alive = false;
+                                    }
+                                }
                             }
                         }
                         _ = tokio::time::sleep(Duration::from_secs(5)) => {
@@ -2219,14 +2336,31 @@ async fn user_ws_loop(
                         }
                     }
                 }
-                // 尽力关闭 listenKey
-                let close_params: Vec<(&str, &str)> = match market {
-                    Market::Spot => vec![("listenKey", key.as_str())],
-                    Market::UmFutures => vec![],
-                };
-                let _ = client
-                    .key_auth(reqwest::Method::DELETE, rc, &cfg, lk_path, &close_params)
-                    .await;
+                // 尽力收尾：期货 DELETE listenKey；现货退订（断连本身也会
+                // 结束订阅，失败忽略）
+                match market {
+                    Market::Spot => {
+                        let ts_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(0);
+                        let _ = write
+                            .send(tokio_tungstenite::tungstenite::Message::text(
+                                serde_json::json!({
+                                    "id": format!("btp-usunsub-{ts_ms}"),
+                                    "method": "userDataStream.unsubscribe",
+                                    "params": {},
+                                })
+                                .to_string(),
+                            ))
+                            .await;
+                    }
+                    Market::UmFutures => {
+                        let _ = client
+                            .key_auth(reqwest::Method::DELETE, rc, &cfg, lk_path, &[])
+                            .await;
+                    }
+                }
                 // 连接未稳定（<2min）即断开 → 额外退避，避免重连风暴；正常 2s 即可
                 if connected_at.elapsed() < Duration::from_secs(120) {
                     tokio::time::sleep(Duration::from_secs(5)).await;

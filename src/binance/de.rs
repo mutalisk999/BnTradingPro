@@ -22,6 +22,19 @@ pub fn opt_dec<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Decimal>, D::Er
     }
 }
 
+/// 数值字段容错归零：null / 空串 / 非数值一律得 0（用于「0 = 未设置」语义的
+/// 可缺省数值字段，如 positionRisk 的仓位止盈止损触发价）。
+/// 不可用 `dec`（null 直接报错、会拖垮整个列表的解析）也不可用
+/// `default`（只兜底键缺失，兜不住键存在但值为 null 的情形）
+pub fn dec0<'de, D: Deserializer<'de>>(d: D) -> Result<Decimal, D::Error> {
+    let v = Value::deserialize(d)?;
+    Ok(match &v {
+        Value::Null => Decimal::ZERO,
+        Value::String(s) if s.trim().is_empty() => Decimal::ZERO,
+        _ => value_to_dec(&v).unwrap_or(Decimal::ZERO),
+    })
+}
+
 pub fn value_to_dec(v: &Value) -> Option<Decimal> {
     match v {
         Value::String(s) => Decimal::from_str_exact(s.trim()).ok(),

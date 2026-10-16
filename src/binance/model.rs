@@ -3,7 +3,7 @@
 //! 字段集合刻意保持完整（含当前 UI 未展示的字段），故豁免 dead_code。
 #![allow(dead_code)]
 
-use crate::binance::de::{dec, opt_dec};
+use crate::binance::de::{dec, dec0, opt_dec};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 
@@ -212,12 +212,14 @@ pub struct PositionRisk {
     pub leverage: Decimal,
     #[serde(rename = "positionSide", default)]
     pub side: String,
-    /// 仓位止盈触发价（0 = 未设置；由 v3 positionRisk 返回，键缺失时为 0）
-    #[serde(rename = "takeProfit", default)]
+    /// 仓位止盈触发价（0 = 未设置）：生产 v3 positionRisk 实测不返回
+    /// takeProfit 字段，此解析仅作未来恢复返回时的兜底；展示层以挂单中的
+    /// 整仓条件单推导为准（见 ui/orders.rs pos_tpsl）
+    #[serde(rename = "takeProfit", deserialize_with = "dec0", default)]
     pub take_profit: Decimal,
-    /// 仓位止损触发价（0 = 未设置；官方键名拼写为 stopLos，此处兼容
-    /// stopLoss 写法与键缺失两种回退，解析不会因字段差异整体失败）
-    #[serde(alias = "stopLos", alias = "stopLoss", default)]
+    /// 仓位止损触发价（0 = 未设置）：同上，兼容 stopLos/stopLoss 两种
+    /// 键名写法，键缺失/null/空串归 0
+    #[serde(alias = "stopLos", alias = "stopLoss", deserialize_with = "dec0", default)]
     pub stop_loss: Decimal,
 }
 
@@ -573,6 +575,15 @@ mod tests {
         .unwrap();
         assert_eq!(p.take_profit.to_string(), "0");
         assert_eq!(p.stop_loss.to_string(), "0");
+
+        // TP/SL 为 null/空串：归 0，不破坏整体解析（真实接口未设置时可能如此返回）
+        let p: PositionRisk = serde_json::from_str(
+            r#"{"symbol":"XRPUSDT","positionAmt":"100","entryPrice":"2.5","markPrice":"2.6",
+            "unRealizedProfit":"1","liquidationPrice":"0","takeProfit":null,"stopLos":""}"#,
+        )
+        .unwrap();
+        assert!(p.take_profit.is_zero());
+        assert!(p.stop_loss.is_zero());
 
         let raw = r#"{"feeTier":0,"canTrade":true,"totalWalletBalance":"105.1","totalUnrealizedProfit":"-1.2",
             "totalMarginBalance":"103.9","availableBalance":"88.5","maxWithdrawAmount":"77",

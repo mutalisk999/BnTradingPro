@@ -539,6 +539,40 @@ impl BinanceRest {
             .map_err(|_| BinanceError::Timeout)?;
         r
     }
+
+    /// 现货 WS API 用户数据流订阅消息（userDataStream.subscribe.signature）。
+    /// listenKey REST 端点已下线（2026-02-20 起 410 Gone），现货私有事件改为
+    /// 连 WS API 后用此方法订阅——HMAC/RSA/Ed25519 key 均可，无需 Ed25519
+    /// session.logon。返回可直接发送的 JSON 消息。
+    /// params 是对象：serde_json Map 序列化后按键字典序排列，故签名串同样
+    /// 按字典序构建（apiKey < recvWindow < timestamp），服务端无论按收到
+    /// 键序还是排序重放，签名都一致
+    pub fn spot_user_sub_message(&self, recv_window_ms: u64) -> Result<Value, BinanceError> {
+        let key = self.api_key.as_ref().ok_or(BinanceError::NoCreds)?;
+        let secret = self.api_secret.as_ref().ok_or(BinanceError::NoCreds)?;
+        let ts = self.signed_now_ms();
+        let key = key.as_str();
+        let mut payload = format!("apiKey={key}");
+        if recv_window_ms > 0 {
+            payload.push_str(&format!("&recvWindow={recv_window_ms}"));
+        }
+        payload.push_str(&format!("&timestamp={ts}"));
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC 密钥无长度限制");
+        mac.update(payload.as_bytes());
+        let sig = hex::encode(mac.finalize().into_bytes());
+        let mut obj = serde_json::Map::new();
+        obj.insert("apiKey".into(), Value::String(key.to_string()));
+        if recv_window_ms > 0 {
+            obj.insert("recvWindow".into(), Value::from(recv_window_ms));
+        }
+        obj.insert("signature".into(), Value::String(sig));
+        obj.insert("timestamp".into(), Value::from(ts));
+        Ok(serde_json::json!({
+            "id": format!("btp-ussub-{ts}"),
+            "method": "userDataStream.subscribe.signature",
+            "params": obj,
+        }))
+    }
 }
 
 /// 组装待签查询串并附 HMAC-SHA256 签名（纯函数，便于测试）。

@@ -115,6 +115,16 @@ pub fn ws_api_order(testnet: bool) -> &'static str {
     }
 }
 
+/// 现货 WS API（用户数据流订阅）端点：listenKey 体系下线（2026-02-20）后
+/// 现货私有事件改走此入口，同样不走覆盖配置
+pub fn ws_api_spot(testnet: bool) -> &'static str {
+    if testnet {
+        "wss://testnet.binance.vision/ws-api/v3"
+    } else {
+        "wss://ws-api.binance.com:443/ws-api/v3"
+    }
+}
+
 /// K 线周期
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Interval {
