@@ -4,7 +4,7 @@ use crate::binance::client::OrderRequest;
 use crate::binance::{FutPosSide, Interval, Market, Side};
 use crate::config::{self, AppConfig};
 use crate::engine::state::SharedState;
-use crate::engine::{Command, Engine};
+use crate::engine::Command;
 use crate::security::vault;
 use crate::ui::{chart, orders, settings, theme, trade, unlock, widgets};
 use eframe::egui;
@@ -189,7 +189,6 @@ impl SettingsDraft {
 
 pub struct BnApp {
     pub state: Arc<SharedState>,
-    pub engine: Engine,
 
     pub phase: Phase,
     /// 主密码/密钥输入缓冲：Zeroizing 保证 drop 时清零堆内存，
@@ -234,14 +233,6 @@ pub struct BnApp {
     pub row_cancel_armed: Option<i64>,
     /// Ctrl+Shift+C 连按确认：(交易对, 武装时刻)，4 秒窗口内第二次按下才执行
     pub shortcut_cancel_armed: Option<(String, std::time::Instant)>,
-    /// 订单历史版本化缓存：history 只在引擎刷新时变化（每条十余个 String），
-    /// 版本不变直接复用 Arc，跳过每帧全量深拷贝
-    pub history_cache: Option<(
-        u64,
-        std::sync::Arc<Vec<crate::binance::model::OrderInfo>>,
-    )>,
-    /// 成交历史的同名缓存
-    pub trades_cache: Option<(u64, std::sync::Arc<Vec<crate::binance::model::MyTrade>>)>,
     /// 持仓行内 TP/SL 弹窗：(symbol, 多头?, 持仓方向, 止损触发价, 止盈触发价)
     pub tpsl_edit: Option<(String, bool, FutPosSide, String, String)>,
     /// 价格预警弹窗开关（页头铃铛）
@@ -288,7 +279,7 @@ impl BnApp {
         let dir = config::data_dir();
         let state = Arc::new(SharedState::default());
         *state.cfg.write() = cfg.clone();
-        let engine = crate::engine::spawn(cc.egui_ctx.clone(), Arc::clone(&state));
+        crate::engine::spawn(cc.egui_ctx.clone(), Arc::clone(&state));
 
         let phase = if vault::vault_exists(dir) {
             Phase::Unlock
@@ -308,7 +299,6 @@ impl BnApp {
         let default_symbol = cfg.default_symbol.to_uppercase();
         Self {
             state,
-            engine,
             phase,
             master: None,
             pw1: Zeroizing::default(),
@@ -335,8 +325,6 @@ impl BnApp {
             sym_cancel_armed: None,
             row_cancel_armed: None,
             shortcut_cancel_armed: None,
-            history_cache: None,
-            trades_cache: None,
             tpsl_edit: None,
             alerts_open: false,
             alert_input: String::new(),
@@ -521,6 +509,7 @@ impl BnApp {
         self.market_cancel_armed = false;
         self.sym_cancel_armed = None;
         self.row_cancel_armed = None;
+        self.shortcut_cancel_armed = None;
         // 切换顶层页签退出图表最大化：资产/设置页没有图表，残留状态会让
         // 交易页在下次进入时仍处于全屏、找不到还原按钮以外的面板
         self.chart_maximized = false;
@@ -849,7 +838,7 @@ impl BnApp {
                 // 首次按下，重新武装，杜绝"多久之前误按一次后被补键撤销"
                 let primed = matches!(
                     self.shortcut_cancel_armed,
-                    Some((ref s, t)) if *s == sym && now.duration_since(t).as_secs_f64() < 4.0
+                    Some((ref s, t)) if *s == sym && now.duration_since(t) < Duration::from_secs(4)
                 );
                 if primed {
                     self.shortcut_cancel_armed = None;
@@ -1248,34 +1237,23 @@ impl BnApp {
             let c = self.confirm.take().unwrap();
             // 入队即置忙（引擎负责释放）：覆盖"下单命令排队在被卡住的刷新
             // 之后"的窗口，期间提交按钮禁用，防止双击双单。
-            // OCO 单条命令提交；多单（主单+附加止盈止损）顺序入队
+            // OCO 单条命令提交；多单（主单+附加止盈止损）顺序入队。
+            // send_cmd 失败时（引擎命令循环已退出）由它统一报错，
+            // 这里只需回滚 busy，否则提交键永久禁用
             self.state.set_busy("place", true);
-            let mut failed = false;
+            let mut ok = true;
             if let Some(oco) = c.oco {
-                if !self.engine.send(Command::PlaceOco { req: oco }) {
-                    failed = true;
-                }
+                ok &= self.state.send_cmd(Command::PlaceOco { req: oco });
             } else {
                 for req in c.reqs {
-                    if !self
-                        .engine
-                        .send(Command::PlaceOrder {
-                            market: c.market,
-                            req,
-                        })
-                    {
-                        failed = true;
-                    }
+                    ok &= self.state.send_cmd(Command::PlaceOrder {
+                        market: c.market,
+                        req,
+                    });
                 }
             }
-            if failed {
-                // send 失败 = 命令循环已退出：引擎收不到本单，也不会释放
-                // busy。立即回滚 busy 并提示，否则提交键永久禁用且无解释
+            if !ok {
                 self.state.set_busy("place", false);
-                self.state.push_toast(
-                    crate::engine::state::ToastKind::Err,
-                    crate::i18n::tr("引擎已断开，下单未提交").to_string(),
-                );
             }
         } else if !keep || cancel {
             self.confirm = None;

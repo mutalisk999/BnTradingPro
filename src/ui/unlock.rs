@@ -231,7 +231,6 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
                     Err(_) => false,
                 };
                 if gone {
-                    app.state.invalidate_vault_exists();
                     app.pw1.clear();
                     app.pw2.clear();
                     app.pw_err.clear();
@@ -272,9 +271,7 @@ fn try_unlock(app: &mut BnApp) {
 /// 无凭据库时主密码与密钥一体设置；已有凭据库时需先输入现有主密码。
 fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
     let dir = config::data_dir();
-    // 存在性走带缓存的访问器（与设置页一致）：本页每帧重绘，裸 stat 是
-    // 无谓的系统调用；建库后由 save_keys 失效缓存
-    let vault_exists = app.state.vault_exists();
+    let vault_exists = vault::vault_exists(dir);
     let testnet = app.state.cfg.read().testnet;
     // 紧凑表单：默认 8px 行间距压到 3px，标签与输入框、按钮与跳过行都更贴近
     ui.spacing_mut().item_spacing.y = 3.0;
@@ -371,8 +368,9 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         && !app.api_secret.trim().is_empty()
         && (!need_master || !app.pw1.trim().is_empty());
     let mut do_save = false;
-    // 禁用时给出具体原因：首屏主按钮灰掉而不知所以是最劝退的体验
-    // （覆盖 btn_primary 的通用提示）
+    // 禁用时给出具体原因：首屏主按钮灰掉而不知所以是最劝退的体验。
+    // （btn_primary 不预置通用提示——on_disabled_hover_text 堆叠不覆盖，
+    // 这里是唯一提示源）
     let save_btn = theme::btn_primary(ui, crate::i18n::tr("保存并连接"), can_save);
     let save_btn = if can_save {
         save_btn
@@ -454,7 +452,6 @@ fn save_keys(app: &mut BnApp, dir: &std::path::Path, vault_exists: bool) {
             }
             match vault::save_creds(dir, &pw, &creds) {
                 Ok(()) => {
-                    app.state.invalidate_vault_exists();
                     app.state.set_creds(Some(creds));
                     app.api_key.clear();
                     app.api_secret.clear();

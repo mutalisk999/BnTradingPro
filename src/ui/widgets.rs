@@ -107,8 +107,9 @@ pub fn glyph_button(
 /// 弹性填宽数字输入框：desired_width 取本行剩余可用宽减去 tail（行尾
 /// 伴随控件的总宽），输入框总是占满行内空隙、右缘与伴随控件对齐。
 /// fixed 120 宽在任意面板宽下右缘参差不齐；flex 后面板宽变化亦成列。
-/// 返回 Response：调用方可据此响应 .changed() / .lost_focus()，
-/// 而不必每帧重解析输入串（此前 show 返回 ()，编辑信号被结构性丢弃）
+/// 返回 Response 供调用方按需响应 .changed() / .lost_focus()
+/// （现有调用方仍每帧重解析输入串，返回值是为接线的场景留的——
+/// 此前 show 返回 ()，编辑信号被结构性丢弃，接线也静默失效）
 pub fn num_field_flex(
     ui: &mut egui::Ui,
     id: &str,

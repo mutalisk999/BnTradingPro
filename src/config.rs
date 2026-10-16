@@ -197,3 +197,68 @@ pub fn data_dir() -> &'static std::path::Path {
             .join("BnTradingPro")
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_dir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "btp_config_test_{tag}_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// save 成功后 load 必须原样读回：Result 契约的 happy path
+    #[test]
+    fn save_roundtrips_through_load() {
+        let dir = tmp_dir("roundtrip");
+        let cfg = AppConfig {
+            testnet: false,
+            default_symbol: "ETHUSDT".into(),
+            favorites_spot: vec!["BTCUSDT".into(), "ETHUSDT".into()],
+            alerts: vec![AlertConfig {
+                market: 1,
+                symbol: "BTCUSDT".into(),
+                price: rust_decimal::Decimal::from_str_exact("86997.7").unwrap(),
+                above: true,
+            }],
+            ..AppConfig::default()
+        };
+        cfg.save(&dir).expect("save 应当成功");
+
+        let path = dir.join("config.toml");
+        assert!(path.exists(), "save 成功后 config.toml 必须存在");
+        let back = AppConfig::load(&dir);
+        assert!(!back.testnet);
+        assert_eq!(back.default_symbol, "ETHUSDT");
+        assert_eq!(back.favorites_spot, cfg.favorites_spot);
+        assert_eq!(back.alerts.len(), 1);
+        assert_eq!(back.alerts[0].symbol, "BTCUSDT");
+        assert_eq!(back.alerts[0].price.to_string(), "86997.7");
+    }
+
+    /// save 的失败路径必须返回 Err 而非 panic 或静默吞错：
+    /// 目标路径已被一个普通文件占据时 create_dir_all/write 必然失败
+    #[test]
+    fn save_returns_err_when_blocked() {
+        let parent = tmp_dir("blocked");
+        // 占位"目录"其实是一个普通文件 → join 后的 config.toml 无法写入
+        let blocker = parent.join("blocked_dir");
+        std::fs::write(&blocker, "not a directory").unwrap();
+        let cfg = AppConfig::default();
+        assert!(cfg.save(&blocker).is_err(), "写入被阻截时 save 必须返回 Err");
+    }
+
+    /// data_dir 会话级稳定：每帧调用必须命中同一分配，
+    /// 否则 OnceLock 缓存失效、设置页各处拿到不同路径
+    #[test]
+    fn data_dir_is_stable_within_session() {
+        assert!(std::ptr::eq(data_dir(), data_dir()));
+    }
+}

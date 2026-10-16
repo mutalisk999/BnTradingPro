@@ -353,7 +353,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     app.api_secret.clear();
                     app.phase = Phase::EnterKeys;
                 }
-                if state.vault_exists() {
+                if vault::vault_exists(dir) {
                     // 破坏性操作两步确认：误点一次不会直接销毁唯一的本地密钥副本
                     let armed = app.vault_delete_armed;
                     let del = theme::btn_danger(
@@ -376,7 +376,6 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                                 Err(_) => false,
                             };
                             if gone {
-                                state.invalidate_vault_exists();
                                 state.set_creds(None);
                                 state.push_toast(
                                     ToastKind::Info,

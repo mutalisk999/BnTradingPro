@@ -173,6 +173,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "其他" => "Other",
         "只减" => " RO",
         "触发" => "Trigger",
+        "整仓" => "Close-All",
         "金额" => "Value",
         "手续费" => "Fee",
         "角色" => "Role",
@@ -314,8 +315,9 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "取消" => "Cancel",
         "上一笔请求处理中…" => "Previous request in progress…",
         "请先修正表单中标红的错误" => "Fix the highlighted form errors first",
-        // 禁用主按钮的通用原因（unlock/settings 保存键；具体场景可自行覆盖）
-        "表单未填写完整或有错误" => "The form is incomplete or has errors",
+        // MA 均线开关状态（tooltip 与可访问名字共用）
+        "已开" => "On",
+        "已关" => "Off",
         "请填写 API Key 与 Secret" => "Enter the API Key and Secret",
         "请输入主密码与 API Key/Secret" => "Enter the master password and API Key/Secret",
         "点按切换均线，图上叠加 MA5/10/20/60" => "Toggle moving averages (MA5/10/20/60 overlay)",
@@ -490,6 +492,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "止盈/止损" => "TP/SL",
         "止盈 / 止损" => "Take-Profit / Stop-Loss",
         "TP/SL" => "TP/SL",
+        "止盈止损" => "TP/SL",
         "附加止盈" => "Attach TP",
         "附加止损" => "Attach SL",
         "附加止盈/止损（触发后市价全平）" => "Attach TP/SL (market-close all on trigger)",

@@ -801,6 +801,14 @@ impl OrderKind {
             OrderKind::TrailingStop { qty, .. } => *qty,
         }
     }
+
+    /// 合约条件单类型（已迁移至 Algo Order 体系，/fapi/v1/order 报 -4120）
+    pub fn is_conditional(&self) -> bool {
+        matches!(
+            self,
+            OrderKind::StopLimit { .. } | OrderKind::StopMarket { .. } | OrderKind::TrailingStop { .. }
+        )
+    }
 }
 
 /// 构建下单请求参数（不含签名与公共字段）
@@ -881,6 +889,82 @@ pub fn build_order_params(market: Market, req: &OrderRequest) -> Vec<(String, St
     }
     if let Some(cid) = &req.client_id {
         p.push(("newClientOrderId".into(), cid.clone()));
+    }
+    p
+}
+
+/// 构建合约条件单（Algo Order）参数（POST /fapi/v1/algoOrder，不含签名
+/// 与公共字段）。条件单已从 /fapi/v1/order 迁出（报 -4120），与普通单
+/// 的参数名差异：须带 algoType=CONDITIONAL、stopPrice→triggerPrice、
+/// newClientOrderId→clientAlgoId；限价版条件单 type 为 STOP/TAKE_PROFIT
+pub fn build_algo_order_params(req: &OrderRequest) -> Vec<(String, String)> {
+    let mut p: Vec<(String, String)> = vec![
+        ("algoType".into(), "CONDITIONAL".into()),
+        ("symbol".into(), req.symbol.clone()),
+        ("side".into(), req.side.as_str().into()),
+    ];
+    match &req.kind {
+        OrderKind::StopLimit {
+            trigger,
+            price,
+            qty,
+            take_profit,
+        } => {
+            p.push((
+                "type".into(),
+                if *take_profit {
+                    "TAKE_PROFIT".into()
+                } else {
+                    "STOP".into()
+                },
+            ));
+            p.push(("timeInForce".into(), req.tif.as_str().into()));
+            p.push(("quantity".into(), qty.normalize().to_string()));
+            p.push(("price".into(), price.normalize().to_string()));
+            p.push(("triggerPrice".into(), trigger.normalize().to_string()));
+        }
+        OrderKind::StopMarket {
+            trigger,
+            qty,
+            take_profit,
+        } => {
+            p.push((
+                "type".into(),
+                if *take_profit {
+                    "TAKE_PROFIT_MARKET".into()
+                } else {
+                    "STOP_MARKET".into()
+                },
+            ));
+            if req.close_position {
+                // closePosition 语义：触发即全平该持仓方向，与 quantity 互斥
+                p.push(("closePosition".into(), "true".into()));
+            } else {
+                p.push(("quantity".into(), qty.normalize().to_string()));
+            }
+            p.push(("triggerPrice".into(), trigger.normalize().to_string()));
+        }
+        OrderKind::TrailingStop { callback_rate, qty } => {
+            p.push(("type".into(), "TRAILING_STOP_MARKET".into()));
+            p.push(("quantity".into(), qty.normalize().to_string()));
+            p.push(("callbackRate".into(), callback_rate.normalize().to_string()));
+        }
+        _ => unreachable!("仅条件单类型进入 algoOrder 参数构建"),
+    }
+    // 双向持仓必须带 positionSide；单向模式下 closePosition 本身即减仓
+    // 语义，不能再叠加 reduceOnly
+    match req.position_side {
+        crate::binance::FutPosSide::Both => {
+            if req.reduce_only && !req.close_position {
+                p.push(("reduceOnly".into(), "true".into()));
+            }
+        }
+        s => {
+            p.push(("positionSide".into(), s.as_str().into()));
+        }
+    }
+    if let Some(cid) = &req.client_id {
+        p.push(("clientAlgoId".into(), cid.clone()));
     }
     p
 }
@@ -1005,6 +1089,56 @@ mod tests {
         assert!(!p.iter().any(|(k, _)| k == "quantity"));
         // closePosition 本身即减仓语义，不能再叠加 reduceOnly
         assert!(!p.iter().any(|(k, _)| k == "reduceOnly"));
+    }
+
+    #[test]
+    fn build_algo_order_params_conditional_names() {
+        // 整仓止盈：条件单迁至 Algo 体系后参数名差异——algoType=CONDITIONAL、
+        // triggerPrice（非 stopPrice）、clientAlgoId（非 newClientOrderId）
+        let req = OrderRequest {
+            symbol: "BTCUSDT".into(),
+            side: Side::Sell,
+            kind: OrderKind::StopMarket {
+                trigger: Decimal::new(872000, 1),
+                qty: Decimal::ONE,
+                take_profit: true,
+            },
+            tif: Tif::Gtc,
+            position_side: FutPosSide::Both,
+            reduce_only: false,
+            close_position: true,
+            client_id: Some("btp-tpsl-1".into()),
+        };
+        let p = build_algo_order_params(&req);
+        assert!(p.contains(&("algoType".into(), "CONDITIONAL".into())));
+        assert!(p.contains(&("type".into(), "TAKE_PROFIT_MARKET".into())));
+        assert!(p.contains(&("triggerPrice".into(), "87200".into())));
+        assert!(p.contains(&("closePosition".into(), "true".into())));
+        assert!(p.contains(&("clientAlgoId".into(), "btp-tpsl-1".into())));
+        assert!(!p.iter().any(|(k, _)| k == "stopPrice"));
+        assert!(!p.iter().any(|(k, _)| k == "newClientOrderId"));
+        assert!(!p.iter().any(|(k, _)| k == "reduceOnly"));
+
+        // 限价止损：algo 体系 type 为 STOP（非 STOP_LOSS_LIMIT）
+        let req = OrderRequest {
+            symbol: "BTCUSDT".into(),
+            side: Side::Sell,
+            kind: OrderKind::StopLimit {
+                trigger: Decimal::new(850000, 1),
+                price: Decimal::new(849000, 1),
+                qty: Decimal::new(1, 2),
+                take_profit: false,
+            },
+            tif: Tif::Gtc,
+            position_side: FutPosSide::Long,
+            reduce_only: false,
+            close_position: false,
+            client_id: None,
+        };
+        let p = build_algo_order_params(&req);
+        assert!(p.contains(&("type".into(), "STOP".into())));
+        assert!(p.contains(&("positionSide".into(), "LONG".into())));
+        assert!(p.contains(&("quantity".into(), "0.01".into())));
     }
 
     #[test]

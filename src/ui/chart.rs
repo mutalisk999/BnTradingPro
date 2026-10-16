@@ -107,7 +107,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             if resp.hovered() && !on {
                 fill = theme::cur().row_hover;
             }
-            ui.painter().rect_filled(rect, 4.0, fill);
+            ui.painter().rect_filled(rect, f32::from(theme::R_SM), fill);
             ui.painter().galley(
                 rect.center() - galley.size() / 2.0,
                 galley,
@@ -118,15 +118,24 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 },
             );
             let mut resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-            // 每片各自的说明（此前只挂了第一片，MA10/20/60 悬停无任何提示）
-            resp = resp
-                .on_hover_text(crate::i18n::tr("点按切换均线，图上叠加 MA5/10/20/60"));
-            // 自绘热区补可访问名字：键盘 Tab 聚焦后 Enter/Space 亦可触发
-            // （Sense::click 的热区可获焦）
+            // 说明带上当前开关状态：开/关仅靠填充色区分会撞"色即唯一编码"
+            // 的红线，tooltip 与可访问名字都要把状态说出来
+            resp = resp.on_hover_text(format!(
+                "MA{period} · {} · {}",
+                if on {
+                    crate::i18n::tr("已开")
+                } else {
+                    crate::i18n::tr("已关")
+                },
+                crate::i18n::tr("点按切换均线，图上叠加 MA5/10/20/60"),
+            ));
+            // 自绘热区补可访问名字（含开关状态）：键盘 Tab 聚焦后
+            // Enter/Space 亦可触发（Sense::click 的热区可获焦）
             resp.widget_info(|| {
-                egui::WidgetInfo::labeled(
-                    egui::WidgetType::Button,
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
                     true,
+                    on,
                     format!("MA{period}"),
                 )
             });

@@ -114,12 +114,14 @@ pub struct AccountSnap {
 #[derive(Default)]
 pub struct OrdersSnap {
     pub open: [Vec<OrderInfo>; 2],
+    /// 合约条件单（Algo Order 体系：仓位止盈止损/追踪委托等；仅
+    /// UmFutures 填充，现货恒空）
+    pub algo: Vec<AlgoOrderInfo>,
     pub history_symbol: Option<(Market, String)>,
-    pub history: Vec<OrderInfo>,
-    pub trades: Vec<MyTrade>,
-    /// history/trades 内容版本：引擎每次覆盖写入后递增，UI 侧据此
-    /// 跳过每帧全量克隆（各 ~100 条、每条十余个 String 的深拷贝）
-    pub history_version: u64,
+    /// 引擎整体替换 Arc（写方换新实例，读方仅 Arc clone）：
+    /// UI 每帧渲染无需深拷贝 ~100 条 × 十余 String 的历史
+    pub history: std::sync::Arc<Vec<OrderInfo>>,
+    pub trades: std::sync::Arc<Vec<MyTrade>>,
 }
 
 impl OrdersSnap {
@@ -150,9 +152,6 @@ pub struct SharedState {
     pub orders: Mutex<OrdersSnap>,
     pub toasts: Mutex<Vec<Toast>>,
     pub busy: Mutex<HashMap<String, u32>>,
-    /// vault.json 存在性缓存：None = 待重算。设置/配钥页每帧询问，
-    /// 裸 stat 每帧一次系统调用；建库/删库后由相关路径失效
-    vault_exists_cache: Mutex<Option<bool>>,
 
     /// 引擎命令通道（UI 与后台事件共用）
     pub cmd_tx: RwLock<Option<tokio::sync::mpsc::UnboundedSender<crate::engine::Command>>>,
@@ -174,7 +173,6 @@ impl Default for SharedState {
             orders: Mutex::new(OrdersSnap::default()),
             toasts: Mutex::new(Vec::new()),
             busy: Mutex::new(HashMap::new()),
-            vault_exists_cache: Mutex::new(None),
             cmd_tx: RwLock::new(None),
         }
     }
@@ -246,17 +244,23 @@ impl SharedState {
         self.send_cmd(crate::engine::Command::ReloadAll);
     }
 
-    pub fn send_cmd(&self, cmd: crate::engine::Command) {
-        if let Some(tx) = self.cmd_tx.read().as_ref() {
-            if tx.send(cmd).is_err() {
-                // 命令循环已退出（panic 等致命故障）：send 失败此前完全静默，
-                // 用户点击无任何反馈。此处兜底提示——引擎任务监督也会推
-                // "请重启应用"toast，两者叠加保证崩溃可见
-                self.push_toast(
-                    ToastKind::Err,
-                    crate::i18n::tr("引擎已断开，命令未提交").to_string(),
-                );
-            }
+    /// 命令入队是否成功。失败（命令循环已退出、接收端被丢弃）时由本方法
+    /// 统一推错误 toast；调用方负责回滚自己预置的状态（如 confirm_dialog
+    /// 的 busy 标记）——这是命令通道唯一的失败入口，避免提示/回滚策略
+    /// 按调用路径分裂
+    pub fn send_cmd(&self, cmd: crate::engine::Command) -> bool {
+        match self.cmd_tx.read().as_ref() {
+            Some(tx) => match tx.send(cmd) {
+                Ok(()) => true,
+                Err(_) => {
+                    self.push_toast(
+                        ToastKind::Err,
+                        crate::i18n::tr("引擎已断开，命令未提交").to_string(),
+                    );
+                    false
+                }
+            },
+            None => false,
         }
     }
 
@@ -270,9 +274,19 @@ impl SharedState {
 
     pub fn push_toast(&self, kind: ToastKind, msg: impl Into<String>) {
         let mut t = self.toasts.lock();
+        let msg = msg.into();
+        // 相同文本去重：引擎死亡后每个命令（含 WS 重连循环触发的 RefreshKlines）
+        // 都会失败，burst 时一瞬间推出数条相同 toast；命中最新一条同文 toast
+        // 时只刷新存活计时，避免 8 条上限被同噪声刷满闪烁
+        if let Some(last) = t.last_mut() {
+            if last.kind == kind && last.msg == msg {
+                last.at = Instant::now();
+                return;
+            }
+        }
         t.push(Toast {
             kind,
-            msg: msg.into(),
+            msg,
             at: Instant::now(),
         });
         if t.len() > 8 {
@@ -296,24 +310,6 @@ impl SharedState {
 
     pub fn is_busy(&self, key: &str) -> bool {
         self.busy.lock().contains_key(key)
-    }
-
-    /// vault.json 是否存在：带缓存，未命中才 stat。
-    /// 设置页与配钥页每帧调用（~400ms 空闲重绘节拍），此前每次都做
-    /// data_dir 路径推导 + 一次系统调用；结果只在建库/删库时变化
-    pub fn vault_exists(&self) -> bool {
-        let mut c = self.vault_exists_cache.lock();
-        if let Some(v) = *c {
-            return v;
-        }
-        let v = crate::security::vault::vault_exists(crate::config::data_dir());
-        *c = Some(v);
-        v
-    }
-
-    /// 建库/删库后调用，让下一次 vault_exists 重新 stat
-    pub fn invalidate_vault_exists(&self) {
-        *self.vault_exists_cache.lock() = None;
     }
 
     // ---- 行情写入（由后台任务调用） ----

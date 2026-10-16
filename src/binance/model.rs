@@ -304,6 +304,60 @@ pub struct OrderInfo {
     pub reduce_only: bool,
 }
 
+/// 合约条件单（Algo Order 体系，GET /fapi/v1/openAlgoOrders）：
+/// 2025-12-09 起条件单（STOP/TAKE_PROFIT(_MARKET)/TRAILING 等）从
+/// /fapi/v1/order 迁至 Algo Service，openOrders 不再包含——仓位止盈止损、
+/// 追踪委托等活动条件单只能从这里查到；下单 POST /fapi/v1/algoOrder、
+/// 撤单 DELETE /fapi/v1/algoOrder
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct AlgoOrderInfo {
+    #[serde(rename = "algoId", default)]
+    pub algo_id: i64,
+    #[serde(rename = "clientAlgoId", default)]
+    pub client_algo_id: String,
+    #[serde(default)]
+    pub symbol: String,
+    #[serde(default)]
+    pub side: String,
+    #[serde(rename = "positionSide", default)]
+    pub position_side: String,
+    /// 订单类型：STOP_MARKET / TAKE_PROFIT_MARKET / STOP / TAKE_PROFIT /
+    /// TRAILING_STOP_MARKET
+    #[serde(rename = "orderType", default)]
+    pub order_type: String,
+    /// 活动状态：实测活动单为 "NEW"（openAlgoOrders 只返回活动单）
+    #[serde(rename = "algoStatus", default)]
+    pub algo_status: String,
+    /// 条件单类别，当前仅 "CONDITIONAL"
+    #[serde(rename = "algoType", default)]
+    pub algo_type: String,
+    /// 触发价：注意请求参数名同为 triggerPrice（旧端点是 stopPrice）
+    #[serde(rename = "triggerPrice", deserialize_with = "opt_dec", default)]
+    pub trigger_price: Option<Decimal>,
+    #[serde(deserialize_with = "dec0", default)]
+    pub quantity: Decimal,
+    /// 触发后转出的实际订单成交量（未触发为 0）
+    #[serde(rename = "actualQty", deserialize_with = "dec0", default)]
+    pub actual_qty: Decimal,
+    /// 整仓条件单（触发即全平该方向持仓；quantity 为 0 互斥）
+    #[serde(rename = "closePosition", default)]
+    pub close_position: bool,
+    #[serde(rename = "reduceOnly", default)]
+    pub reduce_only: bool,
+    #[serde(rename = "workingType", default)]
+    pub working_type: String,
+    #[serde(rename = "timeInForce", default)]
+    pub time_in_force: String,
+    #[serde(rename = "createTime", default)]
+    pub create_time: i64,
+    #[serde(rename = "updateTime", default)]
+    pub update_time: i64,
+    /// 触发条件是否已激活（TRAILING 用；普通条件单未触发为 false）
+    #[serde(rename = "isActivated", default)]
+    pub is_activated: bool,
+}
+
 /// 成交明细（spot myTrades / fapi userTrades 同构）
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
@@ -592,5 +646,32 @@ mod tests {
             "positions":[{"symbol":"BTCUSDT","initialMargin":"0","maintMargin":"0","positionInitialMargin":"0","openOrderInitialMargin":"0","leverage":"10","isolated":false,"entryPrice":"22185.2","maxNotional":"1000","positionSide":"BOTH","positionAmt":"0.010","notional":"-211.23","isolatedWallet":"0","unrealizedProfit":"-0.106","autoAddMargin":"0"}]}"#;
         let a: FutAccount = serde_json::from_str(raw).unwrap();
         assert_eq!(a.total_wallet.to_string(), "105.1");
+    }
+
+    #[test]
+    fn parse_algo_order_real_sample() {
+        // 生产 openAlgoOrders 实测样本（2026-10-16）：closePosition 整仓止盈，
+        // quantity 为 "0.0"、icebergQuantity 为 null
+        let raw = r#"{"actualOrderId":"","actualQty":"0.0","algoId":4000001954696817,"algoStatus":"NEW","algoType":"CONDITIONAL","clientAlgoId":"aos_eF25BgBHdwZ5d3AZ72qo","closePosition":true,"createTime":1791449695293,"goodTillDate":0,"icebergQuantity":null,"isActivated":false,"orderType":"TAKE_PROFIT_MARKET","positionSide":"LONG","price":"0.0","priceMatch":"NONE","priceProtect":true,"quantity":"0.0","reduceOnly":true,"selfTradePreventionMode":"NONE","side":"SELL","symbol":"BTCUSDT","timeInForce":"GTE_GTC","triggerPrice":"87200.0","triggerTime":0,"updateTime":1791514814391,"workingType":"CONTRACT_PRICE"}"#;
+        let o: AlgoOrderInfo = serde_json::from_str(raw).unwrap();
+        assert_eq!(o.algo_id, 4000001954696817);
+        assert_eq!(o.symbol, "BTCUSDT");
+        assert_eq!(o.order_type, "TAKE_PROFIT_MARKET");
+        assert_eq!(o.algo_status, "NEW");
+        assert_eq!(o.position_side, "LONG");
+        assert_eq!(o.side, "SELL");
+        assert_eq!(o.trigger_price.map(|x| x.to_string()).as_deref(), Some("87200.0"));
+        assert!(o.close_position);
+        assert!(o.quantity.is_zero());
+
+        // null 触发价与缺字段样本：不破坏整体解析
+        let o: AlgoOrderInfo = serde_json::from_str(
+            r#"{"algoId":123,"symbol":"ETHUSDT","side":"BUY","orderType":"STOP_MARKET",
+            "algoStatus":"NEW","triggerPrice":null,"icebergQuantity":null}"#,
+        )
+        .unwrap();
+        assert_eq!(o.algo_id, 123);
+        assert!(o.trigger_price.is_none());
+        assert_eq!(o.create_time, 0);
     }
 }

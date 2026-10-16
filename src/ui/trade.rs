@@ -194,6 +194,48 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     });
     ui.add_space(2.0);
 
+    // ---------- 价格/数量输入框公共尾宽（两行右缘对齐成列） ----------
+    // 尾区宽 = max(一键填价按钮组, 步进标签) + 行内间距 8；两行输入框
+    // 等宽同位，尾部内容各自贴行右缘。按钮组可见性按行内控件区宽度
+    // 折叠（与绘制端同一套阈值）
+    let md_px = {
+        let md = state.md.lock();
+        md.get(market, &symbol).map_or((None, None, None), |m| {
+            (
+                m.depth.bids.first().map(|l| l.price),
+                m.depth.asks.first().map(|l| l.price),
+                m.ticker.as_ref().map(|t| t.last_price),
+            )
+        })
+    };
+    // 行内控件区宽 = 面板内容宽 - 卡片内边距 20 - 标签列 48 - 行内间距 8
+    let row_inner = (ui.available_width() - 76.0).max(0.0);
+    let px_vis = best_px_vis(row_inner, md_px.0, md_px.1, md_px.2);
+    let px_btns_w = best_px_w(ui, px_vis);
+    let step_txt = rule
+        .as_ref()
+        .map(|r| {
+            format!(
+                "{} {}",
+                crate::i18n::tr("步进"),
+                r.step.normalize()
+            )
+        })
+        .unwrap_or_default();
+    let step_w = if step_txt.is_empty() {
+        0.0
+    } else {
+        ui.painter()
+            .layout_no_wrap(
+                step_txt.clone(),
+                egui::FontId::proportional(theme::FONT_SM),
+                theme::cur().text_dim,
+            )
+            .size()
+            .x
+    };
+    let aux_tail = px_btns_w.max(step_w) + 8.0;
+
     // ---------- 订单类型 + 价格数量（合并为一张紧凑卡片） ----------
     egui::Frame::default()
         .fill(theme::cur().card)
@@ -293,8 +335,8 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     ui.checkbox(&mut app.page.form.reduce_only, "");
                 });
             }
-            // 杠杆：拆成两行——信息行（倍数 + 保证金模式徽章）、操作行（输入 + 设定）。
-            // 此前单行塞 杠杆/倍数/全仓/输入/设定 五件，窄面板互相挤压、输入框被压没
+            // 杠杆：倍数、保证金模式徽章、倍数输入与"设定"收进同一行，
+            // 输入弹性吃剩余宽、"设定"贴行右缘（行数更少，与上下表单连成一体）
             let lev = state
                 .acct
                 .lock()
@@ -329,21 +371,17 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         });
                     }
                 }
-            });
-            compact_row(ui, |ui| {
-                // 空标签占位对齐：输入框左缘与其他表单行输入齐平
-                field_label(ui, "");
-                // 弹性填宽：输入吃满"设定"按钮左侧的剩余行宽
+                // "设定"按钮宽度与 btn_ghost 同源（FONT_SM 文本 + 左右 8 padding）
                 let set_w = ui
                     .painter()
                     .layout_no_wrap(
                         crate::i18n::tr("设定").to_string(),
-                        egui::FontId::proportional(theme::FONT_MD),
+                        egui::FontId::proportional(theme::FONT_SM),
                         theme::cur().text,
                     )
                     .size()
                     .x
-                    + 18.0;
+                    + 16.0;
                 widgets::num_field_flex(
                     ui,
                     "lev_in",
@@ -377,20 +415,20 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         ) {
             compact_row(ui, |ui| {
                 field_label(ui, crate::i18n::tr("价格"));
-                // RTL：先放右侧的一键填价按钮，输入框弹性吃掉左侧剩余宽——
-                // 面板无论多宽，输入框右缘总紧贴按钮组
+                // 输入吃掉公共尾宽以外的全部行宽，与数量行右缘成列；
+                // 一键填价按钮组在尾区内贴行右缘
+                widgets::num_field_flex(
+                    ui,
+                    "price_in",
+                    &mut app.page.form.price,
+                    crate::i18n::tr("价格"),
+                    22.0,
+                    aux_tail,
+                );
                 ui.with_layout(
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        best_px_buttons(ui, app, market, &symbol);
-                        widgets::num_field_flex(
-                            ui,
-                            "price_in",
-                            &mut app.page.form.price,
-                            crate::i18n::tr("价格"),
-                            22.0,
-                            6.0,
-                        );
+                        best_px_buttons(ui, app, px_vis, md_px);
                     },
                 );
             });
@@ -431,45 +469,27 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         }
         compact_row(ui, |ui| {
             field_label(ui, crate::i18n::tr("数量"));
-            // 尾部步进标签宽度先量再让输入框弹性填剩余：行宽变化时右缘仍成列
-            let step_txt = rule
-                .as_ref()
-                .map(|r| {
-                    format!(
-                        "{} {}",
-                        crate::i18n::tr("步进"),
-                        r.step.normalize()
-                    )
-                })
-                .unwrap_or_default();
-            let tail = if step_txt.is_empty() {
-                0.0
-            } else {
-                ui.painter()
-                    .layout_no_wrap(
-                        step_txt.clone(),
-                        egui::FontId::proportional(theme::FONT_SM),
-                        theme::cur().text_dim,
-                    )
-                    .size()
-                    .x
-                    + 16.0
-            };
+            // 与价格行共用公共尾宽：输入右缘成列，步进标签贴行右缘
             widgets::num_field_flex(
                 ui,
                 "qty_in",
                 &mut app.page.form.qty,
                 crate::i18n::tr("数量"),
                 22.0,
-                tail,
+                aux_tail,
             );
-            if !step_txt.is_empty() {
-                ui.label(
-                    egui::RichText::new(step_txt)
-                        .size(theme::FONT_SM)
-                        .color(theme::cur().text_dim),
-                );
-            }
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    if !step_txt.is_empty() {
+                        ui.label(
+                            egui::RichText::new(step_txt)
+                                .size(theme::FONT_SM)
+                                .color(theme::cur().text_dim),
+                        );
+                    }
+                },
+            );
         });
 
         // 跟踪委托：回调幅度（百分数，价格回撤该幅度触发市价全平）
@@ -826,29 +846,54 @@ fn compact_row<R>(
     })
 }
 
-/// 价格行一键填值按钮：买一 / 卖一 / 最新价。
-/// 单次短锁取齐三个价格，不在面板构建期间持有 md 锁
-fn best_px_buttons(ui: &mut egui::Ui, app: &mut BnApp, market: Market, symbol: &str) {
-    // 短锁拷贝
-    let (bid, ask, last) = {
-        let md = app.state.md.lock();
-        let Some(md) = md.get(market, symbol) else {
-            return;
-        };
-        (
-            md.depth.bids.first().map(|l| l.price),
-            md.depth.asks.first().map(|l| l.price),
-            md.ticker.as_ref().map(|t| t.last_price),
-        )
-    };
-    // 窄行只显示一个"最新"按钮，买一/卖一随后依次折叠，保证输入框不被挤没
-    let avail = ui.available_width();
-    let mut show_mid = avail > 150.0;
-    let show_ask = avail > 200.0 && ask.is_some();
-    let show_bid = avail > 250.0 && bid.is_some();
+/// 价格行一键填值按钮可见性：买一 / 卖一 / 最新。
+/// 窄行只显示"最新"，买一/卖一随行内控件区宽度依次展开，保证输入框
+/// 不被挤没。与绘制端共用同一判定，测量端据此估算按钮组总宽
+fn best_px_vis(
+    inner_w: f32,
+    bid: Option<Decimal>,
+    ask: Option<Decimal>,
+    _last: Option<Decimal>,
+) -> (bool, bool, bool) {
+    let mut show_mid = inner_w > 150.0;
+    let show_ask = inner_w > 200.0 && ask.is_some();
+    let show_bid = inner_w > 250.0 && bid.is_some();
     if !show_ask && !show_bid {
         show_mid = true;
     }
+    (show_bid, show_ask, show_mid)
+}
+
+/// 可见按钮组总宽（组内间距含，与输入框的间隙不含）。
+/// 单钮宽度与 btn_ghost 同源：FONT_SM 文本宽 + 左右各 8 padding
+fn best_px_w(ui: &egui::Ui, vis: (bool, bool, bool)) -> f32 {
+    let mut n = 0_u32;
+    let mut w = 0.0_f32;
+    for (show, label) in [(vis.0, "买一"), (vis.1, "卖一"), (vis.2, "最新")] {
+        if show {
+            let t = ui.painter().layout_no_wrap(
+                crate::i18n::tr(label).to_string(),
+                egui::FontId::proportional(theme::FONT_SM),
+                theme::cur().text,
+            );
+            w += t.size().x + 16.0;
+            n += 1;
+        }
+    }
+    if n > 1 {
+        w += (n - 1) as f32 * ui.spacing().item_spacing.x;
+    }
+    w
+}
+
+/// 价格行一键填值按钮绘制：可见性与行情数据由调用方在公共尾宽测量时
+/// 一并取得，绘制端不再自取锁（保证测量宽度与实际绘制一致）
+fn best_px_buttons(
+    ui: &mut egui::Ui,
+    app: &mut BnApp,
+    vis: (bool, bool, bool),
+    px: (Option<Decimal>, Option<Decimal>, Option<Decimal>),
+) {
     let mut fill = |ui: &mut egui::Ui, label: &str, price: Decimal| {
         if theme::btn_ghost(ui, label, true)
             .on_hover_text(crate::i18n::tr("点击填入下单价格"))
@@ -857,18 +902,18 @@ fn best_px_buttons(ui: &mut egui::Ui, app: &mut BnApp, market: Market, symbol: &
             app.page.form.price = price.normalize().to_string();
         }
     };
-    if show_bid {
-        if let Some(p) = bid {
+    if vis.0 {
+        if let Some(p) = px.0 {
             fill(ui, crate::i18n::tr("买一"), p);
         }
     }
-    if show_ask {
-        if let Some(p) = ask {
+    if vis.1 {
+        if let Some(p) = px.1 {
             fill(ui, crate::i18n::tr("卖一"), p);
         }
     }
-    if show_mid {
-        if let Some(p) = last {
+    if vis.2 {
+        if let Some(p) = px.2 {
             fill(ui, crate::i18n::tr("最新"), p);
         }
     }

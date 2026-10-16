@@ -1,12 +1,13 @@
 //! 后台引擎：命令处理（REST）、行情 WebSocket、用户数据流 WebSocket
 //!
-//! UI 线程通过 `Engine::tx` 发送命令；后台任务把结果写入 `SharedState` 快照并请求重绘。
+//! UI 线程通过 `SharedState::send_cmd` 发送命令；后台任务把结果写入 `SharedState` 快照并请求重绘。
 
 use eframe::egui;
 pub mod state;
 
 use crate::binance::client::{
-    build_order_params, BinanceError, BinanceRest, OrderKind, OrderRequest, RestCtx,
+    build_algo_order_params, build_order_params, BinanceError, BinanceRest, OrderKind,
+    OrderRequest, RestCtx,
 };
 use crate::binance::model::*;
 use crate::binance::symbols::{parse_exchange_info, quantize_price, quantize_qty, RuleBook};
@@ -53,6 +54,11 @@ pub enum Command {
         symbol: String,
         order_id: i64,
     },
+    /// 撤销合约条件单（Algo Order 体系：仓位止盈止损/追踪委托等，
+    /// DELETE /fapi/v1/algoOrder 按 algoId 撤销）
+    CancelAlgoOrder {
+        algo_id: i64,
+    },
     /// 撤销挂单：symbol=None 撤销该市场全部挂单
     CancelAll {
         market: Market,
@@ -84,23 +90,10 @@ pub enum Command {
     },
 }
 
-#[derive(Clone)]
-pub struct Engine {
-    pub tx: mpsc::UnboundedSender<Command>,
-}
-
-impl Engine {
-    /// 命令入队是否成功：失败（命令循环已退出、接收端被丢弃）时调用方需
-    /// 回滚 UI 预置的 busy 等状态，否则提交键永久禁用且无任何解释。
-    /// 返回 bool 而非 Result<SendError<Command>>：Command 体积大，
-    /// Err 分支会让每次调用的 Result 膨胀
-    pub fn send(&self, cmd: Command) -> bool {
-        self.tx.send(cmd).is_ok()
-    }
-}
-
-/// 启动后台运行时与全部任务
-pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) -> Engine {
+/// 启动后台运行时与全部任务。
+/// 命令通道的唯一入口是 `SharedState::send_cmd`（返回入队是否成功）；
+/// UI 不再持有独立 sender，避免失败提示/回滚策略按入口分裂
+pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
     let (tx, rx) = mpsc::unbounded_channel::<Command>();
     *state.cmd_tx.write() = Some(tx.clone());
 
@@ -310,8 +303,6 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) -> Engine {
             }
         })
         .expect("启动引擎线程失败");
-
-    Engine { tx }
 }
 
 fn repaint(ctx: &egui::Context) {
@@ -430,6 +421,18 @@ async fn cmd_loop(
                         state.set_busy("cancel", false);
                     }
                 }
+                Command::CancelAlgoOrder { algo_id } => {
+                    if let Some(client) = c.client.clone() {
+                        let (st, cx, etx) = (state.clone(), ctx.clone(), engine_tx.clone());
+                        tokio::spawn(async move {
+                            cancel_algo_order(&client, &st, algo_id, &etx).await;
+                            repaint(&cx);
+                        });
+                    } else {
+                        no_client_err(&state);
+                        state.set_busy("cancel", false);
+                    }
+                }
                 Command::CancelAll { market, symbol } => {
                     if let Some(client) = c.client.clone() {
                         let (st, cx, etx) = (state.clone(), ctx.clone(), engine_tx.clone());
@@ -495,7 +498,7 @@ async fn handle_cmd(
         // 排队的下单/撤单的忙标志清掉
         match cmd {
             Command::PlaceOrder { .. } => state.set_busy("place", false),
-            Command::CancelOrder { .. } | Command::CancelAll { .. } => {
+            Command::CancelOrder { .. } | Command::CancelAll { .. } | Command::CancelAlgoOrder { .. } => {
                 state.set_busy("cancel", false);
             }
             _ => {}
@@ -896,6 +899,31 @@ async fn handle_cmd(
                     }
                 }
             }
+            // 合约条件单（仓位止盈止损/追踪委托等）已迁移至 Algo Order
+            // 体系，openOrders 不再包含——单独拉取存快照，供持仓止盈止损
+            // 列与挂单表展示
+            if market == Market::UmFutures {
+                let algo_path = format!("{}/openAlgoOrders", market.api_prefix());
+                match client
+                    .signed(reqwest::Method::GET, rc, &cfg, &algo_path, vec![])
+                    .await
+                {
+                    Ok(v) => match serde_json::from_value::<Vec<AlgoOrderInfo>>(v) {
+                        Ok(list) => {
+                            state.orders.lock().algo = list;
+                            repaint(ctx);
+                        }
+                        Err(e) => tracing::warn!("解析条件单失败: {e}"),
+                    },
+                    Err(e) => {
+                        // 获取失败只记日志不打断：条件单列表为空会让止盈止损
+                        // 列显示"—"，但普通挂单/持仓不受影响
+                        if !matches!(e, BinanceError::NoCreds) {
+                            tracing::warn!("条件单获取失败: {e}");
+                        }
+                    }
+                }
+            }
         }
         Command::RefreshHistory { market, symbol } => {
             if !state.has_creds() {
@@ -939,23 +967,19 @@ async fn handle_cmd(
             {
                 let (po_ok, pt_ok) = (po.is_ok(), pt.is_ok());
                 let mut o = state.orders.lock();
-                let mut changed = false;
                 if let Ok(v) = po {
                     if let Ok(mut list) = serde_json::from_value::<Vec<OrderInfo>>(v) {
                         list.sort_by_key(|x| std::cmp::Reverse(x.time));
-                        o.history = list;
-                        changed = true;
+                        // 整体替换 Arc：UI 侧持有旧 Arc 的帧不受影响，
+                        // 新帧命中新内容——无版本号契约需要双方维护
+                        o.history = std::sync::Arc::new(list);
                     }
                 }
                 if let Ok(v) = pt {
                     if let Ok(mut list) = serde_json::from_value::<Vec<MyTrade>>(v) {
                         list.sort_by_key(|x| std::cmp::Reverse(x.time));
-                        o.trades = list;
-                        changed = true;
+                        o.trades = std::sync::Arc::new(list);
                     }
-                }
-                if changed {
-                    o.history_version = o.history_version.wrapping_add(1);
                 }
                 o.history_symbol = if po_ok || pt_ok {
                     // 至少一个请求成功才更新归属标记：双双失败时保留旧数据 +
@@ -1137,6 +1161,7 @@ async fn handle_cmd(
         // 订单类命令已在 cmd_loop 中并发派发，不会进入 handle_cmd
         Command::PlaceOrder { .. }
         | Command::CancelOrder { .. }
+        | Command::CancelAlgoOrder { .. }
         | Command::CancelAll { .. }
         | Command::PlaceOco { .. } => {}
     }
@@ -1222,8 +1247,9 @@ async fn place_order(
         testnet: cfg.testnet,
         recv_window_ms: cfg.recv_window_ms,
     };
-    // WS-API 通道（可选，仅合约）：任何失败自动回退 REST，资金路径不赌单通道
-    if market == Market::UmFutures && cfg.ws_order {
+    // WS-API 通道（可选，仅合约）：任何失败自动回退 REST，资金路径不赌单通道；
+    // 条件单已迁至 Algo 体系且 WS 通道不覆盖，直接走 REST algoOrder
+    if market == Market::UmFutures && cfg.ws_order && !req.kind.is_conditional() {
         let url = crate::binance::ws_api_order(cfg.testnet);
         let proxy = cfg.proxy.clone();
         match client
@@ -1261,13 +1287,27 @@ async fn place_order(
             }
         }
     }
-    let path = format!("{}/order", market.api_prefix());
+    // 条件单已迁至 Algo Order 体系（/fapi/v1/order 报 -4120）：
+    // 参数构建与端点都换 algoOrder 版
+    let (path, params) = if market == Market::UmFutures && req.kind.is_conditional() {
+        (
+            format!("{}/algoOrder", market.api_prefix()),
+            build_algo_order_params(req),
+        )
+    } else {
+        (format!("{}/order", market.api_prefix()), params)
+    };
     let res = client
         .signed(reqwest::Method::POST, rc, &cfg, &path, params)
         .await;
     match res {
         Ok(v) => {
-            let id = v.get("orderId").and_then(|x| x.as_i64()).unwrap_or(0);
+            // 条件单响应的主键是 algoId（普通单为 orderId）
+            let id = v
+                .get("orderId")
+                .or_else(|| v.get("algoId"))
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0);
             tracing::info!("下单成功 {} {:?} id={id}", req.symbol, req.side);
             if !note.is_empty() {
                 state.push_toast(ToastKind::Warn, note);
@@ -1329,6 +1369,46 @@ async fn cancel_order(
                 format!("{}{order_id}", crate::i18n::tr("已撤销委托 #")),
             );
             engine_tx.send(Command::RefreshOpenOrders { market }).ok();
+        }
+        Err(e) => toast_err(state, &e),
+    }
+}
+
+/// 撤销合约条件单（Algo Order）：DELETE /fapi/v1/algoOrder 按 algoId
+/// 撤销（busy 置位/释放由本函数负责；命令循环可并发派发）
+async fn cancel_algo_order(
+    client: &BinanceRest,
+    state: &Arc<SharedState>,
+    algo_id: i64,
+    engine_tx: &mpsc::UnboundedSender<Command>,
+) {
+    if !state.has_creds() {
+        return;
+    }
+    let cfg = state.cfg_snapshot();
+    let rc = RestCtx {
+        market: Market::UmFutures,
+        testnet: cfg.testnet,
+        recv_window_ms: cfg.recv_window_ms,
+    };
+    let path = format!("{}/algoOrder", Market::UmFutures.api_prefix());
+    let params = vec![("algoId".into(), algo_id.to_string())];
+    state.set_busy("cancel", true);
+    let res = client
+        .signed(reqwest::Method::DELETE, rc, &cfg, &path, params)
+        .await;
+    state.set_busy("cancel", false);
+    match res {
+        Ok(_) => {
+            state.push_toast(
+                ToastKind::Ok,
+                format!("{}{algo_id}", crate::i18n::tr("已撤销条件单 #")),
+            );
+            engine_tx
+                .send(Command::RefreshOpenOrders {
+                    market: Market::UmFutures,
+                })
+                .ok();
         }
         Err(e) => toast_err(state, &e),
     }
@@ -1463,6 +1543,35 @@ async fn cancel_all_orders(
     let res = client
         .signed(reqwest::Method::DELETE, rc, &cfg, &path, params)
         .await;
+    // 条件单（仓位止盈止损/追踪委托）在 Algo 体系，allOpenOrders 撤不到：
+    // 指定交易对用批量端点 algoOpenOrders；全市场无批量端点，逐交易对撤
+    if market == Market::UmFutures {
+        let syms: Vec<String> = match symbol {
+            Some(s) => vec![s.to_string()],
+            None => {
+                let mut v: Vec<String> = state
+                    .orders
+                    .lock()
+                    .algo
+                    .iter()
+                    .map(|a| a.symbol.clone())
+                    .collect();
+                v.sort();
+                v.dedup();
+                v
+            }
+        };
+        let algo_path = format!("{}/algoOpenOrders", market.api_prefix());
+        for s in syms {
+            let ps = vec![("symbol".into(), s.clone())];
+            if let Err(e) = client
+                .signed(reqwest::Method::DELETE, rc, &cfg, &algo_path, ps)
+                .await
+            {
+                tracing::warn!("撤销条件单失败({s}): {e}");
+            }
+        }
+    }
     state.set_busy("cancel", false);
     match res {
         Ok(_) => {

@@ -322,7 +322,9 @@ pub fn badge(ui: &mut egui::Ui, text: &str, fg: Color32) {
 // ---------- 按钮层级 ----------
 
 /// 主操作按钮：全宽 + accent 填充 + on_accent 文字（保存、提交、解锁等唯一主入口）。
-/// 禁用时附通用原因提示（调用方链自己的 on_disabled_hover_text 会覆盖为本场景文案）
+/// 禁用原因由调用方链 on_disabled_hover_text 提供（与 btn_danger/btn_default
+/// 一致）：on_disabled_hover_text 多次调用会堆叠而非覆盖，theme 层预置通用
+/// 文案会让提供具体原因的调用方叠出两个提示框
 pub fn btn_primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
     let btn = egui::Button::new(
         egui::RichText::new(text)
@@ -333,9 +335,7 @@ pub fn btn_primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respon
     .fill(cur().accent)
     .corner_radius(R_MD)
     .min_size(egui::vec2(ui.available_width(), BTN_LG));
-    ui.add_enabled(enabled, btn)
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_disabled_hover_text(crate::i18n::tr("表单未填写完整或有错误"))
+    ui.add_enabled(enabled, btn).on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// 普通按钮：card 底 + 中性文字。不显式设 stroke——交给 egui 按交互状态
@@ -345,6 +345,17 @@ pub fn btn_default(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respon
         .fill(cur().card)
         .corner_radius(R_MD)
         .min_size(egui::vec2(0.0, BTN_H));
+    ui.add_enabled(enabled, btn)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// 普通按钮（指定最小宽度）：表格行内按钮需要比文字更宽的点击区时用
+/// （如持仓行的止盈止损按钮，双语长度不一且点击频率高）
+pub fn btn_default_w(ui: &mut egui::Ui, text: &str, min_w: f32, enabled: bool) -> egui::Response {
+    let btn = egui::Button::new(egui::RichText::new(text).size(FONT_BODY))
+        .fill(cur().card)
+        .corner_radius(R_MD)
+        .min_size(egui::vec2(min_w, BTN_H));
     ui.add_enabled(enabled, btn)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
