@@ -39,11 +39,7 @@ fn load_failed_row(
 /// 卡头：市场名（正文字号加粗，层级压过页面标题）+ 右侧槽位
 fn card_header(ui: &mut egui::Ui, title: &str, add_right: impl FnOnce(&mut egui::Ui)) {
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(title)
-                .strong()
-                .size(theme::FONT_BODY),
-        );
+        ui.label(egui::RichText::new(title).strong().size(theme::FONT_BODY));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add_right);
     });
     ui.add_space(2.0);
@@ -168,9 +164,7 @@ fn spot_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::U
                 for b in &nonzero {
                     body.row(22.0, |mut row| {
                         row.col(|ui| {
-                            ui.label(
-                                egui::RichText::new(&b.asset).strong().size(theme::FONT_MD),
-                            );
+                            ui.label(theme::code(&b.asset).size(theme::FONT_MD));
                         });
                         row.col(|ui| {
                             widgets::num_cell(
@@ -200,11 +194,7 @@ fn spot_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::U
 fn fut_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) {
     let (fut, dual, fut_err) = {
         let acct = state.acct.lock();
-        (
-            acct.fut.clone(),
-            acct.fut_dual_side,
-            acct.fut_err.clone(),
-        )
+        (acct.fut.clone(), acct.fut_dual_side, acct.fut_err.clone())
     };
     theme::card(ui, |ui| {
         card_header(ui, crate::i18n::tr("合约资产 · U本位"), |ui| {
@@ -230,12 +220,10 @@ fn fut_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui
                 |rt: egui::RichText| egui::Label::new(rt).wrap_mode(egui::TextWrapMode::Extend);
             let stat = |ui: &mut egui::Ui, label: &str, v: String, color: egui::Color32| {
                 ui.add(ext(theme::card_label(label)));
-                ui.add(ext(
-                    egui::RichText::new(v)
-                        .monospace()
-                        .size(theme::FONT_MD)
-                        .color(color),
-                ));
+                ui.add(ext(egui::RichText::new(v)
+                    .monospace()
+                    .size(theme::FONT_MD)
+                    .color(color)));
                 ui.add_space(10.0);
             };
             let f = |d: &Decimal| widgets::f64_decimal(d);
@@ -317,9 +305,7 @@ fn fut_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui
                 for b in &assets {
                     body.row(22.0, |mut row| {
                         row.col(|ui| {
-                            ui.label(
-                                egui::RichText::new(&b.asset).strong().size(theme::FONT_MD),
-                            );
+                            ui.label(theme::code(&b.asset).size(theme::FONT_MD));
                         });
                         row.col(|ui| {
                             widgets::num_cell(ui, widgets::fmt_dec_grouped(&b.wallet), None);
@@ -337,9 +323,7 @@ fn fut_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui
                             widgets::num_cell(
                                 ui,
                                 format!("{sign}{s}"),
-                                Some(theme::signed_color(widgets::f64_decimal(
-                                    &b.unrealized,
-                                ))),
+                                Some(theme::signed_color(widgets::f64_decimal(&b.unrealized))),
                             );
                         });
                     });

@@ -63,11 +63,7 @@ fn show_book_tabs(app: &mut BnApp, ui: &mut egui::Ui) {
     let prev = app.book_tab;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        if theme::nav_tab(
-            ui,
-            crate::i18n::tr("盘口"),
-            app.book_tab == BookTab::Book,
-        ) {
+        if theme::nav_tab(ui, crate::i18n::tr("盘口"), app.book_tab == BookTab::Book) {
             app.book_tab = BookTab::Book;
         }
         if theme::nav_tab(
@@ -191,8 +187,8 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.spacing_mut().item_spacing.y = 0.0;
     const SPREAD_H: f32 = 24.0;
     const SPREAD_PAD: f32 = 8.0; // 价差行上下呼吸
-    // 基准行高与成交明细列表一致（同一字号的等宽行）；两侧各自再增一档后
-    // 由行高吸收高度零头，视觉密度与成交明细保持对齐
+                                 // 基准行高与成交明细列表一致（同一字号的等宽行）；两侧各自再增一档后
+                                 // 由行高吸收高度零头，视觉密度与成交明细保持对齐
     const ROW_H: f32 = 17.0;
     const ROW_H_MIN: f32 = ROW_H * 0.75; // 面板过矮（n 触底下限）时允许压缩
     const ROW_H_MAX: f32 = ROW_H * 1.35; // n 触顶 20 档时允许拉伸
@@ -227,10 +223,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             return;
         }
         let take = |side: &Vec<crate::binance::model::Level>, up: bool| {
-            let raw: Vec<(Decimal, Decimal)> = side
-                .iter()
-                .map(|l| (l.price, l.qty))
-                .collect();
+            let raw: Vec<(Decimal, Decimal)> = side.iter().map(|l| (l.price, l.qty)).collect();
             if group_step.is_zero() {
                 return raw.into_iter().take(n).collect::<Vec<_>>();
             }
@@ -239,11 +232,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             let mut merged: Vec<(Decimal, Decimal)> = Vec::with_capacity(raw.len());
             for (p, q) in raw {
                 let buckets = p / group_step;
-                let b = (if up {
-                    buckets.ceil()
-                } else {
-                    buckets.floor()
-                }) * group_step;
+                let b = (if up { buckets.ceil() } else { buckets.floor() }) * group_step;
                 if let Some(last) = merged.last_mut() {
                     if last.0 == b {
                         last.1 += q;
@@ -338,9 +327,10 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.label(
                 egui::RichText::new(format!("{:.*}", dp, mid_f))
                     .monospace()
-                    .strong()
                     .size(theme::FONT_BODY)
-                    .color(theme::cur().text),
+                    .color(theme::cur().text)
+                    // 价差行中间价：与页头最新价同一「大数字」语义，700 字重
+                    .variation(theme::WGHT, 700.0),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // 数值走等宽 + 正文色（信息数据不用暗色），"价差"标签才是辅助暗字
@@ -604,8 +594,7 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     const ROW_H: f32 = 17.0; // 数据行内容高（FONT_MD 文本行）
     const HEADER_H: f32 = 14.0; // 表头内容高（FONT_SM 文本行）
     let row_pitch = ROW_H + 2.0; // Grid spacing.y = 2
-    let n = (((ui.available_height() - HEADER_H - 4.0) / row_pitch).floor() as usize)
-        .clamp(1, 100);
+    let n = (((ui.available_height() - HEADER_H - 4.0) / row_pitch).floor() as usize).clamp(1, 100);
 
     // 短锁拷贝最近 n 笔后绘制
     let trades: Vec<crate::binance::model::TradeTick> = {
@@ -621,13 +610,12 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     // 单元格文字缘严格成列，便于纵向扫读；不再设固定下限宽（72/64/58），
     // 下限会把列撑过内容、把数量推离价格
     ui.set_min_width(0.0);
-    let measure =
-        |txt: &str, font: &egui::FontId| -> f32 {
-            ui.painter()
-                .layout_no_wrap(txt.to_string(), font.clone(), theme::cur().text)
-                .size()
-                .x
-        };
+    let measure = |txt: &str, font: &egui::FontId| -> f32 {
+        ui.painter()
+            .layout_no_wrap(txt.to_string(), font.clone(), theme::cur().text)
+            .size()
+            .x
+    };
     // 表头/数据两套字体：表头小号正体，数据等宽正文
     let head_font = egui::FontId::proportional(theme::FONT_SM);
     let data_font = egui::FontId::monospace(theme::FONT_MD);
@@ -637,8 +625,14 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         measure(crate::i18n::tr("时间"), &head_font),
     );
     for t in &trades {
-        w_price = w_price.max(measure(&format!("{:.*}", dp, widgets::f64_decimal(&t.price)), &data_font));
-        w_qty = w_qty.max(measure(&format!("{:.*}", qdp, widgets::f64_decimal(&t.qty)), &data_font));
+        w_price = w_price.max(measure(
+            &format!("{:.*}", dp, widgets::f64_decimal(&t.price)),
+            &data_font,
+        ));
+        w_qty = w_qty.max(measure(
+            &format!("{:.*}", qdp, widgets::f64_decimal(&t.qty)),
+            &data_font,
+        ));
         w_time = w_time.max(measure(&widgets::fmt_time_short(t.time), &data_font));
     }
     // 窄面板时间降级：列宽绝不压到内容实宽以下（压缩会让手绘 galley 向左
@@ -661,39 +655,41 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         w_time *= k;
     }
     let gap = ((avail - 4.0 - w_price - w_qty - w_time) * 0.5).max(MIN_GAP);
-    let paint_row =
-        |ui: &mut egui::Ui, price: String, qty: String, time: String, h: f32, col: egui::Color32| {
-            // 整行占位：三列文字按固定锚位手绘，不依赖 Grid 列分配
-            let (rect, _) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), h),
-                egui::Sense::hover(),
-            );
-            let p = ui.painter();
-            let cy = rect.center().y;
-            // 数量左缘 = 价格列右缘 + gap；时间右缘 = 行右缘 - 2
-            let x_qty = rect.left() + 2.0 + w_price + gap;
-            p.text(
-                egui::Pos2::new(rect.left() + 2.0, cy),
-                egui::Align2::LEFT_CENTER,
-                price,
-                data_font.clone(),
-                col,
-            );
-            p.text(
-                egui::Pos2::new(x_qty, cy),
-                egui::Align2::LEFT_CENTER,
-                qty,
-                data_font.clone(),
-                theme::cur().text,
-            );
-            p.text(
-                egui::Pos2::new(rect.right() - 2.0, cy),
-                egui::Align2::RIGHT_CENTER,
-                time,
-                data_font.clone(),
-                theme::cur().text_dim,
-            );
-        };
+    let paint_row = |ui: &mut egui::Ui,
+                     price: String,
+                     qty: String,
+                     time: String,
+                     h: f32,
+                     col: egui::Color32| {
+        // 整行占位：三列文字按固定锚位手绘，不依赖 Grid 列分配
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::hover());
+        let p = ui.painter();
+        let cy = rect.center().y;
+        // 数量左缘 = 价格列右缘 + gap；时间右缘 = 行右缘 - 2
+        let x_qty = rect.left() + 2.0 + w_price + gap;
+        p.text(
+            egui::Pos2::new(rect.left() + 2.0, cy),
+            egui::Align2::LEFT_CENTER,
+            price,
+            data_font.clone(),
+            col,
+        );
+        p.text(
+            egui::Pos2::new(x_qty, cy),
+            egui::Align2::LEFT_CENTER,
+            qty,
+            data_font.clone(),
+            theme::cur().text,
+        );
+        p.text(
+            egui::Pos2::new(rect.right() - 2.0, cy),
+            egui::Align2::RIGHT_CENTER,
+            time,
+            data_font.clone(),
+            theme::cur().text_dim,
+        );
+    };
     if trades.is_empty() {
         widgets::empty_state(ui, "◍", crate::i18n::tr("暂无成交"), "");
         return;
@@ -737,14 +733,9 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
         // 最新一行（row 0）：新成交到达时文字向主题文字色短暂提亮后渐回原色。
         // 不混入行底色，混色会红绿互相污染
         if row == 0 {
-            let (intensity, _) =
-                app.flash_trade_top(ui.ctx(), widgets::f64_decimal(&t.price));
+            let (intensity, _) = app.flash_trade_top(ui.ctx(), widgets::f64_decimal(&t.price));
             if intensity > 0.0 {
-                col = flash::lerp_color(
-                    col,
-                    theme::cur().text,
-                    intensity * theme::FLASH_BRIGHTEN,
-                );
+                col = flash::lerp_color(col, theme::cur().text, intensity * theme::FLASH_BRIGHTEN);
             }
         }
         let ts = widgets::fmt_time_short(t.time);
@@ -800,11 +791,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
         // 记录标题文字竖直中线，作为行尾星标/预警 glyph 的对齐锚点
         let mut anchor_y: Option<f32>;
         if !base.is_empty() && app.page.symbol.starts_with(&base) {
-            let r = ui.label(
-                egui::RichText::new(&base)
-                    .strong()
-                    .size(theme::FONT_LG),
-            );
+            let r = ui.label(egui::RichText::new(&base).strong().size(theme::FONT_LG));
             anchor_y = Some(r.rect.center().y);
             ui.label(
                 egui::RichText::new(&app.page.symbol[base.len()..])
@@ -832,9 +819,12 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             let r = ui.label(
                 egui::RichText::new(widgets::fmt_thousands(px, dp))
                     .monospace()
-                    .strong()
                     .size(theme::FONT_LG)
-                    .color(c),
+                    .color(c)
+                    // 大价格走真字重：Cascadia 的 wght 变量轴 700（egui 0.36 的
+                    // .strong() 仅改颜色；数字在等宽字体里有 700 字重才压得住
+                    // 一整行行情统计）
+                    .variation(theme::WGHT, 700.0),
             );
             // 最新价是星标/预警的直接参照物，以其中线为准（与标题同为 FONT_LG）
             anchor_y = Some(r.rect.center().y);
@@ -1061,12 +1051,13 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                         .font(egui::TextStyle::Monospace)
                         .desired_width(110.0),
                 );
-                let enter = resp.lost_focus()
-                    && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if ui
                     .add(
-                        egui::Button::new(egui::RichText::new(crate::i18n::tr("添加")).size(theme::FONT_SM))
-                            .min_size(egui::vec2(0.0, theme::CONTROL_H)),
+                        egui::Button::new(
+                            egui::RichText::new(crate::i18n::tr("添加")).size(theme::FONT_SM),
+                        )
+                        .min_size(egui::vec2(0.0, theme::CONTROL_H)),
                     )
                     .clicked()
                     || enter
@@ -1098,7 +1089,11 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                         for (i, a) in alerts.iter().enumerate() {
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new(&a.symbol).size(theme::FONT_MD));
-                                let mkt_label = if a.market == 0 { "" } else { crate::i18n::tr("· 合约") };
+                                let mkt_label = if a.market == 0 {
+                                    ""
+                                } else {
+                                    crate::i18n::tr("· 合约")
+                                };
                                 if !mkt_label.is_empty() {
                                     ui.label(
                                         egui::RichText::new(mkt_label)
@@ -1128,15 +1123,20 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                                             egui::RichText::new(format!(
                                                 "{} {}",
                                                 if a.above { "≥" } else { "≤" },
-                                                widgets::fmt_dec_fixed(&a.price, adp(a.market, &a.symbol))
+                                                widgets::fmt_dec_fixed(
+                                                    &a.price,
+                                                    adp(a.market, &a.symbol)
+                                                )
                                             ))
                                             .monospace()
                                             .size(theme::FONT_MD)
-                                            .color(if a.above {
-                                                theme::cur().up
-                                            } else {
-                                                theme::cur().down
-                                            }),
+                                            .color(
+                                                if a.above {
+                                                    theme::cur().up
+                                                } else {
+                                                    theme::cur().down
+                                                },
+                                            ),
                                         );
                                     },
                                 );

@@ -48,7 +48,9 @@ fn row_metrics(ui: &egui::Ui) -> RowMetrics {
     let slot_h = ui.spacing().interact_size.y;
     let l1 = ui
         .ctx()
-        .fonts_mut(|f| f.row_height(&egui::FontId::proportional(theme::FONT_MD)));
+        // 名称走代码 token（等宽）：行高按其实际字体度量推算，
+        // pitch 才与 show_rows 的行高假设一致
+        .fonts_mut(|f| f.row_height(&egui::FontId::monospace(theme::FONT_MD)));
     let l2 = ui
         .ctx()
         .fonts_mut(|f| f.row_height(&egui::FontId::monospace(theme::FONT_SM)));
@@ -255,11 +257,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                             // SHIB 这类低价币保留其 tick 全部位数不被压成 0.00）。
                             // 只对可见行逐个查规则书，全量 2600 个符号每帧查会
                             // 无谓地抢锁
-                            let dp = app
-                                .state
-                                .with_rule(app.market, sym, |r| {
-                                    r.map(|x| x.price_dp() as usize).unwrap_or(2)
-                                });
+                            let dp = app.state.with_rule(app.market, sym, |r| {
+                                r.map(|x| x.price_dp() as usize).unwrap_or(2)
+                            });
                             let mut act = RowAct {
                                 dp,
                                 switched: &mut switched,
@@ -314,10 +314,8 @@ fn symbol_row(
     // 卡片始终铺一层 card 底色（与面板底色拉开层级），高度 = 行内容高
     // （名称行 + 行隙 + 价格行），底部 ROW_GAP 留白不动，相邻卡片之间
     // 由此出现呼吸间隙
-    let row_rect = egui::Rect::from_min_size(
-        ui.cursor().min,
-        egui::vec2(ui.available_width(), m.band),
-    );
+    let row_rect =
+        egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), m.band));
     let painter = ui.painter();
     if selected {
         painter.rect_filled(row_rect, 3.0, theme::cur().row_hover);
@@ -362,8 +360,8 @@ fn symbol_row(
             ui.spacing_mut().item_spacing.x = 4.0;
             // 行首内边距：选中行的 3px accent 条压在卡片最左，内容须让开
             ui.add_space(6.0);
-            let (star_rect, star_resp) = ui
-                .allocate_exact_size(egui::vec2(STAR_W, m.l1), egui::Sense::click());
+            let (star_rect, star_resp) =
+                ui.allocate_exact_size(egui::vec2(STAR_W, m.l1), egui::Sense::click());
             if star_resp.hovered() {
                 ui.painter().rect_filled(
                     star_rect.shrink(2.0),
@@ -407,14 +405,13 @@ fn symbol_row(
             });
             let star_clicked = star_resp.clicked();
             // 名称：纯展示（截断防长名溢出），点击切换由整卡热区负责
+            // 名称用代码 token（等宽 + 0.02em 字距）：与下一行等宽价格同体系
             let name_txt = {
-                let t = egui::RichText::new(sym)
-                    .size(theme::FONT_MD)
-                    .color(if selected {
-                        theme::cur().accent
-                    } else {
-                        theme::cur().text
-                    });
+                let t = theme::code(sym).size(theme::FONT_MD).color(if selected {
+                    theme::cur().accent
+                } else {
+                    theme::cur().text
+                });
                 if selected {
                     t.strong()
                 } else {

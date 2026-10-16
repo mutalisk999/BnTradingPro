@@ -389,7 +389,11 @@ impl BnApp {
                         })?;
                     // 目标价与最新价都是 Decimal：直接比较，不经 f64 中转
                     // （f64 比较在边界值上可能误判 ±1 ulp）
-                    let hit = if a.above { last >= a.price } else { last <= a.price };
+                    let hit = if a.above {
+                        last >= a.price
+                    } else {
+                        last <= a.price
+                    };
                     hit.then(|| (a.market, a.symbol.clone(), a.price, a.above))
                 })
                 .collect()
@@ -401,7 +405,10 @@ impl BnApp {
             let mut cfg = self.state.cfg.write();
             for (market, symbol, price, above) in &targets {
                 cfg.alerts.retain(|a| {
-                    !(a.market == *market && &a.symbol == symbol && a.price == *price && a.above == *above)
+                    !(a.market == *market
+                        && &a.symbol == symbol
+                        && a.price == *price
+                        && a.above == *above)
                 });
             }
         }
@@ -439,9 +446,11 @@ impl BnApp {
             .ticker_of(market, &symbol)
             .map(|t| t.close)
             .or_else(|| {
-                self.state.md.lock().get(market, &symbol).and_then(|s| {
-                    s.ticker.as_ref().map(|t| t.last_price)
-                })
+                self.state
+                    .md
+                    .lock()
+                    .get(market, &symbol)
+                    .and_then(|s| s.ticker.as_ref().map(|t| t.last_price))
             });
         let Some(last) = last else {
             self.state.push_toast(
@@ -453,9 +462,8 @@ impl BnApp {
         let above = price >= last;
         {
             let mut cfg = self.state.cfg.write();
-            cfg.alerts.retain(|a| {
-                !(a.market == market as u8 && a.symbol == symbol && a.price == price)
-            });
+            cfg.alerts
+                .retain(|a| !(a.market == market as u8 && a.symbol == symbol && a.price == price));
             cfg.alerts.push(crate::config::AlertConfig {
                 market: market as u8,
                 symbol: symbol.clone(),
@@ -468,7 +476,13 @@ impl BnApp {
         let dir = if above { "≥" } else { "≤" };
         self.state.push_toast(
             crate::engine::state::ToastKind::Info,
-            format!("{} {} {} {}", crate::i18n::tr("已添加预警 "), symbol, dir, price),
+            format!(
+                "{} {} {} {}",
+                crate::i18n::tr("已添加预警 "),
+                symbol,
+                dir,
+                price
+            ),
         );
     }
 
@@ -489,7 +503,6 @@ impl BnApp {
     }
 
     // ---------- 页签切换（活动页整体换入换出） ----------
-
 
     pub fn set_tab(&mut self, tab: Tab) {
         if self.tab == tab {
@@ -811,24 +824,20 @@ impl BnApp {
                 (
                     i.key_pressed(egui::Key::B),
                     i.key_pressed(egui::Key::S),
-                    i.modifiers.ctrl
-                        && i.modifiers.shift
-                        && i.key_pressed(egui::Key::C),
+                    i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::C),
                 )
             });
             let editing = ui.ctx().memory(|m| m.focused().is_some());
             if !editing {
                 if b {
                     self.page.form.side = Side::Buy;
-                    ui.ctx().memory_mut(|m| {
-                        m.request_focus(egui::Id::new("qty_in"))
-                    });
+                    ui.ctx()
+                        .memory_mut(|m| m.request_focus(egui::Id::new("qty_in")));
                 }
                 if s {
                     self.page.form.side = Side::Sell;
-                    ui.ctx().memory_mut(|m| {
-                        m.request_focus(egui::Id::new("qty_in"))
-                    });
+                    ui.ctx()
+                        .memory_mut(|m| m.request_focus(egui::Id::new("qty_in")));
                 }
             }
             if ctrl_shift_c && self.state.has_creds() {
@@ -898,11 +907,11 @@ impl BnApp {
                 egui::Id::new("sidebar_resize"),
                 egui::Sense::click_and_drag(),
             );
-                    if strip.dragged() {
-                        // 指针右移 = 面板变宽（最小宽度 190 按用户要求）
-                        self.sidebar_width =
-                            (self.sidebar_width + strip.drag_delta().x).clamp(190.0, 240.0);
-                    }
+            if strip.dragged() {
+                // 指针右移 = 面板变宽（最小宽度 190 按用户要求）
+                self.sidebar_width =
+                    (self.sidebar_width + strip.drag_delta().x).clamp(190.0, 240.0);
+            }
             strip.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
         } else {
             // 折叠态：窄条面板只放展开按钮，中央区随之扩大
@@ -1114,9 +1123,7 @@ impl BnApp {
         // 全屏半透明遮罩：视觉聚焦弹窗 + 点击空白即取消（与 Esc 等效）。
         // 遮罩在 Middle 层，弹窗在更高的 Tooltip 层（Toast 在 Foreground，
         // 仍浮在弹窗之上）；Area 无内容，用 painter_at + allocate_rect 撑满全屏
-        let screen = ctx
-            .input(|i| i.raw.screen_rect)
-            .unwrap_or(egui::Rect::ZERO);
+        let screen = ctx.input(|i| i.raw.screen_rect).unwrap_or(egui::Rect::ZERO);
         egui::Area::new(egui::Id::new("confirm_dim"))
             .order(egui::Order::Middle)
             .anchor(egui::Align2::LEFT_TOP, [0.0, 0.0])
@@ -1145,10 +1152,7 @@ impl BnApp {
             .frame(
                 egui::Frame::default()
                     .fill(theme::cur().panel2)
-                    .stroke(egui::Stroke::new(
-                        1.5_f32,
-                        side_color.gamma_multiply(0.55),
-                    ))
+                    .stroke(egui::Stroke::new(1.5_f32, side_color.gamma_multiply(0.55)))
                     .corner_radius(f32::from(theme::R_LG))
                     .inner_margin(egui::Margin::same(14)),
             )
@@ -1198,7 +1202,13 @@ impl BnApp {
                         .show(ui, |ui| {
                             for (k, v) in &c.rows {
                                 ui.label(egui::RichText::new(k).color(theme::cur().text_dim));
-                                ui.label(egui::RichText::new(v).monospace().strong().color(color));
+                                ui.label(
+                                    egui::RichText::new(v)
+                                        .monospace()
+                                        .strong()
+                                        .color(color)
+                                        .variation(theme::WGHT, 700.0),
+                                );
                                 ui.end_row();
                             }
                         });
@@ -1264,12 +1274,12 @@ impl BnApp {
 impl eframe::App for BnApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone(); // Context 内部是 Arc，克隆廉价；避免与 ui 的可变借用冲突
-        // 本地价格预警逐帧评估（内部空表时即刻返回，无锁开销）
+                                    // 本地价格预警逐帧评估（内部空表时即刻返回，无锁开销）
         self.check_alerts();
-                                    // 响应式等比缩放（防抖）：最大化/恢复会产生一串 resize 事件，在过渡帧
-                                    // （窗口高度骤减）应用 zoom 曾引发 chart 绘制的 clamp panic（已单独修复）；
-                                    // 仍保留防抖：仅当窗口物理尺寸稳定 ≥0.25s 后才应用 zoom，使缩放切换
-                                    // 与 resize 事件流错开，避免过渡帧下二次布局抖动
+        // 响应式等比缩放（防抖）：最大化/恢复会产生一串 resize 事件，在过渡帧
+        // （窗口高度骤减）应用 zoom 曾引发 chart 绘制的 clamp panic（已单独修复）；
+        // 仍保留防抖：仅当窗口物理尺寸稳定 ≥0.25s 后才应用 zoom，使缩放切换
+        // 与 resize 事件流错开，避免过渡帧下二次布局抖动
         {
             let rect = ctx.input(|i| i.raw.screen_rect).unwrap_or(egui::Rect::ZERO);
             let size = rect.size() * ctx.pixels_per_point();
@@ -1383,8 +1393,16 @@ impl BnApp {
                     free: d("12345.678"),
                     locked: d("100.000"),
                 },
-                Balance { asset: "BNB".into(), free: d("12.5"), locked: d("0") },
-                Balance { asset: "BTC".into(), free: d("0.15"), locked: d("0") },
+                Balance {
+                    asset: "BNB".into(),
+                    free: d("12.5"),
+                    locked: d("0"),
+                },
+                Balance {
+                    asset: "BTC".into(),
+                    free: d("0.15"),
+                    locked: d("0"),
+                },
             ],
         });
         acct.fut = Some(FutAccount {
@@ -1392,15 +1410,13 @@ impl BnApp {
             total_unrealized: d("-56.78000000"),
             total_margin: d("12288.89890000"),
             available: d("9876.54000000"),
-            assets: vec![
-                FutBalance {
-                    asset: "USDT".into(),
-                    wallet: d("12345.67890000"),
-                    unrealized: d("-56.78000000"),
-                    margin: d("12288.89890000"),
-                    available: d("9876.54000000"),
-                },
-            ],
+            assets: vec![FutBalance {
+                asset: "USDT".into(),
+                wallet: d("12345.67890000"),
+                unrealized: d("-56.78000000"),
+                margin: d("12288.89890000"),
+                available: d("9876.54000000"),
+            }],
         });
         acct.fut_dual_side = false;
         acct.fut_leverage = [

@@ -88,7 +88,10 @@ fn write_csv(
 }
 
 /// 导出完成 toast：成功报路径，失败报原因
-fn toast_export(state: &Arc<crate::engine::state::SharedState>, r: Result<std::path::PathBuf, String>) {
+fn toast_export(
+    state: &Arc<crate::engine::state::SharedState>,
+    r: Result<std::path::PathBuf, String>,
+) {
     match r {
         Ok(p) => state.push_toast(
             crate::engine::state::ToastKind::Ok,
@@ -126,11 +129,12 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
     let market = app.market;
     // 价格小数位 = quote 资产侧精度（tick 小数位）；数量 = base 资产侧精度（step 小数位）
     let pxd = |sym: &str| {
-        state.with_rule(market, sym, |r| r.map(|x| x.price_dp() as usize).unwrap_or(2))
+        state.with_rule(market, sym, |r| {
+            r.map(|x| x.price_dp() as usize).unwrap_or(2)
+        })
     };
-    let qtd = |sym: &str| {
-        state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4))
-    };
+    let qtd =
+        |sym: &str| state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4));
     if !state.has_creds() {
         widgets::empty_state(
             ui,
@@ -211,9 +215,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                     // 与行级武装互斥：同一时刻只有一个待确认态
                     app.row_cancel_armed = None;
                 }
-            } else if app.sym_cancel_armed.is_some()
-                && ui.input(|i| i.pointer.any_click())
-            {
+            } else if app.sym_cancel_armed.is_some() && ui.input(|i| i.pointer.any_click()) {
                 // 点其它位置退出待确认态
                 app.sym_cancel_armed = None;
             }
@@ -235,7 +237,10 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                     app.market_cancel_armed = true;
                 } else {
                     app.market_cancel_armed = false;
-                    state.send_cmd(Command::CancelAll { market, symbol: None });
+                    state.send_cmd(Command::CancelAll {
+                        market,
+                        symbol: None,
+                    });
                 }
             } else if armed && ui.input(|i| i.pointer.any_click()) {
                 // 点其它位置退出待确认态
@@ -293,7 +298,13 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                 .into_iter()
                 .enumerate()
                 {
-                    h.col(|ui| head_cell(ui, crate::i18n::tr(t), i == 1 || i == 8 || (4..=6).contains(&i)));
+                    h.col(|ui| {
+                        head_cell(
+                            ui,
+                            crate::i18n::tr(t),
+                            i == 1 || i == 8 || (4..=6).contains(&i),
+                        )
+                    });
                 }
             })
             .body(|mut body| {
@@ -305,11 +316,12 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         });
                         row.col(|ui| {
                             // 交易对列右对齐（与表头一致）
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(
-                                    egui::RichText::new(&o.symbol).strong().size(theme::FONT_MD),
-                                );
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(theme::code(&o.symbol).size(theme::FONT_MD));
+                                },
+                            );
                         });
                         row.col(|ui| {
                             let c = if o.side == "BUY" {
@@ -380,29 +392,32 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                             // 操作列右对齐：撤销按钮贴行尾
                             // 两步确认：第一击武装（标签变为"确认撤销"），
                             // 第二击才发撤单命令；armed 键 = 订单号
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let row_armed = app.row_cancel_armed == Some(o.order_id);
-                                if theme::btn_danger(
-                                    ui,
-                                    if row_armed {
-                                        crate::i18n::tr("确认撤销")
-                                    } else {
-                                        crate::i18n::tr("撤销")
-                                    },
-                                    true,
-                                )
-                                .clicked()
-                                {
-                                    row_cancel_clicked = true;
-                                    if row_armed {
-                                        app.row_cancel_armed = None;
-                                        cancel_id = Some(o.order_id);
-                                        cancel_sym = o.symbol.clone();
-                                    } else {
-                                        app.row_cancel_armed = Some(o.order_id);
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let row_armed = app.row_cancel_armed == Some(o.order_id);
+                                    if theme::btn_danger(
+                                        ui,
+                                        if row_armed {
+                                            crate::i18n::tr("确认撤销")
+                                        } else {
+                                            crate::i18n::tr("撤销")
+                                        },
+                                        true,
+                                    )
+                                    .clicked()
+                                    {
+                                        row_cancel_clicked = true;
+                                        if row_armed {
+                                            app.row_cancel_armed = None;
+                                            cancel_id = Some(o.order_id);
+                                            cancel_sym = o.symbol.clone();
+                                        } else {
+                                            app.row_cancel_armed = Some(o.order_id);
+                                        }
                                     }
-                                }
-                            });
+                                },
+                            );
                         });
                     });
                 }
@@ -416,11 +431,12 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         });
                         row.col(|ui| {
                             // 交易对列右对齐（与表头一致）
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(
-                                    egui::RichText::new(&a.symbol).strong().size(theme::FONT_MD),
-                                );
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(theme::code(&a.symbol).size(theme::FONT_MD));
+                                },
+                            );
                         });
                         row.col(|ui| {
                             let c = if a.side == "BUY" {
@@ -494,28 +510,31 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         });
                         row.col(|ui| {
                             // 操作列右对齐：两步确认，armed 键 = algoId
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let row_armed = app.row_cancel_armed == Some(a.algo_id);
-                                if theme::btn_danger(
-                                    ui,
-                                    if row_armed {
-                                        crate::i18n::tr("确认撤销")
-                                    } else {
-                                        crate::i18n::tr("撤销")
-                                    },
-                                    true,
-                                )
-                                .clicked()
-                                {
-                                    row_cancel_clicked = true;
-                                    if row_armed {
-                                        app.row_cancel_armed = None;
-                                        cancel_algo_id = Some(a.algo_id);
-                                    } else {
-                                        app.row_cancel_armed = Some(a.algo_id);
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let row_armed = app.row_cancel_armed == Some(a.algo_id);
+                                    if theme::btn_danger(
+                                        ui,
+                                        if row_armed {
+                                            crate::i18n::tr("确认撤销")
+                                        } else {
+                                            crate::i18n::tr("撤销")
+                                        },
+                                        true,
+                                    )
+                                    .clicked()
+                                    {
+                                        row_cancel_clicked = true;
+                                        if row_armed {
+                                            app.row_cancel_armed = None;
+                                            cancel_algo_id = Some(a.algo_id);
+                                        } else {
+                                            app.row_cancel_armed = Some(a.algo_id);
+                                        }
                                     }
-                                }
-                            });
+                                },
+                            );
                         });
                     });
                 }
@@ -552,9 +571,11 @@ fn pos_tpsl(
 ) -> (Decimal, Decimal) {
     let mut tp = p.take_profit;
     let mut sl = p.stop_loss;
-    for o in open.iter().filter(|o| o.symbol == p.symbol && o.status == "NEW") {
-        let side_ok =
-            o.position_side == "BOTH" || p.side == "BOTH" || o.position_side == p.side;
+    for o in open
+        .iter()
+        .filter(|o| o.symbol == p.symbol && o.status == "NEW")
+    {
+        let side_ok = o.position_side == "BOTH" || p.side == "BOTH" || o.position_side == p.side;
         if !side_ok {
             continue;
         }
@@ -567,8 +588,7 @@ fn pos_tpsl(
     }
     // algo 体系为准：覆盖 openOrders 兜底值（两来源不会同时含同一单）
     for o in algo.iter().filter(|o| o.symbol == p.symbol) {
-        let side_ok =
-            o.position_side == "BOTH" || p.side == "BOTH" || o.position_side == p.side;
+        let side_ok = o.position_side == "BOTH" || p.side == "BOTH" || o.position_side == p.side;
         if !side_ok {
             continue;
         }
@@ -589,11 +609,12 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
     // 数量 = base 资产侧精度（step 小数位）
     let market = crate::binance::Market::UmFutures;
     let pxd = |sym: &str| {
-        state.with_rule(market, sym, |r| r.map(|x| x.price_dp() as usize).unwrap_or(2))
+        state.with_rule(market, sym, |r| {
+            r.map(|x| x.price_dp() as usize).unwrap_or(2)
+        })
     };
-    let qtd = |sym: &str| {
-        state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4))
-    };
+    let qtd =
+        |sym: &str| state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4));
     if !state.has_creds() {
         widgets::empty_state(
             ui,
@@ -733,7 +754,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                             // 交易对列右对齐（与表头一致）
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.label(
-                                    egui::RichText::new(&p.symbol).strong().size(theme::FONT_MD),
+                                    theme::code(&p.symbol).size(theme::FONT_MD),
                                 );
                             });
                         });
@@ -980,13 +1001,7 @@ fn show_tpsl_window(app: &mut BnApp, ui: &mut egui::Ui) {
             });
         ui.add_space(6.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if theme::btn_solid(
-                ui,
-                crate::i18n::tr("提交"),
-                theme::cur().accent,
-                true,
-            )
-            .clicked()
+            if theme::btn_solid(ui, crate::i18n::tr("提交"), theme::cur().accent, true).clicked()
             {
                 submit = Some((edit.3.clone(), edit.4.clone()));
             }
@@ -1005,7 +1020,8 @@ fn show_tpsl_window(app: &mut BnApp, ui: &mut egui::Ui) {
         match crate::ui::trade::confirm_position_tpsl(app, symbol, long, pos_side, sl, tp) {
             Ok(()) => app.tpsl_edit = None,
             Err(e) => {
-                app.state.push_toast(crate::engine::state::ToastKind::Warn, e);
+                app.state
+                    .push_toast(crate::engine::state::ToastKind::Warn, e);
             }
         }
     }
@@ -1033,11 +1049,12 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
     // 历史按 (市场, 交易对) 查询，行内交易对即查询键，市场取查询键的市场
     let market = key.as_ref().map(|(m, _)| *m).unwrap_or(app.market);
     let pxd = |sym: &str| {
-        state.with_rule(market, sym, |r| r.map(|x| x.price_dp() as usize).unwrap_or(2))
+        state.with_rule(market, sym, |r| {
+            r.map(|x| x.price_dp() as usize).unwrap_or(2)
+        })
     };
-    let qtd = |sym: &str| {
-        state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4))
-    };
+    let qtd =
+        |sym: &str| state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4));
     theme::form_row(ui, |ui| {
         match &key {
             Some((m, s)) => ui.label(
@@ -1101,7 +1118,9 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 &state,
                 write_csv(
                     &stem,
-                    &["time", "symbol", "type", "side", "price", "qty", "executed", "status"],
+                    &[
+                        "time", "symbol", "type", "side", "price", "qty", "executed", "status",
+                    ],
                     &rows,
                 ),
             );
@@ -1153,7 +1172,7 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                             widgets::num_cell(ui, widgets::fmt_time(o.time), None);
                         });
                         row.col(|ui| {
-                            ui.label(egui::RichText::new(&o.symbol).size(theme::FONT_MD));
+                            ui.label(theme::code(&o.symbol).size(theme::FONT_MD));
                         });
                         row.col(|ui| {
                             let c = if o.side == "BUY" {
@@ -1169,7 +1188,9 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                             ui.label(egui::RichText::new(word).color(c).size(theme::FONT_MD));
                         });
                         row.col(|ui| {
-                            ui.label(egui::RichText::new(type_cn(&o.order_type)).size(theme::FONT_MD));
+                            ui.label(
+                                egui::RichText::new(type_cn(&o.order_type)).size(theme::FONT_MD),
+                            );
                         });
                         row.col(|ui| {
                             // 止损/止盈单 price 为 0 时展示触发价
@@ -1239,11 +1260,12 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
     // 成交按 (市场, 交易对) 查询，行内交易对即查询键，市场取查询键的市场
     let market = hist_key.as_ref().map(|(m, _)| *m).unwrap_or(app.market);
     let pxd = |sym: &str| {
-        state.with_rule(market, sym, |r| r.map(|x| x.price_dp() as usize).unwrap_or(2))
+        state.with_rule(market, sym, |r| {
+            r.map(|x| x.price_dp() as usize).unwrap_or(2)
+        })
     };
-    let qtd = |sym: &str| {
-        state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4))
-    };
+    let qtd =
+        |sym: &str| state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4));
     theme::form_row(ui, |ui| {
         ui.label(
             egui::RichText::new(format!(
@@ -1296,17 +1318,21 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 .collect::<Vec<_>>();
             let stem = format!(
                 "trades_{}",
-                hist_key
-                    .as_ref()
-                    .map(|(_, s)| s.as_str())
-                    .unwrap_or("all")
+                hist_key.as_ref().map(|(_, s)| s.as_str()).unwrap_or("all")
             );
             toast_export(
                 &state,
                 write_csv(
                     &stem,
                     &[
-                        "time", "symbol", "side", "price", "qty", "quote_qty", "fee", "fee_asset",
+                        "time",
+                        "symbol",
+                        "side",
+                        "price",
+                        "qty",
+                        "quote_qty",
+                        "fee",
+                        "fee_asset",
                         "role",
                     ],
                     &rows,
@@ -1360,7 +1386,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                             widgets::num_cell(ui, widgets::fmt_time(t.time), None);
                         });
                         row.col(|ui| {
-                            ui.label(egui::RichText::new(&t.symbol).size(theme::FONT_MD));
+                            ui.label(theme::code(&t.symbol).size(theme::FONT_MD));
                         });
                         row.col(|ui| {
                             let (txt, c) = if t.is_buyer {
@@ -1378,7 +1404,11 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                             );
                         });
                         row.col(|ui| {
-                            widgets::num_cell(ui, widgets::fmt_dec_fixed(&t.qty, qtd(&t.symbol)), None);
+                            widgets::num_cell(
+                                ui,
+                                widgets::fmt_dec_fixed(&t.qty, qtd(&t.symbol)),
+                                None,
+                            );
                         });
                         row.col(|ui| {
                             let q = if t.quote_qty.is_zero() {
@@ -1386,11 +1416,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                             } else {
                                 t.quote_qty
                             };
-                            widgets::num_cell(
-                                ui,
-                                widgets::fmt_dec_fixed(&q, pxd(&t.symbol)),
-                                None,
-                            );
+                            widgets::num_cell(ui, widgets::fmt_dec_fixed(&q, pxd(&t.symbol)), None);
                         });
                         row.col(|ui| {
                             widgets::num_cell(

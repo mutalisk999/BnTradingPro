@@ -24,6 +24,16 @@ pub const BTN_H: f32 = 28.0;
 /// 主操作按钮高度（买卖切换、下单提交）
 pub const BTN_LG: f32 = 36.0;
 
+/// 变量字体字重轴标签（wght）。Cascadia Code 自身就是变量字体（轴域
+/// 200–700），数字列逐 run 设字重不用内嵌任何字体。雅黑为静态字体，
+/// 中文 glyph 上 variation 自动失效，混排安全
+pub const WGHT: [u8; 4] = *b"wght";
+/// 代码类标签的字距（0.02em × FONT_MD 12.5）：交易对/订单号等纯代码
+/// 在等宽字体里微开字距，密集表格中更利落
+pub const CODE_TRACKING: f32 = 0.25;
+/// 徽标的字母字距（0.05em × FONT_SM 11）：大写短标拉开后排版更专业
+pub const BADGE_TRACKING: f32 = 0.55;
+
 // ---------- 圆角半径 token ----------
 /// 小徽标 / 行内幽灵按钮
 pub const R_SM: u8 = 4;
@@ -308,7 +318,9 @@ pub fn ma_colors() -> [Color32; 4] {
 pub fn badge(ui: &mut egui::Ui, text: &str, fg: Color32) {
     let txt = egui::RichText::new(format!(" {text} "))
         .size(FONT_SM)
-        .strong();
+        .strong()
+        // 徽标字距 0.05em：大写短标加开后接近专业终端的状态标排版
+        .extra_letter_spacing(BADGE_TRACKING);
     egui::Frame::default()
         .fill(fg.gamma_multiply(0.22))
         .stroke(Stroke::new(1.0_f32, fg.gamma_multiply(0.85)))
@@ -317,6 +329,16 @@ pub fn badge(ui: &mut egui::Ui, text: &str, fg: Color32) {
         .show(ui, |ui| {
             ui.label(txt.color(fg));
         });
+}
+
+/// 规范 token「symbol」：交易对/订单号等纯代码文本——等宽字体 + 0.02em
+/// 字距 + wght 500（Cascadia 变量轴）。等宽让代码与价格列同体系，
+/// 微开字距在密集表格中更利落；颜色与字号由调用方继续链式设置
+pub fn code(text: &str) -> egui::RichText {
+    egui::RichText::new(text)
+        .monospace()
+        .extra_letter_spacing(CODE_TRACKING)
+        .variation(WGHT, 500.0)
 }
 
 // ---------- 按钮层级 ----------
@@ -335,7 +357,8 @@ pub fn btn_primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respon
     .fill(cur().accent)
     .corner_radius(R_MD)
     .min_size(egui::vec2(ui.available_width(), BTN_LG));
-    ui.add_enabled(enabled, btn).on_hover_cursor(egui::CursorIcon::PointingHand)
+    ui.add_enabled(enabled, btn)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// 普通按钮：card 底 + 中性文字。不显式设 stroke——交给 egui 按交互状态
@@ -411,11 +434,9 @@ pub fn btn_solid(ui: &mut egui::Ui, text: &str, fill: Color32, enabled: bool) ->
 pub fn btn_ghost(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
     let t = cur();
     let txt_c = if enabled { t.text } else { t.text_dim };
-    let galley = ui.painter().layout_no_wrap(
-        text.to_owned(),
-        egui::FontId::proportional(FONT_SM),
-        txt_c,
-    );
+    let galley =
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), egui::FontId::proportional(FONT_SM), txt_c);
     let pad_x = 8.0;
     let size = egui::vec2(galley.size().x + pad_x * 2.0, 22.0);
     let (rect, resp) = ui.allocate_exact_size(
@@ -436,7 +457,8 @@ pub fn btn_ghost(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response
         Stroke::new(1.0_f32, if active { t.text_dim } else { t.border }),
         egui::StrokeKind::Inside,
     );
-    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, txt_c);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, txt_c);
     if enabled {
         resp.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
