@@ -198,7 +198,8 @@ impl SharedState {
             if let Some(i) = list.iter().position(|x| x == symbol) {
                 list.remove(i);
             } else {
-                list.insert(0, symbol.to_string());
+                // 尾部追加：已有自选的顺序保持稳定，新加的排在最后
+                list.push(symbol.to_string());
             }
         }
         self.send_cmd(crate::engine::Command::PersistConfig);
