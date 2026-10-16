@@ -418,7 +418,11 @@ fn symbol_row(
                     t
                 }
             };
-            ui.add(egui::Label::new(name_txt).truncate());
+            // selectable(false)：标签默认带 click+drag sense（文本选中），
+            // 盖在整卡热区之上会抢先吞掉点击，卡片的 clicked 永不触发——
+            // 用户点名称/价格/涨跌文字时表现为点了没反应。关掉后点击
+            // 落回卡片热区，与点卡片空白处行为一致
+            ui.add(egui::Label::new(name_txt).selectable(false).truncate());
             star_clicked
         })
         .inner;
@@ -434,33 +438,44 @@ fn symbol_row(
             ui.add_space(NAME_X);
             // 不附千分位分组：侧栏紧凑场景需要纯粹的价格数字，逗号既占
             // 宽度又打断纵向扫读（68,432.15 → 68432.15）
-            ui.label(
-                egui::RichText::new(widgets::fmt_dec_plain(&t.close, act.dp))
-                    .monospace()
-                    .size(theme::FONT_SM)
-                    .color(c),
+            // selectable(false)：同名称标签，让点击穿透回整卡热区
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(widgets::fmt_dec_plain(&t.close, act.dp))
+                        .monospace()
+                        .size(theme::FONT_SM)
+                        .color(c),
+                )
+                .selectable(false),
             );
             // RTL 首个控件先让出右缘内边距，涨跌幅不再贴卡片右边
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(CARD_RIGHT_PAD);
-                ui.label(
-                    egui::RichText::new(format!("{chg:+.2}%"))
-                        .monospace()
-                        // 与同行价格统一 FONT_SM（此前硬编码 9.5 脱离字号阶梯）
-                        .size(theme::FONT_SM)
-                        .color(c),
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(format!("{chg:+.2}%"))
+                            .monospace()
+                            // 与同行价格统一 FONT_SM（此前硬编码 9.5 脱离字号阶梯）
+                            .size(theme::FONT_SM)
+                            .color(c),
+                    )
+                    .selectable(false),
                 );
             });
         });
     } else {
         // 无行情时占住第二行槽位，避免有/无数据的行高不一致造成列表跳动
+        // （同样 selectable(false)，占位行的点击也与整卡一致）
         ui.horizontal(|ui| {
             ui.add_space(NAME_X);
-            ui.label(
-                egui::RichText::new("—")
-                    .monospace()
-                    .size(theme::FONT_SM)
-                    .color(theme::cur().text_dim),
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new("—")
+                        .monospace()
+                        .size(theme::FONT_SM)
+                        .color(theme::cur().text_dim),
+                )
+                .selectable(false),
             );
         });
     }
