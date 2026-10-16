@@ -7,61 +7,101 @@ use eframe::egui;
 use egui::{Align2, Color32, FontId, Id, Rect, Stroke};
 use rust_decimal::Decimal;
 
-pub fn status_dot(ui: &mut egui::Ui, st: &ConnState) {
-    // 失败态只显示短标签，完整错误放悬停提示：长错误串会撑爆顶栏布局
-    let (c, label, hover) = match st {
-        ConnState::Connected => (theme::cur().up, crate::i18n::tr("已连接").to_string(), None),
-        ConnState::Connecting => (
-            theme::cur().accent,
-            crate::i18n::tr("连接中").to_string(),
-            None,
-        ),
-        ConnState::Disconnected => (
-            theme::cur().text_dim,
-            crate::i18n::tr("未连接").to_string(),
-            None,
-        ),
+/// 顶栏连接状态项：「名称 + 状态灯」紧邻成组，详细状态（连接中/未连接/
+/// 错误原因）收进悬停提示。旧版把「已连接」等文字平铺在名称旁，多项
+/// 连读时语义粘连成「已连接 账户 已连接 行情」，且行高被文字撑高
+pub fn status_light(ui: &mut egui::Ui, name: &str, st: &ConnState) {
+    let (c, st_txt) = match st {
+        ConnState::Connected => (theme::cur().up, crate::i18n::tr("已连接").to_string()),
+        ConnState::Connecting => (theme::cur().accent, crate::i18n::tr("连接中").to_string()),
+        ConnState::Disconnected => (theme::cur().text_dim, crate::i18n::tr("未连接").to_string()),
         ConnState::Failed(e) => (
             theme::cur().err,
-            crate::i18n::tr("错误").to_string(),
-            Some(format!("{}{e}", crate::i18n::tr("错误: "))),
+            if e.is_empty() {
+                crate::i18n::tr("错误").to_string()
+            } else {
+                format!("{}{e}", crate::i18n::tr("错误: "))
+            },
         ),
     };
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-    let p = ui.painter();
-    p.circle_filled(rect.center(), 4.5, c);
-    // 已连接时加一圈微光晕
-    if *st == ConnState::Connected {
-        p.circle_stroke(
-            rect.center(),
-            6.5,
-            Stroke::new(1.0_f32, c.gamma_multiply(0.35)),
-        );
-    }
-    if let Some(h) = hover {
-        resp.on_hover_text(h);
-    }
-    ui.label(
-        egui::RichText::new(label)
-            .size(theme::FONT_SM)
-            .color(theme::cur().text_dim),
+    status_item(ui, name, c, *st == ConnState::Connected, &st_txt);
+}
+
+/// 顶栏布尔状态项（REST 接口）：结构与 status_light 一致，仅状态来自布尔
+pub fn status_light_ok(ui: &mut egui::Ui, name: &str, ok: bool, ok_txt: &str, err_txt: &str) {
+    status_item(
+        ui,
+        name,
+        if ok {
+            theme::cur().up
+        } else {
+            theme::cur().err
+        },
+        ok,
+        if ok { ok_txt } else { err_txt },
     );
 }
 
-/// 简化状态灯（布尔、无文字标签）：顶栏 REST 等紧凑场合
-pub fn status_dot_bare(ui: &mut egui::Ui, ok: bool) {
-    let c = if ok {
-        theme::cur().up
-    } else {
-        theme::cur().err
-    };
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-    ui.painter().circle_filled(rect.center(), 4.5, c);
-    resp.on_hover_text(if ok {
-        crate::i18n::tr("REST 接口正常")
-    } else {
-        crate::i18n::tr("REST 接口异常")
+fn status_item(ui: &mut egui::Ui, name: &str, c: Color32, glow: bool, hover: &str) {
+    // 紧凑成组：名称与灯之间 3pt，组与组之间由外层布局的 item_spacing 决定
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        ui.label(
+            egui::RichText::new(name)
+                .size(theme::FONT_SM)
+                .color(theme::cur().text_dim),
+        );
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+        let p = ui.painter();
+        p.circle_filled(rect.center(), 4.5, c);
+        // 已连接时加一圈微光晕
+        if glow {
+            p.circle_stroke(rect.center(), 6.5, Stroke::new(1.0_f32, c.gamma_multiply(0.35)));
+        }
+        resp.on_hover_text(format!("{name} · {hover}"));
     });
+}
+
+/// 紧凑文字/图标按钮：自绘 glyph 的方形热区，无 Button 的 18pt 最小高与
+/// 内边距——混排不同字号的行里与相邻文字做竖直对齐时，Button 的底部
+/// 留白会把 glyph 推得明显偏低。glyph 竖直中心显式锚定到 anchor_y
+/// （通常取同行参照文字 rect 的 center().y），None 时落在热区自身中心
+pub fn glyph_button(
+    ui: &mut egui::Ui,
+    text: &str,
+    size: f32,
+    color: Color32,
+    anchor_y: Option<f32>,
+    hover: &str,
+) -> egui::Response {
+    let font = FontId::proportional(size);
+    let galley_w = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), font.clone(), color)
+        .size()
+        .x;
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(galley_w + 8.0, size + 4.0), egui::Sense::click());
+    // 热区在行内的位置由布局决定，但 glyph 画在参照文字的中线上；
+    // 窄窗口下 wrapped 行会把热区换到下一行，此时锚点已失效，
+    // 落回热区自身中心（±4pt 容差吸收行高差）
+    let center_y = match anchor_y {
+        Some(y) if (rect.min.y - 4.0..=rect.max.y + 4.0).contains(&y) => y,
+        _ => rect.center().y,
+    };
+    ui.painter().text(
+        egui::pos2(rect.center().x, center_y),
+        Align2::CENTER_CENTER,
+        text,
+        font,
+        color,
+    );
+    let resp = resp
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(hover);
+    // 自绘控件默认对辅助技术不可见，补上可访问名字
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text));
+    resp
 }
 
 /// 弹性填宽数字输入框：desired_width 取本行剩余可用宽减去 tail（行尾

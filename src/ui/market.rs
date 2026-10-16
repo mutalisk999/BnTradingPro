@@ -796,24 +796,28 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
     // 第一行：交易对 | 最新价/涨跌 | 自选星标 / 预警
     ui.horizontal_wrapped(|ui| {
         // 交易对双色标题：base（标的）强调、quote（计价）弱化，
-        // 与交易所惯例一致；规则未加载/结构不符时整体回退单色原文
+        // 与交易所惯例一致；规则未加载/结构不符时整体回退单色原文。
+        // 记录标题文字竖直中线，作为行尾星标/预警 glyph 的对齐锚点
+        let mut anchor_y: Option<f32>;
         if !base.is_empty() && app.page.symbol.starts_with(&base) {
-            ui.label(
+            let r = ui.label(
                 egui::RichText::new(&base)
                     .strong()
                     .size(theme::FONT_LG),
             );
+            anchor_y = Some(r.rect.center().y);
             ui.label(
                 egui::RichText::new(&app.page.symbol[base.len()..])
                     .size(theme::FONT_LG)
                     .color(theme::cur().text_dim),
             );
         } else {
-            ui.label(
+            let r = ui.label(
                 egui::RichText::new(app.page.symbol.clone())
                     .strong()
                     .size(theme::FONT_LG),
             );
+            anchor_y = Some(r.rect.center().y);
         }
         ui.separator();
         if let Some(t) = &tick {
@@ -825,13 +829,15 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             if fi > 0.0 {
                 c = flash::lerp_color(c, flash::flash_color(fd), fi);
             }
-            ui.label(
+            let r = ui.label(
                 egui::RichText::new(widgets::fmt_thousands(px, dp))
                     .monospace()
                     .strong()
                     .size(theme::FONT_LG)
                     .color(c),
             );
+            // 最新价是星标/预警的直接参照物，以其中线为准（与标题同为 FONT_LG）
+            anchor_y = Some(r.rect.center().y);
             ui.label(
                 egui::RichText::new(format!("{chg:+.2}%"))
                     .monospace()
@@ -840,9 +846,11 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             );
         }
         // F1：自选星标与价格预警紧跟交易对名称/最新价，与交易对信息成组；
-        // 此前置于此行最右、与交易对之间隔着整排周期按钮，关联感太弱
+        // 此前置于此行最右、与交易对之间隔着整排周期按钮，关联感太弱。
+        // 竖直对齐走 glyph_button 的 anchor_y：Button 的 18pt 最小高与内
+        // 边距会把 glyph 压得比同行数字偏低，自绘热区直接钉在数字中线上
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.spacing_mut().item_spacing.x = 4.0;
             let is_fav = app.state.favorites(app.market).contains(&app.page.symbol);
             // 价格预警入口：本交易对已有 N 条时高亮
             let alert_n = app
@@ -853,51 +861,44 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 .iter()
                 .filter(|a| a.market == app.market as u8 && a.symbol == app.page.symbol)
                 .count();
-            let star_txt = egui::RichText::new(if is_fav { "★" } else { "☆" })
-                .size(theme::FONT_BODY)
-                .color(if is_fav {
+            if widgets::glyph_button(
+                ui,
+                if is_fav { "★" } else { "☆" },
+                theme::FONT_BODY,
+                if is_fav {
                     theme::cur().accent
                 } else {
                     theme::cur().text_dim
-                });
-            if ui
-                .add(
-                    egui::Button::new(star_txt)
-                        .fill(egui::Color32::TRANSPARENT)
-                        .stroke(egui::Stroke::NONE)
-                        .corner_radius(3),
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(if is_fav {
+                },
+                anchor_y,
+                if is_fav {
                     crate::i18n::tr("取消自选")
                 } else {
                     crate::i18n::tr("加入自选")
-                })
-                .clicked()
+                },
+            )
+            .clicked()
             {
                 app.state.toggle_favorite(app.market, &app.page.symbol);
             }
-            let bell_txt = egui::RichText::new(if alert_n > 0 {
+            let bell_txt = if alert_n > 0 {
                 format!("{}({alert_n})", crate::i18n::tr("预警"))
             } else {
                 crate::i18n::tr("预警").to_string()
-            })
-            .size(theme::FONT_SM)
-            .color(if alert_n > 0 || app.alerts_open {
-                theme::cur().accent
-            } else {
-                theme::cur().text_dim
-            });
-            if ui
-                .add(
-                    egui::Button::new(bell_txt)
-                        .fill(egui::Color32::TRANSPARENT)
-                        .stroke(egui::Stroke::NONE)
-                        .corner_radius(3),
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(crate::i18n::tr("价格预警（本地触发，到价弹提示）"))
-                .clicked()
+            };
+            if widgets::glyph_button(
+                ui,
+                &bell_txt,
+                theme::FONT_SM,
+                if alert_n > 0 || app.alerts_open {
+                    theme::cur().accent
+                } else {
+                    theme::cur().text_dim
+                },
+                anchor_y,
+                crate::i18n::tr("价格预警（本地触发，到价弹提示）"),
+            )
+            .clicked()
             {
                 app.alerts_open = !app.alerts_open;
             }

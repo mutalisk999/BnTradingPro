@@ -741,38 +741,42 @@ impl BnApp {
                     theme::badge(ui, crate::i18n::tr("实盘 · 真实资金"), theme::cur().err);
                 }
                 ui.separator();
-                ui.label(
-                    egui::RichText::new(crate::i18n::tr("REST"))
-                        .size(theme::FONT_SM)
-                        .color(theme::cur().text_dim),
-                );
+                // 连接状态：每项 = 「名称 + 状态灯」紧邻成组，读作
+                // 「账户 ● 行情 ● REST ●」；RTL 容器内先添加的更靠右，
+                // 故按 REST → 行情 → 账户 的逆序添加。状态详情（连接中/
+                // 未连接/错误原因）收进各项悬停提示
                 let rest_ok = self
                     .state
                     .rest_ok
                     .load(std::sync::atomic::Ordering::Relaxed);
-                widgets::status_dot_bare(ui, rest_ok);
+                widgets::status_light_ok(
+                    ui,
+                    crate::i18n::tr("REST"),
+                    rest_ok,
+                    crate::i18n::tr("REST 接口正常"),
+                    crate::i18n::tr("REST 接口异常"),
+                );
                 if let Some(m) = self.tab.market() {
-                    ui.label(
-                        egui::RichText::new(crate::i18n::tr("行情"))
-                            .size(theme::FONT_SM)
-                            .color(theme::cur().text_dim),
-                    );
                     let mws = self.state.md.lock().market_ws(m).clone();
-                    widgets::status_dot(ui, &mws);
-                    ui.label(
-                        egui::RichText::new(crate::i18n::tr("账户"))
-                            .size(theme::FONT_SM)
-                            .color(theme::cur().text_dim),
-                    );
+                    widgets::status_light(ui, crate::i18n::tr("行情"), &mws);
                     if self.state.has_creds() {
                         let uws = self.state.md.lock().user_ws(m).clone();
-                        widgets::status_dot(ui, &uws);
+                        widgets::status_light(ui, crate::i18n::tr("账户"), &uws);
                     } else {
-                        ui.label(
-                            egui::RichText::new(crate::i18n::tr("未配置密钥"))
-                                .size(theme::FONT_SM)
-                                .color(theme::cur().warn),
-                        );
+                        // 未配置密钥：保持「名称 + 状态」结构，用警示文字代替状态灯
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 3.0;
+                            ui.label(
+                                egui::RichText::new(crate::i18n::tr("账户"))
+                                    .size(theme::FONT_SM)
+                                    .color(theme::cur().text_dim),
+                            );
+                            ui.label(
+                                egui::RichText::new(crate::i18n::tr("未配置密钥"))
+                                    .size(theme::FONT_SM)
+                                    .color(theme::cur().warn),
+                            );
+                        });
                     }
                 }
             });
