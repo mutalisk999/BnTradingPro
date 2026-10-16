@@ -1,6 +1,6 @@
 //! Binance REST 客户端：请求构建、HMAC-SHA256 签名、时间同步、限速与错误映射
 
-use crate::binance::{endpoints, Market, Side};
+use crate::binance::{endpoints, Endpoints, Market, Side, SPOT_REST_DEFAULT};
 use crate::config::ProxyConfig;
 use hmac::{Hmac, Mac};
 use parking_lot::Mutex;
@@ -13,6 +13,16 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 type HmacSha256 = Hmac<Sha256>;
+
+/// 现货主网降级镜像（默认域名被运营商/代理误转返回 410 空响应时按序探测）。
+/// 均为官方等价镜像，共享同一 API 与限频
+const SPOT_REST_MIRRORS: [&str; 5] = [
+    "https://api-gcp.binance.com",
+    "https://api1.binance.com",
+    "https://api2.binance.com",
+    "https://api3.binance.com",
+    "https://api4.binance.com",
+];
 
 #[derive(Debug, Error)]
 pub enum BinanceError {
@@ -122,6 +132,10 @@ pub struct BinanceRest {
     weight_used: [AtomicU64; 2],
     weight_window: [Mutex<Option<std::time::Instant>>; 2],
     weight_limit: [u64; 2],
+    /// 现货主网镜像降级的粘性游标：上次成功的镜像下标。
+    /// 默认域名经代理返回空响应时按 `SPOT_REST_MIRRORS` 轮换重试，
+    /// 成功后粘住该镜像，后续请求的镜像探测从它开始
+    spot_mirror: Mutex<Option<usize>>,
 }
 
 impl BinanceRest {
@@ -148,6 +162,7 @@ impl BinanceRest {
             weight_window: [Mutex::new(None), Mutex::new(None)],
             // 各自取限额的 2/3 留余量：现货 6000/min、合约 2400/min
             weight_limit: [4000, 1600],
+            spot_mirror: Mutex::new(None),
         })
     }
 
@@ -182,13 +197,16 @@ impl BinanceRest {
         overrides: &crate::config::AppConfig,
     ) -> Result<(), BinanceError> {
         let ep = endpoints(ctx.market, ctx.testnet, overrides);
-        self.resync_time(&ep, ctx.market).await
+        self.with_spot_fallback(ep, ctx, |ep| async move {
+            self.resync_time(&ep, ctx.market).await
+        })
+        .await
     }
 
     /// 按既有端点校时（-1021 自动重试路径复用）
     async fn resync_time(
         &self,
-        ep: &crate::binance::Endpoints,
+        ep: &Endpoints,
         market: Market,
     ) -> Result<(), BinanceError> {
         // 路径必须带市场前缀：现货 /api/v3/time、合约 /fapi/v1/time
@@ -204,6 +222,53 @@ impl BinanceRest {
         Ok(())
     }
 
+    /// 现货主网降级重试包装：请求先打当前端点；仅当错误是 Decode（响应体
+    /// 非 JSON——代理误转 410 空响应的典型形态）且端点就是内置默认域名
+    /// （用户显式覆盖端点时尊重其配置不介入）时，逐个尝试官方镜像。
+    /// 真实币安错误（Api/RateLimit）、超时与网络错误一律不降级——能拿到
+    /// 结构化错误说明请求已到达币安，跨镜像重试只会浪费限频权重
+    async fn with_spot_fallback<T, F, Fut>(
+        &self,
+        ep: Endpoints,
+        ctx: RestCtx,
+        run: F,
+    ) -> Result<T, BinanceError>
+    where
+        F: Fn(Endpoints) -> Fut,
+        Fut: std::future::Future<Output = Result<T, BinanceError>>,
+    {
+        match run(ep.clone()).await {
+            Ok(v) => Ok(v),
+            Err(e) if spot_mirror_eligible(&ep, ctx, &e) => {
+                let order = mirror_order(*self.spot_mirror.lock());
+                let mut last = e;
+                for i in order {
+                    let mut m = ep.clone();
+                    m.rest = SPOT_REST_MIRRORS[i].into();
+                    tracing::warn!("现货 REST 降级重试 {} -> {}", ep.rest, m.rest);
+                    match run(m).await {
+                        Ok(v) => {
+                            tracing::info!(
+                                "现货 REST 镜像 {} 可用，后续请求从它开始探测",
+                                SPOT_REST_MIRRORS[i]
+                            );
+                            *self.spot_mirror.lock() = Some(i);
+                            return Ok(v);
+                        }
+                        // 镜像也返回空响应：继续试下一个
+                        Err(e2) if is_mirror_trigger(&e2) => last = e2,
+                        // 非空响应错误（到达币安/超时/断网）：镜像重试无意义，直接返回
+                        Err(e2) => return Err(e2),
+                    }
+                }
+                // 全部镜像都空响应：清掉粘性，下次请求重新从默认域名试起
+                *self.spot_mirror.lock() = None;
+                Err(last)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// 带端点覆盖的请求包装（由 engine 传入当前配置）
     pub async fn get_public(
         &self,
@@ -213,7 +278,10 @@ impl BinanceRest {
         params: &[(&str, &str)],
     ) -> Result<Value, BinanceError> {
         let ep = endpoints(ctx.market, ctx.testnet, overrides);
-        self.get_public_raw(&ep, ctx.market, path, params).await
+        self.with_spot_fallback(ep, ctx, |ep| async move {
+            self.get_public_raw(&ep, ctx.market, path, params).await
+        })
+        .await
     }
 
     pub async fn signed(
@@ -225,7 +293,15 @@ impl BinanceRest {
         params: Vec<(String, String)>,
     ) -> Result<Value, BinanceError> {
         let ep = endpoints(ctx.market, ctx.testnet, overrides);
-        self.signed_raw(method, &ep, ctx, path, params).await
+        // 闭包会被调用多次（默认域名 + 各镜像），每次先克隆再移交 async 块
+        self.with_spot_fallback(ep, ctx, move |ep| {
+            let method = method.clone();
+            let params = params.clone();
+            async move {
+                self.signed_raw(method, &ep, ctx, path, params).await
+            }
+        })
+        .await
     }
 
     /// 仅需 API Key 头的端点（listenKey 管理），不签名。
@@ -238,26 +314,31 @@ impl BinanceRest {
         path: &str,
         params: &[(&str, &str)],
     ) -> Result<Value, BinanceError> {
-        if !self.has_creds() {
-            return Err(BinanceError::NoCreds);
-        }
-        self.wait_for_weight(ctx.market).await?;
         let ep = endpoints(ctx.market, ctx.testnet, overrides);
-        let url = format!("{}{}", ep.rest, path);
-        let key = self.api_key.as_ref().unwrap();
-        let mut req = self.http.request(method.clone(), &url);
-        if !params.is_empty() {
-            req = req.query(params);
-        }
-        let resp = req
-            .header("X-MBX-APIKEY", key.as_str())
-            .send()
-            .await
-            .map_err(map_req_err)?;
-        self.track_weight(ctx.market, &resp);
-        parse_response(resp)
-            .await
-            .map_err(|e| with_endpoint_ctx(e, ctx.market, &method, path))
+        self.with_spot_fallback(ep, ctx, move |ep| {
+            let method = method.clone();
+            async move {
+                if !self.has_creds() {
+                    return Err(BinanceError::NoCreds);
+                }                self.wait_for_weight(ctx.market).await?;
+                let url = format!("{}{}", ep.rest, path);
+                let key = self.api_key.as_ref().unwrap();
+                let mut req = self.http.request(method.clone(), &url);
+                if !params.is_empty() {
+                    req = req.query(params);
+                }
+                let resp = req
+                    .header("X-MBX-APIKEY", key.as_str())
+                    .send()
+                    .await
+                    .map_err(map_req_err)?;
+                self.track_weight(ctx.market, &resp);
+                parse_response(resp)
+                    .await
+                    .map_err(|e| with_endpoint_ctx(e, ctx.market, &method, path))
+            }
+        })
+        .await
     }
 
     async fn wait_for_weight(&self, market: Market) -> Result<(), BinanceError> {
@@ -499,6 +580,31 @@ fn urlencode(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
 
+/// 错误是否是「镜像降级触发形」：响应体非 JSON（空响应、代理错误页）。
+/// 真实币安错误都是结构化 JSON（Api/RateLimit），超时与网络错误另计——
+/// 它们说明要么没到币安但可能只是暂时，要么已到达币安，镜像重试无意义
+fn is_mirror_trigger(e: &BinanceError) -> bool {
+    matches!(e, BinanceError::Decode(_))
+}
+
+/// 镜像轮换顺序：`None`（尚未知任何可用镜像）时按默认顺序探测；
+/// `Some(i)` 粘性游标从上次成功的镜像开始。游标越界（配置修改过
+/// 镜像表等）自动回到 0
+fn mirror_order(start: Option<usize>) -> Vec<usize> {
+    let n = SPOT_REST_MIRRORS.len();
+    let s = start.map(|i| i % n).unwrap_or(0);
+    (0..n).map(|k| (s + k) % n).collect()
+}
+
+/// 降级是否适用：仅现货主网、端点为内置默认域名（用户显式覆盖端点时
+/// 尊重其配置，不擅自换域名）且错误是代理误转形的 Decode
+fn spot_mirror_eligible(ep: &Endpoints, ctx: RestCtx, e: &BinanceError) -> bool {
+    ctx.market == Market::Spot
+        && !ctx.testnet
+        && ep.rest == SPOT_REST_DEFAULT
+        && is_mirror_trigger(e)
+}
+
 /// 为 HTTP 级失败附加端点上下文（方法 + 路径 + 市场）。
 /// 一个光秃秃的「HTTP 410 Gone」无法定位是哪个调用挂了——现货/合约
 /// 那么多端点，带上路径用户（和日志）才能一眼看出该查哪个
@@ -507,8 +613,7 @@ fn with_endpoint_ctx(
     market: Market,
     method: &reqwest::Method,
     path: &str,
-) -> BinanceError {
-    match e {
+) -> BinanceError {    match e {
         BinanceError::Decode(m) => {
             BinanceError::Decode(format!("{method} {path}（{}）: {m}", market.label()))
         }
@@ -1024,5 +1129,54 @@ mod tests {
     fn signed_query_urlencodes_values() {
         let qs = build_signed_query(&[("k".into(), "a b&c=d".into())], 1, 0, "secret");
         assert!(qs.starts_with("k=a+b%26c%3Dd&timestamp=1&signature="));
+    }
+
+    #[test]
+    fn mirror_order_rotation() {
+        // 无粘性：从镜像表头（api-gcp）开始
+        let order = mirror_order(None);
+        assert_eq!(order, vec![0, 1, 2, 3, 4]);
+        // 粘性 i：从 i 开始轮换，回到表头
+        let order = mirror_order(Some(3));
+        assert_eq!(order, vec![3, 4, 0, 1, 2]);
+        // 游标越界按取模回到有效范围（99 % 5 = 4）
+        assert_eq!(mirror_order(Some(99)), vec![4, 0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn spot_mirror_eligibility() {
+        let spot_ep = Endpoints {
+            rest: SPOT_REST_DEFAULT.into(),
+            ws: "wss://stream.binance.com:9443".into(),
+        };
+        let decode = BinanceError::Decode("HTTP 410（响应体为空）".into());
+        let spot_mainnet = RestCtx {
+            market: Market::Spot,
+            testnet: false,
+            recv_window_ms: 0,
+        };
+        // 现货主网 + 默认端点 + Decode → 可降级
+        assert!(spot_mirror_eligible(&spot_ep, spot_mainnet, &decode));
+        // 用户显式覆盖了端点 → 尊重配置，不降级
+        let overridden = Endpoints {
+            rest: "https://my-relay.example".into(),
+            ws: spot_ep.ws.clone(),
+        };
+        assert!(!spot_mirror_eligible(&overridden, spot_mainnet, &decode));
+        // 测试网不降级（镜像不服务测试网）
+        let testnet = RestCtx { testnet: true, ..spot_mainnet };
+        assert!(!spot_mirror_eligible(&spot_ep, testnet, &decode));
+        // 合约不降级（镜像仅覆盖现货 api 域名）
+        let fut = RestCtx {
+            market: Market::UmFutures,
+            ..spot_mainnet
+        };
+        assert!(!spot_mirror_eligible(&spot_ep, fut, &decode));
+        // 结构化错误（到达币安后的真实错误）不降级
+        let api = BinanceError::Api { code: -1021, msg: "timestamp".into() };
+        assert!(!spot_mirror_eligible(&spot_ep, spot_mainnet, &api));
+        assert!(!spot_mirror_eligible(&spot_ep, spot_mainnet, &BinanceError::Timeout));
+        // 到达镜像后的非空响应错误同样不应继续轮换
+        assert!(!is_mirror_trigger(&api));
     }
 }

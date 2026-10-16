@@ -11,7 +11,7 @@ use crate::binance::client::{
 use crate::binance::model::*;
 use crate::binance::symbols::{parse_exchange_info, quantize_price, quantize_qty, RuleBook};
 use crate::binance::{endpoints, Interval, Market, Side};
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use rust_decimal::Decimal;
 use state::{ConnState, SharedState, ToastKind};
 use std::sync::atomic::Ordering;
@@ -1475,6 +1475,38 @@ impl MarketWsSlot {
         }
     }
 
+    /// 本槽位的符号作用域流（随交易对/周期变化）。
+    /// 独立于 `streams_and_url` 拆出：原地改订（UNSUBSCRIBE/SUBSCRIBE）只动
+    /// 这些，`!miniTicker@arr` 这类市场级流随初始连接建立后永不重订
+    fn scoped_streams(&self, lower: &str, interval: &str, fut: bool) -> Vec<String> {
+        match (self, fut) {
+            // 现货槽位 A 承载全部符号流。深度取 20 档（@depth20@100ms）：
+            // 现货部分深度流只支持 5/10/20 档——50 档为合约（fapi）专属，
+            // 现货订阅 @depth50 会被服务端忽略，盘口静默停止推送
+            (MarketWsSlot::A, false) => vec![
+                format!("{lower}@ticker"),
+                format!("{lower}@depth20@100ms"),
+                format!("{lower}@aggTrade"),
+                format!("{lower}@kline_{interval}"),
+            ],
+            // 期货 public 类：部分深度（bookTicker 未用，不订阅）。
+            // 深度同样取 20 档（@depth20@100ms）：50 档在本环境下与现货
+            // 一样被服务端静默忽略——连接成功、状态正常，但深度帧永不到达
+            // （盘口定格）。代价仅是开启大倍数聚合档位时桶密度变稀，
+            // 数据可用性优先于聚合密度
+            (MarketWsSlot::A, true) => vec![format!("{lower}@depth20@100ms")],
+            // 期货 market 类：成交/K线/ticker/标记价
+            (MarketWsSlot::B, true) => vec![
+                format!("{lower}@ticker"),
+                format!("{lower}@aggTrade"),
+                format!("{lower}@kline_{interval}"),
+                format!("{lower}@markPrice@1s"),
+            ],
+            // 现货 B 槽位不建连接（调用方跳过该订阅周期）
+            (MarketWsSlot::B, false) => Vec::new(),
+        }
+    }
+
     /// 本槽位的流列表与组合流 URL（base 为市场 WS 根端点，期货为
     /// fstream.binance.com[.testnet]，可被 override_fut_ws 覆盖）
     fn streams_and_url(
@@ -1484,47 +1516,25 @@ impl MarketWsSlot {
         interval: &str,
         fut: bool,
     ) -> (Vec<String>, String) {
-        match (self, fut) {
-            // 现货：legacy 组合流承载全部
-            // 现货：legacy 组合流承载全部。深度取 20 档（@depth20@100ms）：
-            // 现货部分深度流只支持 5/10/20 档——50 档为合约（fapi）专属，
-            // 现货订阅 @depth50 会被服务端忽略，盘口静默停止推送
-            (MarketWsSlot::A, false) => {
-                let s = vec![
-                    format!("{lower}@ticker"),
-                    format!("{lower}@depth20@100ms"),
-                    format!("{lower}@aggTrade"),
-                    format!("{lower}@kline_{interval}"),
-                    "!miniTicker@arr".to_string(),
-                ];
-                let url = format!("{base}/stream?streams={}", s.join("/"));
-                (s, url)
-            }
-            // 期货 public 类：部分深度（bookTicker 未用，不订阅）。
-            // 深度同样取 20 档（@depth20@100ms）：50 档在本环境下与现货
-            // 一样被服务端静默忽略——连接成功、状态正常，但深度帧永不到达
-            // （盘口定格）。代价仅是开启大倍数聚合档位时桶密度变稀，
-            // 数据可用性优先于聚合密度
-            (MarketWsSlot::A, true) => {
-                let s = vec![format!("{lower}@depth20@100ms")];
-                let url = format!("{base}/public/stream?streams={}", s.join("/"));
-                (s, url)
-            }
-            // 期货 market 类：成交/K线/ticker/标记价 + 全市场迷你 ticker（侧栏）
-            (MarketWsSlot::B, true) => {
-                let s = vec![
-                    format!("{lower}@ticker"),
-                    format!("{lower}@aggTrade"),
-                    format!("{lower}@kline_{interval}"),
-                    format!("{lower}@markPrice@1s"),
-                    "!miniTicker@arr".to_string(),
-                ];
-                let url = format!("{base}/market/stream?streams={}", s.join("/"));
-                (s, url)
-            }
-            // 现货 B 槽位不建连接（调用方跳过该订阅周期）
-            (MarketWsSlot::B, false) => (Vec::new(), String::new()),
+        let mut s = self.scoped_streams(lower, interval, fut);
+        // 全市场迷你 ticker（侧栏实时价格）只随初始连接订阅一次，
+        // 交易对切换时不重订——它本来就不属于任何单个交易对
+        if matches!((self, fut), (MarketWsSlot::A, false) | (MarketWsSlot::B, true)) {
+            s.push("!miniTicker@arr".to_string());
         }
+        if s.is_empty() {
+            return (Vec::new(), String::new());
+        }
+        // 期货 2026-03 拆流后端点路径按槽位不同：A 走 /public/stream（深度），
+        // B 走 /market/stream（成交/K线/ticker/标记价）；现货 legacy 单入口 /stream
+        let path = match (self, fut) {
+            (MarketWsSlot::A, false) => "/stream",
+            (MarketWsSlot::A, true) => "/public/stream",
+            (MarketWsSlot::B, true) => "/market/stream",
+            (MarketWsSlot::B, false) => return (Vec::new(), String::new()),
+        };
+        let url = format!("{base}{path}?streams={}", s.join("/"));
+        (s, url)
     }
 }
 
@@ -1592,7 +1602,7 @@ async fn market_ws_loop(
     let mut backoff = Duration::from_secs(1);
     loop {
         // 等待首个订阅
-        let spec = loop {
+        let mut spec = loop {
             let cur = rx_sub.borrow_and_update().clone();
             match cur {
                 Some(s) => break s,
@@ -1643,16 +1653,32 @@ async fn market_ws_loop(
                 state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
                 repaint(&ctx);
 
-                let (_, mut read) = futures_util::StreamExt::split(ws);
+                let (mut write, mut read) = futures_util::StreamExt::split(ws);
+                // 服务端当下已订阅的流（含随连接建立的 !miniTicker@arr）。
+                // 原地改订按差集计算增量：市场级流（'!' 前缀）永远不退订
+                let mut server_streams =
+                    slot.streams_and_url(&ep.ws, &lower, spec.interval.as_str(), fut).0;
                 let version = last_version(&state);
                 // 记录读循环退出原因：出错时保留 Failed 状态（不被下方 Disconnected 覆盖）
                 let mut read_fail: Option<String> = None;
                 let mut eof = false;
+                // 主动断开（跨市场切换/取消订阅）：不计退避
+                let mut intentional = false;
+                // 原地改订的活性看门狗：到期未收到新符号的符号级帧即判定
+                // 服务端忽略了 SUBSCRIBE（组合流端点理论支持原地改订，但
+                // 无法离线验证），退回整连兜底
+                let mut resub_dl: Option<Instant> = None;
+                // 控制帧 id：同一连接内单调递增，便于对照服务端应答
+                let mut req_id: u64 = 0;
                 loop {
                     // 循环顶部比对配置版本，避免被高频行情消息饿死
                     if last_version(&state) != version {
+                        intentional = true;
                         break;
                     }
+                    // 看门狗截止时间本帧快照（Copy）：分支 body 要写 resub_dl，
+                    // async 分支须 move 捕获避免跨分支借用冲突
+                    let dl = resub_dl;
                     tokio::select! {
                         msg = read.next() => {
                             match msg {
@@ -1683,10 +1709,21 @@ async fn market_ws_loop(
                                         tokio_tungstenite::tungstenite::Message::Binary(b) => {
                                             String::from_utf8(b).ok()
                                         }
+                                        tokio_tungstenite::tungstenite::Message::Ping(p) => {
+                                            // 主动回 Pong：不依赖服务端单向心跳，
+                                            // 部分代理仅在有客户端 Pong 时保活连接
+                                            let _ = write
+                                                .send(tokio_tungstenite::tungstenite::Message::Pong(p))
+                                                .await;
+                                            None
+                                        }
                                         _ => None,
                                     };
                                     if let Some(txt) = txt {
-                                        handle_market_msg_text(&state, &spec, &txt);
+                                        if handle_market_msg_text(&state, &spec, &txt) {
+                                            // 新符号的符号级帧到达 → 改订已生效
+                                            resub_dl = None;
+                                        }
                                         // 行情帧可达每秒数百条（depth20@100ms +
                                         // aggTrade），逐帧立即重绘会让 UI 在无输入
                                         // 时也持续满帧率空转；合帧到 ~10fps，
@@ -1696,7 +1733,102 @@ async fn market_ws_loop(
                                 }
                             }
                         }
-                        _ = rx_sub.changed() => break,
+                        _ = rx_sub.changed() => {
+                            // 订阅变化：同市场 → 原地改订（UNSUBSCRIBE/SUBSCRIBE
+                            // 控制帧，连接复用，切换免一次 TCP+TLS+WSS 握手）；
+                            // 跨市场（端点主机不同）或槽位不适用 → 整连
+                            let Some(ns) = rx_sub.borrow_and_update().clone() else {
+                                intentional = true;
+                                break;
+                            };
+                            if ns.market != spec.market
+                                || (slot == MarketWsSlot::B && ns.market != Market::UmFutures)
+                            {
+                                intentional = true;
+                                break;
+                            }
+                            // 改订期间 UI 侧已把新交易对 ws 置 Connecting，
+                            // 控制帧发出后连接本身仍健康，拉回 Connected
+                            let st = pair.lock().set(slot.idx(), ns.market, ConnState::Connected);
+                            state.set_market_ws(ns.market, st.clone());
+                            state.with_symbol_md(ns.market, &ns.symbol, |md| md.ws = st);
+                            let nl = ns.symbol.to_lowercase();
+                            let new_scoped = slot.scoped_streams(&nl, ns.interval.as_str(), fut);
+                            let drop_s: Vec<String> = server_streams
+                                .iter()
+                                .filter(|s| !s.starts_with('!') && !new_scoped.contains(s))
+                                .cloned()
+                                .collect();
+                            let add_s: Vec<String> = new_scoped
+                                .iter()
+                                .filter(|s| !server_streams.contains(s))
+                                .cloned()
+                                .collect();
+                            if drop_s.is_empty() && add_s.is_empty() {
+                                // 同交易对同周期重复下发（如 ReloadAll 重发订阅）：
+                                // 流无变化，只更新本地规格
+                                spec = ns;
+                                repaint(&ctx);
+                                continue;
+                            }
+                            req_id += 1;
+                            let unsub = serde_json::json!({
+                                "method": "UNSUBSCRIBE",
+                                "params": drop_s,
+                                "id": req_id,
+                            })
+                            .to_string();
+                            req_id += 1;
+                            let sub = serde_json::json!({
+                                "method": "SUBSCRIBE",
+                                "params": add_s,
+                                "id": req_id,
+                            })
+                            .to_string();
+                            // 发送超时即判定连接已死： sink 阻塞会把整个读循环卡住
+                            let sent = tokio::time::timeout(
+                                Duration::from_secs(3),
+                                async {
+                                    write
+                                        .send(tokio_tungstenite::tungstenite::Message::Text(unsub))
+                                        .await?;
+                                    write
+                                        .send(tokio_tungstenite::tungstenite::Message::Text(sub))
+                                        .await
+                                },
+                            )
+                            .await;
+                            if !matches!(sent, Ok(Ok(()))) {
+                                read_fail =
+                                    Some(crate::i18n::tr("改订命令发送失败").to_string());
+                                break;
+                            }
+                            server_streams.retain(|s| !drop_s.contains(s));
+                            server_streams.extend(add_s.iter().cloned());
+                            tracing::info!(
+                                "行情WS原地改订({}): {} -> {}",
+                                spec.market,
+                                spec.symbol,
+                                ns.symbol
+                            );
+                            spec = ns;
+                            repaint(&ctx);
+                            resub_dl = Some(Instant::now() + Duration::from_secs(6));
+                        }
+                        // 改订活性看门狗：None 时永久挂起，不参与 select 竞争
+                        _ = async move {
+                            match dl {
+                                Some(d) => {
+                                    tokio::time::sleep_until(tokio::time::Instant::from_std(d)).await
+                                }
+                                None => std::future::pending::<()>().await,
+                            }
+                        } => {
+                            read_fail = Some(
+                                crate::i18n::tr("切换订阅后未收到数据，重连").to_string(),
+                            );
+                            break;
+                        }
                         // 空闲看门狗：行情流常有 100ms 深度推送，90s 无任何帧
                         // （含协议 ping）基本可判定为半开连接，强制走重连
                         _ = tokio::time::sleep(Duration::from_secs(90)) => {
@@ -1717,17 +1849,20 @@ async fn market_ws_loop(
                 if let Some(msg) = read_fail {
                     let st = pair.lock().set(slot.idx(), spec.market, ConnState::Failed(msg));
                     state.set_market_ws(spec.market, st);
-                } else {
+                } else if !intentional {
                     let st = pair.lock().set(slot.idx(), spec.market, ConnState::Disconnected);
                     state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
+                } else {
+                    // 主动断开：状态由下一轮连接（或订阅方）接管，这里不写
+                    // Disconnected 覆盖即将到来的 Connecting
                 }
                 // 连接未稳定（<2min）即断开 → 指数退避，防止对端抖动时重连风暴；
-                // 稳定运行过的连接则重置退避
-                if connected_at.elapsed() < Duration::from_secs(120) {
+                // 稳定运行过的连接、以及主动改订/配置变更引起的断开则重置退避
+                if intentional || connected_at.elapsed() >= Duration::from_secs(120) {
+                    backoff = Duration::from_secs(1);
+                } else {
                     tokio::time::sleep(backoff).await;
                     backoff = (backoff * 2).min(Duration::from_secs(30));
-                } else {
-                    backoff = Duration::from_secs(1);
                 }
             }
         }
@@ -1848,12 +1983,30 @@ struct StreamFrame<'a> {
     data: &'a serde_json::value::RawValue,
 }
 
-fn handle_market_msg_text(state: &SharedState, spec: &SubSpec, text: &str) {
+/// 分发一条组合流文本帧。
+///
+/// 返回值 = 是否为**当前订阅符号**的符号级数据帧（市场级帧如
+/// `!miniTicker@arr` 返回 false）。调用方据此清原地改订的活性看门狗：
+/// 市场级帧每秒照推，不能证明新符号流已被服务端接受。
+///
+/// 符号作用域过滤：组合流帧名形如 `btcusdt@depth20@100ms`，`@` 前缀即
+/// 所属符号；`!` 前缀为市场级流。原地改订（UNSUBSCRIBE/SUBSCRIBE）后
+/// 旧符号的在途帧仍可能到达，仅与当前 spec 一致的符号级帧才落地——
+/// 与 `with_symbol_md` 的活跃订阅守卫互为兜底
+fn handle_market_msg_text(state: &SharedState, spec: &SubSpec, text: &str) -> bool {
     let Ok(frame) = serde_json::from_str::<StreamFrame>(text) else {
-        return;
+        // SUBSCRIBE/UNSUBSCRIBE 的服务端应答帧（{"result":null,"id":N}）
+        // 不是 StreamFrame 结构，反序列化失败即静默忽略
+        return false;
     };
     let stream = frame.stream;
     let data = frame.data.get();
+    // 帧的符号作用域：'!' 开头 = 市场级流（不受交易对切换影响）
+    let scope = stream.split_once('@').map(|(p, _)| p).unwrap_or("");
+    let scoped = !scope.starts_with('!');
+    if scoped && scope != spec.symbol.to_lowercase() {
+        return false;
+    }
     if stream.ends_with("@ticker") {
         if let Ok(t) = serde_json::from_str::<Ticker24>(data) {
             state.with_symbol_md(spec.market, &spec.symbol, |md| md.ticker = Some(t));
@@ -1883,6 +2036,7 @@ fn handle_market_msg_text(state: &SharedState, spec: &SubSpec, text: &str) {
             state.with_symbol_md(spec.market, &spec.symbol, |md| md.mark = Some(m));
         }
     }
+    scoped
 }
 
 // ---------------------------------------------------------------- 用户数据流
@@ -2294,5 +2448,54 @@ mod tests {
             assert_eq!(o.open[Market::UmFutures as usize].len(), 0);
             assert_eq!(o.open[Market::Spot as usize].len(), 1);
         }
+    }
+
+    #[test]
+    fn stream_scope_filter() {
+        let st = SharedState::default();
+        st.set_active_sub(Market::Spot, "BTCUSDT");
+        let spec = SubSpec {
+            market: Market::Spot,
+            symbol: "BTCUSDT".into(),
+            interval: Interval::M1,
+        };
+        let ticker_frame = |sym: &str| {
+            format!(
+                r#"{{"stream":"{sym}@ticker","data":{{"symbol":"{S}","c":"68000","o":"67000","h":"69000","l":"66500","P":"1.5","q":"1000000000","v":"20000"}}}}"#,
+                sym = sym.to_lowercase(),
+                S = sym
+            )
+        };
+
+        // 旧符号在途帧（原地改订后服务端仍可能推几帧）：帧名符号与当前订阅
+        // 不一致 → 丢弃，返回 false，且不得创建/复活 ETHUSDT 槽位
+        assert!(!handle_market_msg_text(&st, &spec, &ticker_frame("ETHUSDT")));
+        assert!(!st.md.lock().spot.contains_key("ETHUSDT"));
+
+        // 当前符号帧 → 落地并返回 true（读循环据此清改订活性看门狗）
+        assert!(handle_market_msg_text(&st, &spec, &ticker_frame("BTCUSDT")));
+        {
+            let md = st.md.lock();
+            let slot = md.spot.get("BTCUSDT").expect("活跃符号槽位已创建");
+            assert_eq!(
+                slot.ticker.as_ref().unwrap().last_price,
+                Decimal::from(68000)
+            );
+        }
+
+        // 市场级流：照常分发（侧栏 tickers 更新），但返回 false——
+        // 它每秒都推，不能证明新符号符号级流已被服务端接受
+        let mini = r#"{"stream":"!miniTicker@arr","data":[{"s":"BTCUSDT","c":"68100","o":"67000","P":"1.6"},{"s":"ETHUSDT","c":"3000","o":"2900","P":"3.4"}]}"#;
+        assert!(!handle_market_msg_text(&st, &spec, mini));
+        assert_eq!(
+            st.ticker_of(Market::Spot, "BTCUSDT").unwrap().close,
+            Decimal::from(68100)
+        );
+
+        // 深度流的符号作用域同样过滤（帧名含多段 @depth20@100ms）
+        let depth_stale = r#"{"stream":"ethusdt@depth20@100ms","data":{"lastUpdateId":1,"bids":[["3000","1"]],"asks":[["3001","2"]]}}"#;
+        assert!(!handle_market_msg_text(&st, &spec, depth_stale));
+        // 非组合流的控制帧应答（result(null)）也不是 StreamFrame → 静默 false
+        assert!(!handle_market_msg_text(&st, &spec, r#"{"result":null,"id":7}"#));
     }
 }

@@ -54,11 +54,14 @@ pub struct Endpoints {
     pub ws: String,
 }
 
+/// 现货主网默认 REST 域名
+pub const SPOT_REST_DEFAULT: &str = "https://api.binance.com";
+
 /// 解析端点（内置默认 + 配置覆盖）
 pub fn endpoints(market: Market, testnet: bool, cfg: &crate::config::AppConfig) -> Endpoints {
     match (market, testnet) {
         (Market::Spot, false) => Endpoints {
-            rest: non_empty(&cfg.override_spot_rest, "https://api.binance.com"),
+            rest: non_empty(&cfg.override_spot_rest, SPOT_REST_DEFAULT),
             ws: non_empty(&cfg.override_spot_ws, "wss://stream.binance.com:9443"),
         },
         (Market::Spot, true) => Endpoints {
