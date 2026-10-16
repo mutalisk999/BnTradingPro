@@ -340,6 +340,17 @@ impl BnApp {
         }
     }
 
+    /// 下单面板的最小宽度：合约表单比现货多 TIF 第四枚胶囊（GTX）、
+    /// 保证金徽章与杠杆行，236 下这些控件会贴边甚至被裁；合约取 272
+    ///（= 默认面板宽，默认布局即完整显示），现货维持 236
+    fn min_trade_width(&self) -> f32 {
+        if self.market == Market::UmFutures {
+            272.0
+        } else {
+            236.0
+        }
+    }
+
     // ---------- 价格预警 ----------
 
     /// 逐帧评估预警：最新价来自全市场迷你 ticker（约 1s 一批，覆盖任意
@@ -501,6 +512,11 @@ impl BnApp {
                 _ => {}
             }
             self.market = m;
+            // 切到合约时若用户曾把面板拖窄于合约最小宽，先撑回最小宽：
+            // 不能任由 TIF/保证金控件被裁着展示
+            if self.trade_width < self.min_trade_width() {
+                self.trade_width = self.min_trade_width();
+            }
             self.refresh_account_data(m);
         }
     }
@@ -959,9 +975,11 @@ impl BnApp {
                     egui::Sense::click_and_drag(),
                 );
                 if strip.dragged() {
-                    // 指针左移 = 面板变宽（min 236 保证输入框与买卖按钮不挤换行）
+                    // 指针左移 = 面板变宽；下限按当前市场：合约表单控件更多，
+                    // 窄于该下限会裁掉 TIF 胶囊等期货行
+                    let min_w = self.min_trade_width();
                     self.trade_width =
-                        (self.trade_width - strip.drag_delta().x).clamp(236.0, 360.0);
+                        (self.trade_width - strip.drag_delta().x).clamp(min_w, 360.0);
                 }
                 strip.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
             } else {
