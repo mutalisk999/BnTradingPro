@@ -437,8 +437,7 @@ async fn cmd_loop(
                     if let Some(client) = c.client.clone() {
                         let (st, cx, etx) = (state.clone(), ctx.clone(), engine_tx.clone());
                         tokio::spawn(async move {
-                            cancel_all_orders(&client, &st, market, symbol.as_deref(), &etx)
-                                .await;
+                            cancel_all_orders(&client, &st, market, symbol.as_deref(), &etx).await;
                             repaint(&cx);
                         });
                     } else {
@@ -498,7 +497,9 @@ async fn handle_cmd(
         // 排队的下单/撤单的忙标志清掉
         match cmd {
             Command::PlaceOrder { .. } => state.set_busy("place", false),
-            Command::CancelOrder { .. } | Command::CancelAll { .. } | Command::CancelAlgoOrder { .. } => {
+            Command::CancelOrder { .. }
+            | Command::CancelAll { .. }
+            | Command::CancelAlgoOrder { .. } => {
                 state.set_busy("cancel", false);
             }
             _ => {}
@@ -1045,25 +1046,29 @@ async fn handle_cmd(
                 ("marginType".into(), target.to_string()),
             ];
             let res = client
-                .signed(reqwest::Method::POST, rc, &cfg, "/fapi/v1/marginType", params)
+                .signed(
+                    reqwest::Method::POST,
+                    rc,
+                    &cfg,
+                    "/fapi/v1/marginType",
+                    params,
+                )
                 .await;
             match res {
                 Ok(_) => {
-                    state.acct.lock().fut_margin_type.insert(symbol.clone(), target.into());
+                    state
+                        .acct
+                        .lock()
+                        .fut_margin_type
+                        .insert(symbol.clone(), target.into());
                     state.push_toast(
                         ToastKind::Ok,
-                        format!(
-                            "{symbol} {}{target}",
-                            crate::i18n::tr("保证金模式已切为 ")
-                        ),
+                        format!("{symbol} {}{target}", crate::i18n::tr("保证金模式已切为 ")),
                     );
                     engine_tx.send(Command::RefreshAccount).ok();
                 }
                 // -4046 = 无需修改（已是目标模式），按成功提示
-                Err(BinanceError::Api {
-                    code: -4046,
-                    ..
-                }) => {
+                Err(BinanceError::Api { code: -4046, .. }) => {
                     state.push_toast(
                         ToastKind::Info,
                         crate::i18n::tr("保证金模式无需修改").to_string(),
@@ -1279,10 +1284,7 @@ async fn place_order(
                 tracing::warn!("WS 下单失败，回退 REST: {e}");
                 state.push_toast(
                     ToastKind::Warn,
-                    format!(
-                        "{}{e}",
-                        crate::i18n::tr("WS 下单失败，已回退 REST: ")
-                    ),
+                    format!("{}{e}", crate::i18n::tr("WS 下单失败，已回退 REST: ")),
                 );
             }
         }
@@ -1453,8 +1455,7 @@ async fn place_oco(
     let quantized: Option<()> = (|| {
         req.price = quantize_with_note(req.price, r.tick, true, &mut note)?;
         req.stop_price = quantize_with_note(req.stop_price, r.tick, true, &mut note)?;
-        req.stop_limit_price =
-            quantize_with_note(req.stop_limit_price, r.tick, true, &mut note)?;
+        req.stop_limit_price = quantize_with_note(req.stop_limit_price, r.tick, true, &mut note)?;
         req.qty = quantize_with_note(req.qty, r.step, false, &mut note)?;
         Some(())
     })();
@@ -1527,14 +1528,8 @@ async fn cancel_all_orders(
         recv_window_ms: cfg.recv_window_ms,
     };
     let (path, mut params) = match market {
-        Market::Spot => (
-            format!("{}/openOrders", market.api_prefix()),
-            vec![],
-        ),
-        Market::UmFutures => (
-            format!("{}/allOpenOrders", market.api_prefix()),
-            vec![],
-        ),
+        Market::Spot => (format!("{}/openOrders", market.api_prefix()), vec![]),
+        Market::UmFutures => (format!("{}/allOpenOrders", market.api_prefix()), vec![]),
     };
     if let Some(sym) = symbol {
         params.push(("symbol".into(), sym.to_string()));
@@ -1650,7 +1645,10 @@ impl MarketWsSlot {
         let mut s = self.scoped_streams(lower, interval, fut);
         // 全市场迷你 ticker（侧栏实时价格）只随初始连接订阅一次，
         // 交易对切换时不重订——它本来就不属于任何单个交易对
-        if matches!((self, fut), (MarketWsSlot::A, false) | (MarketWsSlot::B, true)) {
+        if matches!(
+            (self, fut),
+            (MarketWsSlot::A, false) | (MarketWsSlot::B, true)
+        ) {
             s.push("!miniTicker@arr".to_string());
         }
         if s.is_empty() {
@@ -1760,7 +1758,9 @@ async fn market_ws_loop(
         let fut = spec.market == Market::UmFutures;
         let (_, url) = slot.streams_and_url(&ep.ws, &lower, spec.interval.as_str(), fut);
 
-        let st = pair.lock().set(slot.idx(), spec.market, ConnState::Connecting);
+        let st = pair
+            .lock()
+            .set(slot.idx(), spec.market, ConnState::Connecting);
         state.set_market_ws(spec.market, st.clone());
         state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
         repaint(&ctx);
@@ -1769,7 +1769,9 @@ async fn market_ws_loop(
             Err(e) => {
                 tracing::warn!("行情WS连接失败({}): {e}", spec.market);
                 let msg = short_err(&e);
-                let st = pair.lock().set(slot.idx(), spec.market, ConnState::Failed(msg.clone()));
+                let st = pair
+                    .lock()
+                    .set(slot.idx(), spec.market, ConnState::Failed(msg.clone()));
                 state.set_market_ws(spec.market, st.clone());
                 state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
                 repaint(&ctx);
@@ -1779,7 +1781,9 @@ async fn market_ws_loop(
             Ok(ws) => {
                 tracing::info!("行情WS已连接: {}", spec.market);
                 let connected_at = std::time::Instant::now();
-                let st = pair.lock().set(slot.idx(), spec.market, ConnState::Connected);
+                let st = pair
+                    .lock()
+                    .set(slot.idx(), spec.market, ConnState::Connected);
                 state.set_market_ws(spec.market, st.clone());
                 state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
                 repaint(&ctx);
@@ -1787,8 +1791,9 @@ async fn market_ws_loop(
                 let (mut write, mut read) = futures_util::StreamExt::split(ws);
                 // 服务端当下已订阅的流（含随连接建立的 !miniTicker@arr）。
                 // 原地改订按差集计算增量：市场级流（'!' 前缀）永远不退订
-                let mut server_streams =
-                    slot.streams_and_url(&ep.ws, &lower, spec.interval.as_str(), fut).0;
+                let mut server_streams = slot
+                    .streams_and_url(&ep.ws, &lower, spec.interval.as_str(), fut)
+                    .0;
                 let version = last_version(&state);
                 // 记录读循环退出原因：出错时保留 Failed 状态（不被下方 Disconnected 覆盖）
                 let mut read_fail: Option<String> = None;
@@ -1985,11 +1990,15 @@ async fn market_ws_loop(
                     });
                 }
                 if let Some(msg) = read_fail {
-                    let st = pair.lock().set(slot.idx(), spec.market, ConnState::Failed(msg));
+                    let st = pair
+                        .lock()
+                        .set(slot.idx(), spec.market, ConnState::Failed(msg));
                     state.set_market_ws(spec.market, st.clone());
                     state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
                 } else if !intentional {
-                    let st = pair.lock().set(slot.idx(), spec.market, ConnState::Disconnected);
+                    let st = pair
+                        .lock()
+                        .set(slot.idx(), spec.market, ConnState::Disconnected);
                     state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
                 } else {
                     // 主动断开：状态由下一轮连接（或订阅方）接管，这里不写
@@ -2006,7 +2015,9 @@ async fn market_ws_loop(
             }
         }
         if !matches!(state.md.lock().market_ws(spec.market), ConnState::Failed(_)) {
-            let st = pair.lock().set(slot.idx(), spec.market, ConnState::Disconnected);
+            let st = pair
+                .lock()
+                .set(slot.idx(), spec.market, ConnState::Disconnected);
             state.set_market_ws(spec.market, st);
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -2302,19 +2313,27 @@ async fn user_ws_loop(
                 // 期货无订阅握手，连上即已生效
                 if let Some(msg) = sub_msg.take() {
                     use tokio_tungstenite::tungstenite::Message;
-                    let sub_id =
-                        msg.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let sub_id = msg
+                        .get("id")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let handshake = async {
-                        write.send(Message::text(msg.to_string())).await.map_err(|e| e.to_string())?;
+                        write
+                            .send(Message::text(msg.to_string()))
+                            .await
+                            .map_err(|e| e.to_string())?;
                         loop {
                             match read.next().await {
                                 None => return Err("连接中断".to_string()),
                                 Some(Err(e)) => return Err(e.to_string()),
                                 Some(Ok(Message::Text(t))) => {
-                                    let Ok(d) = serde_json::from_str::<serde_json::Value>(&t) else {
+                                    let Ok(d) = serde_json::from_str::<serde_json::Value>(&t)
+                                    else {
                                         continue;
                                     };
-                                    if d.get("id").and_then(|x| x.as_str()) != Some(sub_id.as_str()) {
+                                    if d.get("id").and_then(|x| x.as_str()) != Some(sub_id.as_str())
+                                    {
                                         continue;
                                     }
                                     let status =
@@ -2329,8 +2348,7 @@ async fn user_ws_loop(
                                         return Ok(());
                                     }
                                     // 错误体顶层或 error 子对象均有出现（不同版本行为）
-                                    let err =
-                                        d.get("error").cloned().unwrap_or_else(|| d.clone());
+                                    let err = d.get("error").cloned().unwrap_or_else(|| d.clone());
                                     let code =
                                         err.get("code").and_then(|x| x.as_i64()).unwrap_or(0);
                                     let m = err
@@ -2355,8 +2373,7 @@ async fn user_ws_loop(
                         }
                         Err(_) => {
                             tracing::warn!("现货用户流订阅确认超时");
-                            state
-                                .set_user_ws(market, ConnState::Failed("订阅确认超时".into()));
+                            state.set_user_ws(market, ConnState::Failed("订阅确认超时".into()));
                             repaint(&ctx);
                             tokio::time::sleep(Duration::from_secs(5)).await;
                             continue;
@@ -2779,7 +2796,10 @@ mod tests {
             v
         };
         let (d2, a2) = resub_diff(&server2, &new);
-        assert!(d2.is_empty() && a2.is_empty(), "同订阅重复下发须判定为空差集");
+        assert!(
+            d2.is_empty() && a2.is_empty(),
+            "同订阅重复下发须判定为空差集"
+        );
     }
 
     #[test]
@@ -2811,7 +2831,11 @@ mod tests {
 
         // 旧符号在途帧（原地改订后服务端仍可能推几帧）：帧名符号与当前订阅
         // 不一致 → 丢弃，返回 false，且不得创建/复活 ETHUSDT 槽位
-        assert!(!handle_market_msg_text(&st, &spec, &ticker_frame("ETHUSDT")));
+        assert!(!handle_market_msg_text(
+            &st,
+            &spec,
+            &ticker_frame("ETHUSDT")
+        ));
         assert!(!st.md.lock().spot.contains_key("ETHUSDT"));
 
         // 当前符号帧 → 落地并返回 true（读循环据此清改订活性看门狗）
@@ -2838,6 +2862,10 @@ mod tests {
         let depth_stale = r#"{"stream":"ethusdt@depth20@100ms","data":{"lastUpdateId":1,"bids":[["3000","1"]],"asks":[["3001","2"]]}}"#;
         assert!(!handle_market_msg_text(&st, &spec, depth_stale));
         // 非组合流的控制帧应答（result(null)）也不是 StreamFrame → 静默 false
-        assert!(!handle_market_msg_text(&st, &spec, r#"{"result":null,"id":7}"#));
+        assert!(!handle_market_msg_text(
+            &st,
+            &spec,
+            r#"{"result":null,"id":7}"#
+        ));
     }
 }

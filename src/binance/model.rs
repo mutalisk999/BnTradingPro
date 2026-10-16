@@ -219,7 +219,12 @@ pub struct PositionRisk {
     pub take_profit: Decimal,
     /// 仓位止损触发价（0 = 未设置）：同上，兼容 stopLos/stopLoss 两种
     /// 键名写法，键缺失/null/空串归 0
-    #[serde(alias = "stopLos", alias = "stopLoss", deserialize_with = "dec0", default)]
+    #[serde(
+        alias = "stopLos",
+        alias = "stopLoss",
+        deserialize_with = "dec0",
+        default
+    )]
     pub stop_loss: Decimal,
 }
 
@@ -660,7 +665,10 @@ mod tests {
         assert_eq!(o.algo_status, "NEW");
         assert_eq!(o.position_side, "LONG");
         assert_eq!(o.side, "SELL");
-        assert_eq!(o.trigger_price.map(|x| x.to_string()).as_deref(), Some("87200.0"));
+        assert_eq!(
+            o.trigger_price.map(|x| x.to_string()).as_deref(),
+            Some("87200.0")
+        );
         assert!(o.close_position);
         assert!(o.quantity.is_zero());
 

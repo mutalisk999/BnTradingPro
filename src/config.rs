@@ -155,9 +155,9 @@ impl AppConfig {
                         "解析配置失败({e})，原文件已备份为 {}，使用默认配置",
                         bak.display()
                     ),
-                    Err(be) => tracing::warn!(
-                        "解析配置失败({e})，且备份原文件失败({be})，使用默认配置"
-                    ),
+                    Err(be) => {
+                        tracing::warn!("解析配置失败({e})，且备份原文件失败({be})，使用默认配置")
+                    }
                 }
                 Self::default()
             }),
@@ -252,7 +252,10 @@ mod tests {
         let blocker = parent.join("blocked_dir");
         std::fs::write(&blocker, "not a directory").unwrap();
         let cfg = AppConfig::default();
-        assert!(cfg.save(&blocker).is_err(), "写入被阻截时 save 必须返回 Err");
+        assert!(
+            cfg.save(&blocker).is_err(),
+            "写入被阻截时 save 必须返回 Err"
+        );
     }
 
     /// data_dir 会话级稳定：每帧调用必须命中同一分配，

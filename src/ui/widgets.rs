@@ -56,7 +56,11 @@ fn status_item(ui: &mut egui::Ui, name: &str, c: Color32, glow: bool, hover: &st
         p.circle_filled(rect.center(), 4.5, c);
         // 已连接时加一圈微光晕
         if glow {
-            p.circle_stroke(rect.center(), 6.5, Stroke::new(1.0_f32, c.gamma_multiply(0.35)));
+            p.circle_stroke(
+                rect.center(),
+                6.5,
+                Stroke::new(1.0_f32, c.gamma_multiply(0.35)),
+            );
         }
         resp.on_hover_text(format!("{name} · {hover}"));
     });
@@ -181,7 +185,10 @@ pub fn fmt_dec_plain(d: &Decimal, dp: usize) -> String {
 
 /// 金额/价格的展示舍入：half away from zero（四舍五入）
 fn round_money(d: &Decimal, dp: usize) -> Decimal {
-    d.round_dp_with_strategy(dp as u32, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
+    d.round_dp_with_strategy(
+        dp as u32,
+        rust_decimal::RoundingStrategy::MidpointAwayFromZero,
+    )
 }
 
 /// 千分位分组格式化（用于展示层；坐标轴等本身就是 f64 的场景）
@@ -516,7 +523,9 @@ mod tests {
             "1,234,567.891"
         );
         assert_eq!(
-            fmt_dec_grouped(&rust_decimal::Decimal::from_str_exact("123456789012345678.1").unwrap()),
+            fmt_dec_grouped(
+                &rust_decimal::Decimal::from_str_exact("123456789012345678.1").unwrap()
+            ),
             "123,456,789,012,345,678.1"
         );
     }

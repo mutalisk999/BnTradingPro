@@ -390,11 +390,7 @@ impl SharedState {
 
     /// 全市场迷你 ticker 写入：与活跃订阅无关（覆盖每个 symbol），
     /// 不走 `with_symbol_md` 的活跃订阅守卫
-    pub fn apply_mini_tickers(
-        &self,
-        market: Market,
-        list: Vec<crate::binance::model::MiniTicker>,
-    ) {
+    pub fn apply_mini_tickers(&self, market: Market, list: Vec<crate::binance::model::MiniTicker>) {
         let mut md = self.md.lock();
         let slot = &mut md.tickers[market as usize];
         for t in list {

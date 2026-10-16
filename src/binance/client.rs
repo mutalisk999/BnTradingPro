@@ -204,11 +204,7 @@ impl BinanceRest {
     }
 
     /// 按既有端点校时（-1021 自动重试路径复用）
-    async fn resync_time(
-        &self,
-        ep: &Endpoints,
-        market: Market,
-    ) -> Result<(), BinanceError> {
+    async fn resync_time(&self, ep: &Endpoints, market: Market) -> Result<(), BinanceError> {
         // 路径必须带市场前缀：现货 /api/v3/time、合约 /fapi/v1/time
         let path = format!("{}/time", market.api_prefix());
         let v = self.get_public_raw(ep, market, &path, &[]).await?;
@@ -297,9 +293,7 @@ impl BinanceRest {
         self.with_spot_fallback(ep, ctx, move |ep| {
             let method = method.clone();
             let params = params.clone();
-            async move {
-                self.signed_raw(method, &ep, ctx, path, params).await
-            }
+            async move { self.signed_raw(method, &ep, ctx, path, params).await }
         })
         .await
     }
@@ -449,11 +443,7 @@ impl BinanceRest {
                 Err(BinanceError::Api { code: -1021, .. }) if attempt == 0 => {
                     self.resync_time(ep, ctx.market).await?;
                 }
-                other => {
-                    return other.map_err(|e| {
-                        with_endpoint_ctx(e, ctx.market, &method, path)
-                    })
-                }
+                other => return other.map_err(|e| with_endpoint_ctx(e, ctx.market, &method, path)),
             }
         }
         unreachable!("循环恰好两次且第二次必经 other 分支返回")
@@ -700,7 +690,11 @@ async fn parse_response(resp: reqwest::Response) -> Result<Value, BinanceError> 
         }
         // 代理/拦截层返回的 HTML 错误页可能很长，截断避免撑爆 toast 与日志
         let excerpt: String = text.chars().take(120).collect();
-        let suffix = if text.chars().count() > 120 { "…" } else { "" };
+        let suffix = if text.chars().count() > 120 {
+            "…"
+        } else {
+            ""
+        };
         return Err(BinanceError::Decode(format!(
             "HTTP {status}: {excerpt}{suffix}"
         )));
@@ -808,7 +802,9 @@ impl OrderKind {
     pub fn is_conditional(&self) -> bool {
         matches!(
             self,
-            OrderKind::StopLimit { .. } | OrderKind::StopMarket { .. } | OrderKind::TrailingStop { .. }
+            OrderKind::StopLimit { .. }
+                | OrderKind::StopMarket { .. }
+                | OrderKind::TrailingStop { .. }
         )
     }
 }
@@ -1005,7 +1001,6 @@ pub fn build_oco_params(req: &OcoRequest) -> Vec<(String, String)> {
     }
     p
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1336,7 +1331,10 @@ mod tests {
         };
         assert!(!spot_mirror_eligible(&overridden, spot_mainnet, &decode));
         // 测试网不降级（镜像不服务测试网）
-        let testnet = RestCtx { testnet: true, ..spot_mainnet };
+        let testnet = RestCtx {
+            testnet: true,
+            ..spot_mainnet
+        };
         assert!(!spot_mirror_eligible(&spot_ep, testnet, &decode));
         // 合约不降级（镜像仅覆盖现货 api 域名）
         let fut = RestCtx {
@@ -1345,9 +1343,16 @@ mod tests {
         };
         assert!(!spot_mirror_eligible(&spot_ep, fut, &decode));
         // 结构化错误（到达币安后的真实错误）不降级
-        let api = BinanceError::Api { code: -1021, msg: "timestamp".into() };
+        let api = BinanceError::Api {
+            code: -1021,
+            msg: "timestamp".into(),
+        };
         assert!(!spot_mirror_eligible(&spot_ep, spot_mainnet, &api));
-        assert!(!spot_mirror_eligible(&spot_ep, spot_mainnet, &BinanceError::Timeout));
+        assert!(!spot_mirror_eligible(
+            &spot_ep,
+            spot_mainnet,
+            &BinanceError::Timeout
+        ));
         // 到达镜像后的非空响应错误同样不应继续轮换
         assert!(!is_mirror_trigger(&api));
     }
