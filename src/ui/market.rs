@@ -763,7 +763,7 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     }
 }
 
-/// 页头：交易对 / 最新价与涨跌 / 周期直选 + 24h 统计（合约附资金费率）
+/// 页头：交易对 / 最新价与涨跌 / 24h 统计（合约附资金费率）/ 周期直选
 pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = app.state.clone();
     let dp = state
@@ -790,7 +790,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
     };
 
     // 第一行：交易对 | 最新价/涨跌 | 自选星标 / 预警
-    // 周期直选拆到第二行独占一行（见下），本行只剩交易对信息成组
+    // 周期直选拆到第四行独占一行（见下），本行只剩交易对信息成组
     ui.horizontal_wrapped(|ui| {
         // 交易对双色标题：base（标的）强调、quote（计价）弱化，
         // 与交易所惯例一致；规则未加载/结构不符时整体回退单色原文
@@ -901,19 +901,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
         });
     });
 
-    // 第二行：周期直选（紧凑胶囊）独占一行。14 档挤在第一行会与交易对
-    // 信息抢宽度、窄窗口下还换行截断；独占一行后一行内排满、顺次切换
-    // 不换行（ui.horizontal 而非 wrapped）：极窄窗口宁可右侧裁掉也保持单行
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        for iv in Interval::all() {
-            if theme::pill_tab_sm(ui, iv.label(), app.page.interval == iv).clicked() {
-                app.switch_interval(iv);
-            }
-        }
-    });
-
-    // 第三行：24h 统计 / 资金费率。每个统计项画成独立分组格 = 紧凑
+    // 第二行：24h 统计 / 资金费率。每个统计项画成独立分组格 = 紧凑
     // [标签 + 值] 横向对，格间细分隔线收束视线——此前 label value label value
     // 平铺成无结构的一长条，扫读时找不到各项的边界
     // 分组内 label↔value 紧贴（3pt），整格作为一个整体随 wrapped 换行
@@ -1024,6 +1012,19 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                     );
                 }
             });
+        }
+    });
+
+    // 第四行：周期直选（紧凑胶囊）独占一行，位于 24h 统计之下。
+    // 14 档挤在第一行会与交易对信息抢宽度、窄窗口下还换行截断；独占一行
+    // 后一行内排满、顺次切换不换行（ui.horizontal 而非 wrapped）：
+    // 极窄窗口宁可右侧裁掉也保持单行
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for iv in Interval::all() {
+            if theme::pill_tab_sm(ui, iv.label(), app.page.interval == iv).clicked() {
+                app.switch_interval(iv);
+            }
         }
     });
 
