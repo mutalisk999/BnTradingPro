@@ -219,10 +219,12 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                 // 点其它位置退出待确认态
                 app.sym_cancel_armed = None;
             }
-            // 撤销本市场全部挂单（跨交易对；两次点击确认，防误扫全局撤销）
+            // 撤销本市场全部挂单（跨交易对；两次点击确认，防误扫全局撤销）。
+            // 样式与左侧「撤销全部」同源（btn_danger）：同为破坏性操作，
+            // 字号（FONT_BODY）/高度（BTN_H）/红调完全一致，不再用小号 ghost
             let mkt_all_n = list.len() + algo.len();
             let armed = app.market_cancel_armed;
-            let cancel_mkt = theme::btn_ghost(
+            let cancel_mkt = theme::btn_danger(
                 ui,
                 &if armed {
                     format!("{}({mkt_all_n})", crate::i18n::tr("确认撤销本市场全部"))

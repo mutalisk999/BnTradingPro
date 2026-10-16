@@ -263,8 +263,9 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     let max_cum = ask_total.max(bid_total).max(0.000001);
     let now = ui.ctx().input(|i| i.time);
 
-    // egui 的滚动条悬浮在内容上层，行宽要主动让出滚动条宽度，否则数量列被压住
-    let w = ui.available_width() - 10.0;
+    // 行宽吃满可用宽：与「成交明细」页签行宽同源（同为 floating 滚动条
+    // 悬浮于内容上层），两页签左右缘完全成列
+    let w = ui.available_width();
 
     // 残影更新：与上一帧价格集合 diff，消失的档位记为淡出残影
     app.book_anim.update(now, true, &asks, &ask_cums, max_cum);

@@ -58,7 +58,7 @@ pub struct Overlay {
     pub label: String,
 }
 
-pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut BnApp, ui: &mut egui::Ui, right_limit: f32) {
     let state = app.state.clone();
     let dp = state.with_rule(app.market, &app.page.symbol, |r| {
         r.map(|x| x.price_dp()).unwrap_or(2)
@@ -325,6 +325,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         qdp as u32,
         &overlays,
         sub.as_ref(),
+        right_limit,
     );
     app.page.chart.cache_klines = kls;
     app.page.chart.cache_closes = closes;
@@ -345,10 +346,16 @@ fn draw(
     qdp: u32,
     overlays: &[Overlay],
     sub: Option<&SubSeries>,
+    right_limit: f32,
 ) {
     // 取光标之后的剩余矩形：max_rect 会把全高控件分配在工具行之下，
-    // 响应矩形向下溢出面板、抢走下方订单区的点击/拖拽
-    let rect = ui.available_rect_before_wrap();
+    // 响应矩形向下溢出面板、抢走下方订单区的点击/拖拽。
+    // right_limit = 右侧下单面板左缘：egui 嵌套面板向父级让位后会把
+    // 父 ui 的 max_rect 撑回含面板区域（panel.rs expand_to_include_rect），
+    // available_rect_before_wrap 实测越过面板左缘 ~45pt，价格轴标签直接
+    // 叠画在面板上；显式钳住，图表内容永不越界（现货/期货同规则）
+    let mut rect = ui.available_rect_before_wrap();
+    rect.max.x = rect.max.x.min(right_limit - 4.0);
     let (resp, painter) = ui.allocate_painter(rect.size(), Sense::click_and_drag());
     // 恢复动画等过渡帧里图表高度可能不足 8px：shrink(4.0) 会使 rect 上下颠倒
     // （min>max），price_h 随之为负，最新价虚线的 clamp 触发 "min > max" panic
@@ -470,13 +477,15 @@ fn draw(
     // 钳一个非零 span，防止 y_of 除零产生 NaN
     let span = (hi - lo).max(hi.abs() * 1e-6).max(1e-6);
 
-    // 右侧价格轴宽度自适应数字位数（千分位），避免大数值被截断
-    let axis_w = ((widgets::fmt_thousands(hi as f64, dp as usize)
-        .chars()
-        .count() as f32)
-        * 8.2
-        + 16.0)
-        .clamp(58.0, 120.0);
+    // 右侧价格轴宽度自适应数字位数（千分位），避免大数值被截断。
+    // 以 dp=2 的宽度保底：同一交易对现货/期货 tick 小数位可能不同
+    // （如 BTCUSDT 现货 2 位、期货 1 位），只按当前市场位数取宽会让
+    // K 线区右缘（烛区/价格轴分界）切市场时横移几像素；按较宽者
+    // 预留后分割线在两市场位置一致
+    let axis_chars = |d: f64| {
+        (widgets::fmt_thousands(hi as f64, d as usize).chars().count() as f32) * 8.2 + 16.0
+    };
+    let axis_w = axis_chars(2.0).max(axis_chars(dp as f64)).clamp(58.0, 120.0);
     // 窄窗口下轴宽可能超过 plot 宽：钳非负，防后续 clamp 的 min>max panic
     let chart_w = (plot.width() - axis_w).max(0.0);
 

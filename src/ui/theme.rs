@@ -6,9 +6,11 @@ use eframe::egui;
 use egui::{Color32, FontData, FontDefinitions, Stroke, Style, Visuals};
 
 // ---------- 字号 / 控件高度 token ----------
-/// 全应用仅 5 档字号：小字（辅助小字）→ 次要（表格/说明）→ 正文 → 页面标题 → 大数字
-pub const FONT_SM: f32 = 11.0;
-pub const FONT_MD: f32 = 12.5;
+/// 全应用仅 5 档字号：小字（辅助小字）→ 次要（表格/说明）→ 正文 → 页面标题 → 大数字。
+/// 小两档从 11/12.5 上调至 12/13.5：雅黑在小字号下各字墨迹盒高低差被放大
+/// （「请」明显矮于「输入」），字号上去后比例收敛、辨识度也更好
+pub const FONT_SM: f32 = 12.0;
+pub const FONT_MD: f32 = 13.5;
 pub const FONT_BODY: f32 = 14.0;
 /// 品牌名等需要强调的展示型文字
 pub const FONT_XL: f32 = 20.0;

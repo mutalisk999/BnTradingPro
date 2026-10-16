@@ -926,11 +926,14 @@ fn err_bar(ui: &mut egui::Ui, err: &str) {
     egui::Frame::default()
         .fill(theme::cur().err.gamma_multiply(0.16))
         .corner_radius(theme::R_SM)
-        .inner_margin(egui::Margin::symmetric(8, 5))
+        .inner_margin(egui::Margin::symmetric(8, 3))
         .show(ui, |ui| {
+            // 字号与输入框占位（FONT_MD）一致：错误条与输入框相邻出现时
+            // 文字高低统一；小字号下雅黑各字墨迹盒差异会被放大，视觉上
+            // 「请」比「输入数量」矮一截，提到正文字号后收敛
             ui.label(
                 egui::RichText::new(err)
-                    .size(theme::FONT_SM)
+                    .size(theme::FONT_MD)
                     .color(theme::cur().err),
             );
         });

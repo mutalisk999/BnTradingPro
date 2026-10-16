@@ -336,7 +336,7 @@ impl BnApp {
             book_width: 230.0,
             chart_maximized: false,
             trade_expanded: true,
-            trade_width: 272.0,
+            trade_width: 300.0,
             flash_book: Default::default(),
             flash_trade: Default::default(),
             flash_header: Default::default(),
@@ -347,15 +347,11 @@ impl BnApp {
         }
     }
 
-    /// 下单面板的最小宽度：合约表单比现货多 TIF 第四枚胶囊（GTX）、
-    /// 保证金徽章与杠杆行，236 下这些控件会贴边甚至被裁；合约取 272
-    ///（= 默认面板宽，默认布局即完整显示），现货维持 236
+    /// 下单面板的最小宽度：两市场统一 300（= 默认面板宽）。字号上调后
+    /// 272 下合约表单的 TIF 胶囊/杠杆行/价格辅助钮过挤，300 保证完整
+    /// 显示；分割线位置在现货/期货间保持一致
     fn min_trade_width(&self) -> f32 {
-        if self.market == Market::UmFutures {
-            272.0
-        } else {
-            236.0
-        }
+        300.0
     }
 
     // ---------- 价格预警 ----------
@@ -535,11 +531,8 @@ impl BnApp {
                 _ => {}
             }
             self.market = m;
-            // 切到合约时若用户曾把面板拖窄于合约最小宽，先撑回最小宽：
-            // 不能任由 TIF/保证金控件被裁着展示
-            if self.trade_width < self.min_trade_width() {
-                self.trade_width = self.min_trade_width();
-            }
+            // 不再按市场钳制面板宽度：现货/期货共用同一 trade_width，
+            // 切换页签时图表右侧分割线保持原位（用户明确要求两市场一致）
             self.refresh_account_data(m);
         }
     }
@@ -633,6 +626,10 @@ impl BnApp {
             }
         }
         egui::Panel::top("top_bar")
+            // 关闭 egui 面板自带的内缘分隔线：它会叠在 Frame 描边外侧 0.5px，
+            // 把导航栏下缘画成双线（粗细/颜色与上缘不一致的来源）。
+            // 上下缘只剩 Frame 的 1pt border 描边，天然等粗同色
+            .show_separator_line(false)
             .frame(
                 egui::Frame::default()
                     .fill(theme::cur().panel)
@@ -642,8 +639,9 @@ impl BnApp {
                     .inner_margin(egui::Margin::symmetric(14, 4)),
             )
             .show(ui, |ui| {
-                // 最小高度仅兜底（低于内容自然高无效果）
-                ui.set_min_height(34.0);
+                // 不设 min_height：面板高 = 行内容高 + 上下各 4 边距，
+                // 按键到上下两线的距离必然相等（min_height 大于内容时
+                // egui 内容顶对齐，多余空间全堆在下面，正是间距不均的根源）
                 self.topbar(ui);
             });
 
@@ -684,16 +682,14 @@ impl BnApp {
     /// 顶部导航：品牌 + 四大页签 + 连接状态
     fn topbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            // 品牌：加大字号并整体下移一点（嵌套纵向布局做垂直微调）
-            ui.vertical(|ui| {
-                ui.add_space(2.0);
-                ui.label(
-                    egui::RichText::new("BnTradingPro")
-                        .strong()
-                        .color(theme::cur().accent)
-                        .size(theme::FONT_XL),
-                );
-            });
+            // 品牌：与页签按钮同一行内垂直居中（不再手动 add_space 下移，
+            // horizontal 布局默认 Align::Center 已保证中线等高）
+            ui.label(
+                egui::RichText::new("BnTradingPro")
+                    .strong()
+                    .color(theme::cur().accent)
+                    .size(theme::FONT_XL),
+            );
             ui.add_space(12.0);
 
             for tab in [
@@ -937,6 +933,8 @@ impl BnApp {
         }
 
         // 图表最大化：右侧下单/盘口/成交与底部订单区全部隐藏，图表占满中央区
+        // 下单面板左缘：中央图表的绘制右缘钳位（防越界叠画）；最大化无面板不钳
+        let mut trade_left = f32::MAX;
         if !self.chart_maximized {
             // 盘口（左，全高）：一直显示到 UI 最下面，不被底部订单区挤上去。
             // 面板按显示顺序瓜分空间——盘口先于底部订单区显示才能拿到全高。
@@ -1013,6 +1011,8 @@ impl BnApp {
                         });
                         egui::ScrollArea::vertical().show(ui, |ui| trade::show(self, ui));
                     });
+                // 图表右缘钳位用（见中央区 chart::show）
+                trade_left = trade.response.rect.left();
                 // 拖拽把手：注册在外层 ui（面板内 ui 的裁剪只到 Frame 内边距，
                 // 在里面注册会被裁掉而收不到手势）。把手 = 面板左缘内侧 8px
                 let outer = trade.response.rect;
@@ -1026,8 +1026,7 @@ impl BnApp {
                     egui::Sense::click_and_drag(),
                 );
                 if strip.dragged() {
-                    // 指针左移 = 面板变宽；下限按当前市场：合约表单控件更多，
-                    // 窄于该下限会裁掉 TIF 胶囊等期货行
+                    // 指针左移 = 面板变宽；下限两市场统一 272（分割线位置一致）
                     let min_w = self.min_trade_width();
                     self.trade_width =
                         (self.trade_width - strip.drag_delta().x).clamp(min_w, 360.0);
@@ -1035,7 +1034,7 @@ impl BnApp {
                 strip.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
             } else {
                 // 折叠态：右缘窄条只放展开按钮，中央区随之扩到右缘
-                egui::Panel::right("trade_panel_collapsed")
+                let collapsed = egui::Panel::right("trade_panel_collapsed")
                     .exact_size(36.0)
                     .frame(
                         egui::Frame::default()
@@ -1054,10 +1053,11 @@ impl BnApp {
                             }
                         });
                     });
+                trade_left = collapsed.response.rect.left();
             }
         }
 
-        // 中央：页头 + 图表
+        // 中央：页头 + 图表（right_limit = 下单面板左缘，防图表越界叠画）
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::default()
@@ -1067,7 +1067,7 @@ impl BnApp {
             .show(ui, |ui| {
                 crate::ui::market::show_header(self, ui);
                 ui.add_space(2.0);
-                chart::show(self, ui);
+                chart::show(self, ui, trade_left);
             });
     }
 
@@ -1323,8 +1323,19 @@ impl eframe::App for BnApp {
         #[cfg(debug_assertions)]
         if self.phase != Phase::Main && std::env::var("BTP_DEMO").ok().as_deref() == Some("1") {
             self.phase = Phase::Main;
-            // 演示模式直接落在资产总览页：该页布局最复杂，截图调试最常用
-            self.tab = Tab::Portfolio;
+            // 演示模式：可用 BTP_DEMO_TAB 指定初始页（spot/futures/portfolio/settings），
+            // 便于无凭据调试/截图各页布局；默认落在现货交易页（侧栏/盘口/下单全布局）
+            let tab = std::env::var("BTP_DEMO_TAB")
+                .ok()
+                .map(|t| match t.as_str() {
+                    "futures" => Tab::Futures,
+                    "portfolio" => Tab::Portfolio,
+                    "settings" => Tab::Settings,
+                    "help" => Tab::Help,
+                    _ => Tab::Spot,
+                })
+                .unwrap_or(Tab::Spot);
+            self.tab = tab;
             Self::seed_demo_accounts(&self.state);
         }
         if !matches!(self.phase, Phase::Main) {
