@@ -1486,13 +1486,13 @@ impl MarketWsSlot {
     ) -> (Vec<String>, String) {
         match (self, fut) {
             // 现货：legacy 组合流承载全部
-            // 现货：legacy 组合流承载全部。深度订阅 50 档（而非 20）：
-            // 开启聚合档位（10×~1000× tick）时 20 档原始数据会合并成寥寥几桶、
-            // 面板大片留白；50 档才有足够的桶密度
+            // 现货：legacy 组合流承载全部。深度取 20 档（@depth20@100ms）：
+            // 现货部分深度流只支持 5/10/20 档——50 档为合约（fapi）专属，
+            // 现货订阅 @depth50 会被服务端忽略，盘口静默停止推送
             (MarketWsSlot::A, false) => {
                 let s = vec![
                     format!("{lower}@ticker"),
-                    format!("{lower}@depth50@100ms"),
+                    format!("{lower}@depth20@100ms"),
                     format!("{lower}@aggTrade"),
                     format!("{lower}@kline_{interval}"),
                     "!miniTicker@arr".to_string(),
@@ -1500,7 +1500,10 @@ impl MarketWsSlot {
                 let url = format!("{base}/stream?streams={}", s.join("/"));
                 (s, url)
             }
-            // 期货 public 类：部分深度（bookTicker 未用，不订阅）。同现货取 50 档
+            // 期货 public 类：部分深度（bookTicker 未用，不订阅）。
+            // 合约部分深度流支持 5/10/20/50 档，取 50 档：开启聚合档位
+            // （10×~1000× tick）时 20 档原始数据会合并成寥寥几桶、
+            // 面板大片留白；50 档才有足够的桶密度
             (MarketWsSlot::A, true) => {
                 let s = vec![format!("{lower}@depth50@100ms")];
                 let url = format!("{base}/public/stream?streams={}", s.join("/"));

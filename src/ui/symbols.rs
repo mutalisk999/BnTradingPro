@@ -17,6 +17,9 @@ const NAME_X: f32 = 6.0 + STAR_W + 4.0;
 /// 相邻两个交易对行之间的留白：悬停/选中色带不覆盖这部分，
 /// 视觉上每行各自成为独立卡片、不再「粘」在一起
 const ROW_GAP: f32 = 7.0;
+/// 卡片上下内边距：文字行高之外再留的呼吸空间。没有这层内边距时
+/// 第二行价格/涨跌幅的字形下缘紧贴甚至越出卡片色带边缘
+const CARD_PAD: f32 = 4.0;
 
 /// 行槽真实尺度：egui 的文本行高不是字号本身（≈字号 ×1.3~1.5，含字距行隙），
 /// 早期用固定 34pt 槽位、星标按 FONT_BODY 自然撑高，第二行价格被挤出槽位、
@@ -37,7 +40,7 @@ fn row_metrics(ctx: &egui::Context) -> RowMetrics {
         .fonts_mut(|f| f.row_height(&egui::FontId::proportional(theme::FONT_MD)));
     let l2 = ctx
         .fonts_mut(|f| f.row_height(&egui::FontId::monospace(theme::FONT_SM)));
-    let band = l1 + LINE_GAP + l2;
+    let band = l1 + LINE_GAP + l2 + 2.0 * CARD_PAD;
     let mut pitch = band + ROW_GAP;
     // 小节标题固定 22pt 占位：行槽不能比它矮，否则标题溢出自己的槽位
     if pitch < SECTION_H {
@@ -333,6 +336,10 @@ fn symbol_row(
     ui.spacing_mut().item_spacing.y = LINE_GAP;
     let tick = app.state.ticker_of(app.market, sym);
 
+    // 卡片顶部内边距：星标/名称行整体下移，与色带上缘拉开距离；
+    // 底部由 band 里的同额余量兜住，价格行不再贴边
+    ui.add_space(CARD_PAD);
+
     // ---- 第一行：星标 + 名称 ----
     // 星标热区固定宽高（STAR_W × m.l1），字形居中手绘：宽度不随
     // ★/☆ 字形回落变化，所有行的星标严格同一 X、同一 Y
@@ -368,7 +375,24 @@ fn symbol_row(
                 } else {
                     crate::i18n::tr("加入自选")
                 });
-            star_resp.clicked()
+            let star_clicked = star_resp.clicked();
+            // 名称：纯展示（截断防长名溢出），点击切换由整卡热区负责
+            let name_txt = {
+                let t = egui::RichText::new(sym)
+                    .size(theme::FONT_MD)
+                    .color(if selected {
+                        theme::cur().accent
+                    } else {
+                        theme::cur().text
+                    });
+                if selected {
+                    t.strong()
+                } else {
+                    t
+                }
+            };
+            ui.add(egui::Label::new(name_txt).truncate());
+            star_clicked
         })
         .inner;
 
