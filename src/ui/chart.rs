@@ -341,6 +341,12 @@ fn draw(
     }
 
     let n = candles.len() as i64;
+    // 空数据保护：clamp(1, n) 在 n==0 时是 lo>hi 直接 panic。
+    // 当前唯一调用方在缓存为空时已提前 return，但 draw 自身不能
+    // 依赖这一约定（未来新增调用方不能再埋同一个崩溃点）
+    if n == 0 {
+        return;
+    }
     let bars = app.page.chart.bars_visible.min(n as f32).max(10.0);
     let end = (n - app.page.chart.right_off as i64).clamp(1, n);
     let start = (end - bars as i64).max(0);

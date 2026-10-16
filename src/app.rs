@@ -351,6 +351,11 @@ impl BnApp {
             cfg.alerts
                 .iter()
                 .filter_map(|a| {
+                    // market 合法性守卫：config.toml 可手编，market >= 2 的条目会
+                    // 让 tickers[a.market as usize] 数组越界 panic（每帧崩溃点）
+                    if a.market > 1 {
+                        return None;
+                    }
                     let last = md.tickers[a.market as usize]
                         .get(&a.symbol)
                         .map(|t| t.close)
