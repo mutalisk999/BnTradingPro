@@ -608,6 +608,36 @@ fn en_lookup(zh: &'static str) -> &'static str {
             "Submit futures orders over the WebSocket API (lower latency); any failure falls back to REST automatically"
         }
         "WS 下单失败，已回退 REST: " => "WS order failed, fell back to REST: ",
+        // ---- 资金流水 ----
+        "资金流水" => "Fund Flow",
+        "资金流水获取失败" => "Fund flow fetch failed ",
+        "暂无资金流水" => "No fund flow",
+        "划转、资金费、充值与提现将显示在这里" => {
+            "Transfers, funding fees, deposits and withdrawals will appear here"
+        }
+        "进入页签后自动加载" => "Loads automatically on tab open",
+        "备注" => "Note",
+        "最近 100 条" => "Last 100 entries",
+        "订单历史获取失败" => "Order history fetch failed ",
+        "成交历史获取失败" => "Trade history fetch failed ",
+        "充值" => "Deposit",
+        "提现" => "Withdraw",
+        "划转" => "Transfer",
+        "资金费" => "Funding Fee",
+        "已实现盈亏" => "Realized PnL",
+        "体验金" => "Bonus",
+        "成功" => "Success",
+        "处理中" => "Pending",
+        "已入账" => "Credited",
+        "审核中" => "Under Review",
+        "已取消" => "Cancelled",
+        "待审核" => "Awaiting Review",
+        "失败" => "Failed",
+        "完成" => "Completed",
+        "转入" => "In",
+        "转出" => "Out",
+        "网络 " => "Network ",
+        "手续费 " => "Fee ",
         _ => return_en_fallback(zh),
     }
 }

@@ -61,19 +61,43 @@ pub fn show_book_panel(app: &mut BnApp, ui: &mut egui::Ui) {
 /// 「上一帧」属于旧内容，切回时不应把缺失时段累积的价格变化整列闪一遍
 fn show_book_tabs(app: &mut BnApp, ui: &mut egui::Ui) {
     let prev = app.book_tab;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        if theme::nav_tab(ui, crate::i18n::tr("盘口"), app.book_tab == BookTab::Book) {
-            app.book_tab = BookTab::Book;
-        }
-        if theme::nav_tab(
-            ui,
-            crate::i18n::tr("成交明细"),
-            app.book_tab == BookTab::Trades,
-        ) {
-            app.book_tab = BookTab::Trades;
-        }
-    });
+    // 页签区两等分：左右半区各放一枚页签（水平垂直居中），中缝一条
+    // 竖向分隔线（上下各留 4px 不顶满）
+    let full_w = ui.available_width();
+    let row_h = theme::BTN_H;
+    let (row_rect, _) =
+        ui.allocate_exact_size(egui::vec2(full_w, row_h), egui::Sense::hover());
+    let half_w = row_rect.width() / 2.0;
+    let left_rect = egui::Rect::from_min_max(
+        row_rect.left_top(),
+        egui::pos2(row_rect.left() + half_w, row_rect.bottom()),
+    );
+    let right_rect = egui::Rect::from_min_max(
+        egui::pos2(row_rect.right() - half_w, row_rect.top()),
+        row_rect.right_bottom(),
+    );
+    if theme::pill_tab_rect(ui, left_rect, crate::i18n::tr("盘口"), app.book_tab == BookTab::Book)
+        .clicked()
+    {
+        app.book_tab = BookTab::Book;
+    }
+    if theme::pill_tab_rect(
+        ui,
+        right_rect,
+        crate::i18n::tr("成交明细"),
+        app.book_tab == BookTab::Trades,
+    )
+    .clicked()
+    {
+        app.book_tab = BookTab::Trades;
+    }
+    ui.painter().line_segment(
+        [
+            egui::pos2(row_rect.center().x, row_rect.top() + 4.0),
+            egui::pos2(row_rect.center().x, row_rect.bottom() - 4.0),
+        ],
+        egui::Stroke::new(1.0, theme::cur().border),
+    );
     ui.separator();
     if app.book_tab != prev {
         app.flash_book = Default::default();

@@ -1074,19 +1074,13 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     .color(theme::cur().text_dim),
             ),
         };
-        let resp = theme::btn_default(ui, crate::i18n::tr("刷新"), key.is_some());
-        let resp = if key.is_none() {
-            resp.on_disabled_hover_text(crate::i18n::tr("请先在交易页选择交易对"))
-        } else {
-            resp
-        };
-        if resp.clicked() {
-            if let Some((m, s)) = key.clone() {
-                state.send_cmd(Command::RefreshHistory {
-                    market: m,
-                    symbol: s,
-                });
-            }
+        // 不再要求 key 已存在：key 为空（首次进入/上次拉取失败）时用
+        // 当前页市场+交易对兜底，避免"按钮灰死"导致永远无法手动重试
+        if theme::btn_default(ui, crate::i18n::tr("刷新"), true).clicked() {
+            let (m, s) = key
+                .clone()
+                .unwrap_or((app.market, app.page.symbol.clone()));
+            state.send_cmd(Command::RefreshHistory { market: m, symbol: s });
         }
         // 导出当前展示的订单历史（最多 100 笔）
         if theme::btn_default(ui, crate::i18n::tr("导出 CSV"), !hist.is_empty())
@@ -1279,19 +1273,12 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
             .size(theme::FONT_MD),
         );
         // 尚未选定交易对时按钮置灰而非消失：工具条高度不跳变，禁用原因悬停可见
-        let resp = theme::btn_default(ui, crate::i18n::tr("刷新"), hist_key.is_some());
-        let resp = if hist_key.is_none() {
-            resp.on_disabled_hover_text(crate::i18n::tr("请先在交易页选择交易对"))
-        } else {
-            resp
-        };
-        if resp.clicked() {
-            if let Some((m, s)) = hist_key.clone() {
-                state.send_cmd(Command::RefreshHistory {
-                    market: m,
-                    symbol: s,
-                });
-            }
+        // 同 show_history：key 为空时用当前页市场+交易对兜底，保证可手动重试
+        if theme::btn_default(ui, crate::i18n::tr("刷新"), true).clicked() {
+            let (m, s) = hist_key
+                .clone()
+                .unwrap_or((app.market, app.page.symbol.clone()));
+            state.send_cmd(Command::RefreshHistory { market: m, symbol: s });
         }
         // 导出当前展示的成交明细
         if theme::btn_default(ui, crate::i18n::tr("导出 CSV"), !trades.is_empty())
@@ -1434,6 +1421,172 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         row.col(|ui| {
                             ui.label(
                                 egui::RichText::new(if t.is_maker { "maker" } else { "taker" })
+                                    .size(theme::FONT_MD)
+                                    .color(theme::cur().text_dim),
+                            );
+                        });
+                    });
+                }
+            });
+    });
+}
+
+/// 资金流水：合约 income（划转/资金费/已实现盈亏/手续费），
+/// 现货充值+提现合并；按市场查询，数据归属见 flow_market
+pub fn show_flow(app: &mut BnApp, ui: &mut egui::Ui) {
+    let state = Arc::clone(&app.state);
+    if !state.has_creds() {
+        widgets::empty_state(
+            ui,
+            "◎",
+            crate::i18n::tr("未配置 API 密钥"),
+            crate::i18n::tr("在设置页配置密钥后查看"),
+        );
+        return;
+    }
+    // 单锁取数（与 show_history 同构）：flow 为 Arc，clone 不深拷贝
+    let (flows, flow_market) = {
+        let o = state.orders.lock();
+        (o.flow.clone(), o.flow_market)
+    };
+    let market = app.market;
+    theme::form_row(ui, |ui| {
+        match flow_market {
+            Some(m) => ui.label(
+                egui::RichText::new(format!(
+                    "{} · {}",
+                    m.label(),
+                    crate::i18n::tr("最近 100 条")
+                ))
+                .size(theme::FONT_MD),
+            ),
+            None => ui.label(
+                egui::RichText::new(crate::i18n::tr("进入页签后自动加载"))
+                    .size(theme::FONT_MD)
+                    .color(theme::cur().text_dim),
+            ),
+        };
+        if theme::btn_default(ui, crate::i18n::tr("刷新"), true).clicked() {
+            state.send_cmd(Command::RefreshFlow { market });
+        }
+        // 导出当前展示的流水
+        if theme::btn_default(ui, crate::i18n::tr("导出 CSV"), !flows.is_empty())
+            .on_disabled_hover_text(crate::i18n::tr("暂无资金流水"))
+            .clicked()
+        {
+            let rows = flows
+                .iter()
+                .map(|f| {
+                    vec![
+                        widgets::fmt_time(f.time),
+                        crate::i18n::tr(f.kind).to_string(),
+                        f.symbol.clone(),
+                        f.asset.clone(),
+                        f.amount.to_string(),
+                        f.note.clone(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            let stem = format!("flows_{}", market.label());
+            toast_export(
+                &state,
+                write_csv(
+                    &stem,
+                    &["time", "type", "symbol", "asset", "amount", "note"],
+                    &rows,
+                ),
+            );
+        }
+    });
+    ui.separator();
+    if flows.is_empty() {
+        widgets::empty_state(
+            ui,
+            "◎",
+            crate::i18n::tr("暂无资金流水"),
+            crate::i18n::tr("划转、资金费、充值与提现将显示在这里"),
+        );
+        return;
+    }
+    hscroll_table(ui, "orders_flow", 434.0, |ui| {
+        TableBuilder::new(ui)
+            .striped(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::auto().clip(true).at_least(78.0))
+            .column(Column::auto().clip(true).at_least(64.0))
+            .column(Column::auto().clip(true).at_least(72.0))
+            .column(Column::auto().clip(true).at_least(52.0))
+            .column(Column::auto().clip(true).at_least(96.0))
+            .column(Column::remainder().clip(true).at_least(72.0))
+            .header(22.0, |mut h| {
+                for (i, t) in [
+                    "时间",
+                    "类型",
+                    "交易对",
+                    "资产",
+                    "金额",
+                    "备注",
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    h.col(|ui| head_cell(ui, crate::i18n::tr(t), i == 4));
+                }
+            })
+            .body(|mut body| {
+                for f in flows.iter() {
+                    body.row(22.0, |mut row| {
+                        row.col(|ui| {
+                            widgets::num_cell(ui, widgets::fmt_time(f.time), None);
+                        });
+                        row.col(|ui| {
+                            ui.label(
+                                egui::RichText::new(crate::i18n::tr(f.kind))
+                                    .size(theme::FONT_MD),
+                            );
+                        });
+                        row.col(|ui| {
+                            // 划转/充值/提现等全局条目 symbol 为空
+                            if f.symbol.is_empty() {
+                                ui.label(
+                                    egui::RichText::new("—")
+                                        .size(theme::FONT_MD)
+                                        .color(theme::cur().text_dim),
+                                );
+                            } else {
+                                ui.label(theme::code(&f.symbol).size(theme::FONT_MD));
+                            }
+                        });
+                        row.col(|ui| {
+                            ui.label(theme::code(&f.asset).size(theme::FONT_MD));
+                        });
+                        row.col(|ui| {
+                            // 流入正色/流出负色，与买卖方向配色一致
+                            let c = if f.amount.is_zero() {
+                                theme::cur().text
+                            } else if f.amount > rust_decimal::Decimal::ZERO {
+                                theme::cur().up
+                            } else {
+                                theme::cur().down
+                            };
+                            let sign = if f.amount > rust_decimal::Decimal::ZERO {
+                                "+"
+                            } else {
+                                ""
+                            };
+                            widgets::num_cell(
+                                ui,
+                                format!(
+                                    "{sign}{} {}",
+                                    widgets::fmt_dec_grouped(&f.amount),
+                                    f.asset
+                                ),
+                                Some(c),
+                            );
+                        });
+                        row.col(|ui| {
+                            ui.label(
+                                egui::RichText::new(&f.note)
                                     .size(theme::FONT_MD)
                                     .color(theme::cur().text_dim),
                             );

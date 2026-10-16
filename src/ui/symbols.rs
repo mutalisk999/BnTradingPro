@@ -84,17 +84,9 @@ struct RowAct<'a> {
     toggled: &'a mut Option<String>,
 }
 
-/// 左侧交易对列表：搜索 + 自选置顶 + 全量虚拟化列表
-pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
-    // 字体度量在帧内是稳定的（除非用户改缩放，缩放后本帧自然重算）
-    let m = row_metrics(ui);
-
-    // 实体滚动条（非悬浮）：悬浮条不占布局宽度却会把子控件的可用区撑宽约一个
-    // 条宽，行尾的星标因此被推出面板裁剪区（只露出半颗），还压住面板拖拽把手；
-    // 实体条真实占位，星标永远完整地停在内容区最右侧
-    ui.style_mut().spacing.scroll.floating = false;
-    // 滚动条与面板内缘留出间距：轨道贴边会盖住面板拖拽把手，把手拖不动
-    ui.style_mut().spacing.scroll.bar_outer_margin = 6.0;
+/// 搜索框（非空时附 × 清除钮）：独立导出，由 app.rs 与「收起侧边栏」按钮
+/// 同排布局（垂直居中）复用
+pub fn show_search(app: &mut BnApp, ui: &mut egui::Ui) {
     // 搜索框 + 非空时的 × 清除按钮（内联，避免占一行）
     let has_filter = !app.page.symbol_filter.is_empty();
     ui.horizontal(|ui| {
@@ -125,7 +117,19 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             }
         }
     });
-    ui.add_space(2.0);
+}
+
+/// 左侧交易对列表：自选置顶 + 全量虚拟化列表（搜索框由 app.rs 顶部行承载）
+pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
+    // 字体度量在帧内是稳定的（除非用户改缩放，缩放后本帧自然重算）
+    let m = row_metrics(ui);
+
+    // 实体滚动条（非悬浮）：悬浮条不占布局宽度却会把子控件的可用区撑宽约一个
+    // 条宽，行尾的星标因此被推出面板裁剪区（只露出半颗），还压住面板拖拽把手；
+    // 实体条真实占位，星标永远完整地停在内容区最右侧
+    ui.style_mut().spacing.scroll.floating = false;
+    // 滚动条与面板内缘留出间距：轨道贴边会盖住面板拖拽把手，把手拖不动
+    ui.style_mut().spacing.scroll.bar_outer_margin = 6.0;
 
     let filter = app.page.symbol_filter.trim().to_uppercase();
     let favs: Vec<String> = app

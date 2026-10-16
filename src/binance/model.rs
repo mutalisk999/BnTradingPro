@@ -392,6 +392,67 @@ pub struct MyTrade {
     pub is_maker: bool,
 }
 
+// ---------- 资金流水（GET /fapi/v1/income + /sapi/v1/capital/*） ----------
+
+/// 合约资金流水条目（GET /fapi/v1/income）：incomeType 覆盖
+/// TRANSFER/FUNDING_FEE/REALIZED_PNL/COMMISSION 等；TRANSFER 条目
+/// symbol 为空串、附 transferType（IN/OUT）
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct FutIncome {
+    #[serde(rename = "symbol", default)]
+    pub symbol: String,
+    #[serde(rename = "incomeType", default)]
+    pub income_type: String,
+    #[serde(rename = "income", deserialize_with = "dec0", default)]
+    pub income: Decimal,
+    #[serde(rename = "asset", default)]
+    pub asset: String,
+    #[serde(rename = "time", default)]
+    pub time: i64,
+    #[serde(rename = "tranId", default)]
+    pub tran_id: i64,
+    #[serde(rename = "transferType", default)]
+    pub transfer_type: String,
+}
+
+/// 现货充值记录（GET /sapi/v1/capital/deposit/hisrec）
+/// status：0=处理中 1=成功 6=已入账（锁定）
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct SpotDeposit {
+    #[serde(rename = "amount", deserialize_with = "dec0", default)]
+    pub amount: Decimal,
+    #[serde(rename = "coin", default)]
+    pub coin: String,
+    #[serde(rename = "network", default)]
+    pub network: String,
+    #[serde(rename = "status", default)]
+    pub status: i64,
+    #[serde(rename = "insertTime", default)]
+    pub insert_time: i64,
+}
+
+/// 现货提现记录（GET /sapi/v1/capital/withdraw/history）
+/// status：0=审核中 1=已取消 2=待审核 3=已拒绝 4=处理中 5=失败 6=完成
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct SpotWithdraw {
+    #[serde(rename = "amount", deserialize_with = "dec0", default)]
+    pub amount: Decimal,
+    #[serde(rename = "transactionFee", deserialize_with = "dec0", default)]
+    pub transaction_fee: Decimal,
+    #[serde(rename = "coin", default)]
+    pub coin: String,
+    #[serde(rename = "network", default)]
+    pub network: String,
+    #[serde(rename = "status", default)]
+    pub status: i64,
+    /// applyTime 为 "yyyy-MM-dd HH:mm:ss"（UTC）字符串，非毫秒时间戳
+    #[serde(rename = "applyTime", default)]
+    pub apply_time: String,
+}
+
 // ---------- 用户数据流（WebSocket 推送） ----------
 
 /// 现货 executionReport 关键字段
@@ -681,5 +742,94 @@ mod tests {
         assert_eq!(o.algo_id, 123);
         assert!(o.trigger_price.is_none());
         assert_eq!(o.create_time, 0);
+    }
+
+    #[test]
+    fn parse_fut_all_orders_sample() {
+        // GET /fapi/v1/allOrders 官方样本：多出 cumQuote/origType/workingType
+        // 等字段（被 serde 忽略），positionSide/closePosition 为合约特有
+        let raw = r#"[{"avgPrice":"0.00000","clientOrderId":"abc","cumQuote":"0","executedQty":"0",
+            "orderId":191994,"origQty":"0.40","origType":"TRAILING_STOP_MARKET","price":"0",
+            "reduceOnly":false,"side":"BUY","positionSide":"SHORT","status":"NEW","stopPrice":"9300",
+            "closePosition":false,"symbol":"BTCUSDT","time":1579276756075,"timeInForce":"GTC",
+            "type":"TRAILING_STOP_MARKET","activatePrice":"9020","priceRate":"0.3",
+            "updateTime":1566818724722,"workingType":"CONTRACT_PRICE"}]"#;
+        let list: Vec<OrderInfo> = serde_json::from_str(raw).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].order_type, "TRAILING_STOP_MARKET");
+        assert_eq!(list[0].position_side, "SHORT");
+        assert_eq!(
+            list[0].stop_price.map(|x| x.to_string()).as_deref(),
+            Some("9300")
+        );
+    }
+
+    #[test]
+    fn parse_fut_user_trades_sample() {
+        // GET /fapi/v1/userTrades 官方样本：方向键为 buyer/maker（非
+        // isBuyer/isMaker），commission 可为负数，多出 realizedPnl/side
+        let raw = r#"[{"buyer":false,"commission":"-0.07819010","commissionAsset":"USDT","id":698759,
+            "maker":false,"orderId":25851813,"price":"7819.01","qty":"0.002","quoteQty":"15.63802",
+            "realizedPnl":"-0.91539999","side":"SELL","positionSide":"SHORT","symbol":"BTCUSDT",
+            "time":1569514978020}]"#;
+        let list: Vec<MyTrade> = serde_json::from_str(raw).unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(!list[0].is_buyer);
+        assert!(!list[0].is_maker);
+        assert_eq!(list[0].price.to_string(), "7819.01");
+        assert_eq!(list[0].commission.to_string(), "-0.07819010");
+        assert_eq!(list[0].commission_asset, "USDT");
+
+        // 买单 + taker：buyer=true / maker=false
+        let raw = r#"[{"buyer":true,"commission":"0.01","commissionAsset":"BNB","id":1,"maker":false,
+            "orderId":2,"price":"100","qty":"1","quoteQty":"100","realizedPnl":"0","side":"BUY",
+            "positionSide":"LONG","symbol":"ETHUSDT","time":1}]"#;
+        let list: Vec<MyTrade> = serde_json::from_str(raw).unwrap();
+        assert!(list[0].is_buyer);
+        assert!(!list[0].is_maker);
+    }
+
+    #[test]
+    fn parse_fund_flow_samples() {
+        // GET /fapi/v1/income 官方样本：TRANSFER 条目 symbol 为空、带
+        // transferType；income 为带符号字符串
+        let raw = r#"[
+            {"symbol":"","incomeType":"TRANSFER","income":"-5000.00000","asset":"USDT",
+             "time":1570636800000,"tranId":9687322392,"transferType":"IN"},
+            {"symbol":"BTCUSDT","incomeType":"REALIZED_PNL","income":"-0.10730000","asset":"USDT",
+             "time":1570636800000,"tranId":9687322393},
+            {"symbol":"","incomeType":"FUNDING_FEE","income":"1.00000000","asset":"USDT",
+             "time":1570641600000,"tranId":9687322394}
+        ]"#;
+        let list: Vec<FutIncome> = serde_json::from_str(raw).unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].income_type, "TRANSFER");
+        assert_eq!(list[0].income.to_string(), "-5000.00000");
+        assert_eq!(list[0].transfer_type, "IN");
+        assert!(list[0].symbol.is_empty());
+        assert_eq!(list[1].symbol, "BTCUSDT");
+
+        // income 为 null/缺省时归 0，不破坏整体解析
+        let list: Vec<FutIncome> =
+            serde_json::from_str(r#"[{"incomeType":"COMMISSION","income":null,"time":1}]"#).unwrap();
+        assert!(list[0].income.is_zero());
+
+        // 充值/提现记录
+        let raw = r#"[{"amount":"0.00999800","coin":"PAXG","network":"ETH","status":1,
+            "address":"0x1","txId":"0xabc","insertTime":1599621997000,"transferType":0,
+            "confirmTimes":"12/12","walletType":0}]"#;
+        let list: Vec<SpotDeposit> = serde_json::from_str(raw).unwrap();
+        assert_eq!(list[0].coin, "PAXG");
+        assert_eq!(list[0].amount.to_string(), "0.00999800");
+        assert_eq!(list[0].insert_time, 1599621997000);
+
+        let raw = r#"[{"id":"921fbadf","withdrawOrderId":null,"amount":"1.44000000",
+            "transactionFee":"0.00080000","coin":"XRP","status":6,"address":"rX",
+            "txId":"13a","applyTime":"2020-09-09 08:03:39","network":"XRP"}]"#;
+        let list: Vec<SpotWithdraw> = serde_json::from_str(raw).unwrap();
+        assert_eq!(list[0].coin, "XRP");
+        assert_eq!(list[0].amount.to_string(), "1.44000000");
+        assert_eq!(list[0].apply_time, "2020-09-09 08:03:39");
+        assert_eq!(list[0].status, 6);
     }
 }

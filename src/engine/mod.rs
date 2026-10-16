@@ -45,6 +45,10 @@ pub enum Command {
         market: Market,
         symbol: String,
     },
+    /// 资金流水：合约拉 /fapi/v1/income，现货拉充值+提现历史
+    RefreshFlow {
+        market: Market,
+    },
     PlaceOrder {
         market: Market,
         req: OrderRequest,
@@ -312,6 +316,63 @@ fn repaint(ctx: &egui::Context) {
 fn toast_err(state: &SharedState, e: &BinanceError) {
     tracing::warn!("REST 错误: {e}");
     state.push_toast(ToastKind::Err, e.friendly());
+}
+
+// ---------------- 资金流水归一化助手（纯函数，便于测试） ----------------
+// 注意：这里统一返回「中文原键」，由 UI 展示时经 i18n::tr 现场翻译，
+// 保证运行中切换语言时已存数据不会固化成旧语言文案
+
+/// 合约 income 类型 → 中文类型键
+fn flow_kind(t: &str) -> &'static str {
+    match t {
+        "TRANSFER" => "划转",
+        "FUNDING_FEE" => "资金费",
+        "REALIZED_PNL" => "已实现盈亏",
+        "COMMISSION" => "手续费",
+        "WELCOME_BONUS" => "体验金",
+        _ => "其他",
+    }
+}
+
+/// 划转方向（income 条目 transferType：IN/OUT）；未知返回空
+fn transfer_dir(s: &str) -> &'static str {
+    match s {
+        "IN" => "转入",
+        "OUT" => "转出",
+        _ => "",
+    }
+}
+
+/// 充值状态：0=处理中 1=成功 6=已入账（锁定）
+fn deposit_status(s: i64) -> &'static str {
+    match s {
+        0 => "处理中",
+        1 => "成功",
+        6 => "已入账",
+        _ => "其他",
+    }
+}
+
+/// 提现状态：0=审核中 1=已取消 2=待审核 3=已拒绝 4=处理中 5=失败 6=完成
+fn withdraw_status(s: i64) -> &'static str {
+    match s {
+        0 => "审核中",
+        1 => "已取消",
+        2 => "待审核",
+        3 => "已拒绝",
+        4 => "处理中",
+        5 => "失败",
+        6 => "完成",
+        _ => "其他",
+    }
+}
+
+/// 提现 applyTime（"yyyy-MM-dd HH:mm:ss" UTC 文本）→ 毫秒；解析失败归 0
+fn apply_time_ms(s: &str) -> i64 {
+    chrono::NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|t| t.and_utc().timestamp_millis())
+        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------- 命令循环
@@ -967,19 +1028,62 @@ async fn handle_cmd(
                 .await;
             {
                 let (po_ok, pt_ok) = (po.is_ok(), pt.is_ok());
+                // 失败必须可见：静默吞掉时 UI 恒为空态，用户无法区分
+                // "没有历史"与"请求失败"（期货历史查不到即此形态）
+                if let Err(e) = &po {
+                    if !matches!(e, BinanceError::NoCreds) {
+                        tracing::warn!("订单历史获取失败({market}): {e}");
+                        state.push_toast(
+                            ToastKind::Err,
+                            format!(
+                                "{}{}: {}",
+                                crate::i18n::tr("订单历史获取失败"),
+                                market.label(),
+                                e.friendly()
+                            ),
+                        );
+                    }
+                }
+                if let Err(e) = &pt {
+                    if !matches!(e, BinanceError::NoCreds) {
+                        tracing::warn!("成交历史获取失败({market}): {e}");
+                        state.push_toast(
+                            ToastKind::Err,
+                            format!(
+                                "{}{}: {}",
+                                crate::i18n::tr("成交历史获取失败"),
+                                market.label(),
+                                e.friendly()
+                            ),
+                        );
+                    }
+                }
                 let mut o = state.orders.lock();
                 if let Ok(v) = po {
-                    if let Ok(mut list) = serde_json::from_value::<Vec<OrderInfo>>(v) {
-                        list.sort_by_key(|x| std::cmp::Reverse(x.time));
-                        // 整体替换 Arc：UI 侧持有旧 Arc 的帧不受影响，
-                        // 新帧命中新内容——无版本号契约需要双方维护
-                        o.history = std::sync::Arc::new(list);
+                    // 诊断：空响应时打印原文（区分真空数组/包裹对象/镜像页）
+                    if v.as_array().map(|a| a.is_empty()).unwrap_or(false) {
+                        let raw = serde_json::to_string(&v).unwrap_or_default();
+                        tracing::warn!("订单历史空响应原文: {}", &raw[..raw.len().min(400)]);
+                    }
+                    match serde_json::from_value::<Vec<OrderInfo>>(v) {
+                        Ok(mut list) => {
+                            list.sort_by_key(|x| std::cmp::Reverse(x.time));
+                            tracing::info!("订单历史 {market} {symbol}: {} 条", list.len());
+                            // 整体替换 Arc：UI 侧持有旧 Arc 的帧不受影响，
+                            // 新帧命中新内容——无版本号契约需要双方维护
+                            o.history = std::sync::Arc::new(list);
+                        }
+                        Err(e) => tracing::warn!("解析订单历史失败: {e}"),
                     }
                 }
                 if let Ok(v) = pt {
-                    if let Ok(mut list) = serde_json::from_value::<Vec<MyTrade>>(v) {
-                        list.sort_by_key(|x| std::cmp::Reverse(x.time));
-                        o.trades = std::sync::Arc::new(list);
+                    match serde_json::from_value::<Vec<MyTrade>>(v) {
+                        Ok(mut list) => {
+                            list.sort_by_key(|x| std::cmp::Reverse(x.time));
+                            tracing::info!("成交历史 {market} {symbol}: {} 条", list.len());
+                            o.trades = std::sync::Arc::new(list);
+                        }
+                        Err(e) => tracing::warn!("解析成交历史失败: {e}"),
                     }
                 }
                 o.history_symbol = if po_ok || pt_ok {
@@ -989,6 +1093,159 @@ async fn handle_cmd(
                 } else {
                     o.history_symbol.take()
                 };
+            }
+            repaint(ctx);
+        }
+        Command::RefreshFlow { market } => {
+            if !state.has_creds() {
+                return;
+            }
+            let cfg = state.cfg_snapshot();
+            let rc = RestCtx {
+                market,
+                testnet: cfg.testnet,
+                recv_window_ms: cfg.recv_window_ms,
+            };
+            let limit = vec![("limit".into(), "100".into())];
+            let mut flows: Vec<state::FundFlow> = Vec::new();
+            // 单侧失败仍展示另一侧；仅全部失败才 toast（现货两源并发语义）
+            let mut first_err: Option<BinanceError> = None;
+            match market {
+                Market::UmFutures => {
+                    // income 不带 symbol：返回全部交易对 + 划转/资金费等全局条目
+                    match client
+                        .signed(
+                            reqwest::Method::GET,
+                            rc,
+                            &cfg,
+                            "/fapi/v1/income",
+                            limit,
+                        )
+                        .await
+                    {
+                        Ok(v) => match serde_json::from_value::<Vec<FutIncome>>(v) {
+                            Ok(list) => {
+                                flows.extend(list.into_iter().map(|x| {
+                                    let note = match x.income_type.as_str() {
+                                        "TRANSFER" => transfer_dir(&x.transfer_type).to_string(),
+                                        "FUNDING_FEE" | "REALIZED_PNL" | "COMMISSION" => {
+                                            String::new()
+                                        }
+                                        // 未知类型原文入备注，避免信息丢失
+                                        other => other.to_string(),
+                                    };
+                                    state::FundFlow {
+                                        time: x.time,
+                                        kind: flow_kind(&x.income_type),
+                                        symbol: x.symbol,
+                                        asset: x.asset,
+                                        amount: x.income,
+                                        note,
+                                    }
+                                }));
+                            }
+                            Err(e) => tracing::warn!("解析资金流水失败: {e}"),
+                        },
+                        Err(e) => first_err = Some(e),
+                    }
+                }
+                Market::Spot => {
+                    // 现货无统一流水端点：充值 + 提现两源合并
+                    match client
+                        .signed(
+                            reqwest::Method::GET,
+                            rc,
+                            &cfg,
+                            "/sapi/v1/capital/deposit/hisrec",
+                            limit.clone(),
+                        )
+                        .await
+                    {
+                        Ok(v) => match serde_json::from_value::<Vec<SpotDeposit>>(v) {
+                            Ok(list) => {
+                                flows.extend(list.into_iter().map(|d| state::FundFlow {
+                                    time: d.insert_time,
+                                    kind: "充值",
+                                    symbol: String::new(),
+                                    asset: d.coin,
+                                    amount: d.amount,
+                                    note: format!(
+                                        "{}{} · {}",
+                                        crate::i18n::tr("网络 "),
+                                        if d.network.is_empty() { "—" } else { &d.network },
+                                        deposit_status(d.status)
+                                    ),
+                                }));
+                            }
+                            Err(e) => tracing::warn!("解析充值历史失败: {e}"),
+                        },
+                        Err(e) => first_err = Some(e),
+                    }
+                    match client
+                        .signed(
+                            reqwest::Method::GET,
+                            rc,
+                            &cfg,
+                            "/sapi/v1/capital/withdraw/history",
+                            limit,
+                        )
+                        .await
+                    {
+                        Ok(v) => match serde_json::from_value::<Vec<SpotWithdraw>>(v) {
+                            Ok(list) => {
+                                flows.extend(list.into_iter().map(|w| {
+                                    // 流出取负号；手续费为 0 时不出现在备注
+                                    let mut note = format!(
+                                        "{}{} · {}",
+                                        crate::i18n::tr("网络 "),
+                                        if w.network.is_empty() { "—" } else { &w.network },
+                                        withdraw_status(w.status)
+                                    );
+                                    if !w.transaction_fee.is_zero() {
+                                        note.push_str(&format!(
+                                            " · {}{}",
+                                            crate::i18n::tr("手续费 "),
+                                            w.transaction_fee.normalize()
+                                        ));
+                                    }
+                                    state::FundFlow {
+                                        time: apply_time_ms(&w.apply_time),
+                                        kind: "提现",
+                                        symbol: String::new(),
+                                        asset: w.coin,
+                                        amount: -w.amount,
+                                        note,
+                                    }
+                                }));
+                            }
+                            Err(e) => tracing::warn!("解析提现历史失败: {e}"),
+                        },
+                        Err(e) => first_err = Some(e),
+                    }
+                }
+            }
+            if let Some(e) = &first_err {
+                if flows.is_empty() {
+                    tracing::warn!("资金流水获取失败({market}): {e}");
+                    state.push_toast(
+                        ToastKind::Err,
+                        format!(
+                            "{}{}: {}",
+                            crate::i18n::tr("资金流水获取失败"),
+                            market.label(),
+                            e.friendly()
+                        ),
+                    );
+                } else {
+                    tracing::warn!("资金流水部分获取失败({market}): {e}");
+                }
+            }
+            flows.sort_by_key(|x| std::cmp::Reverse(x.time));
+            tracing::info!("资金流水 {market}: {} 条", flows.len());
+            {
+                let mut o = state.orders.lock();
+                o.flow = std::sync::Arc::new(flows);
+                o.flow_market = Some(market);
             }
             repaint(ctx);
         }
@@ -1535,9 +1792,39 @@ async fn cancel_all_orders(
         params.push(("symbol".into(), sym.to_string()));
     }
     state.set_busy("cancel", true);
-    let res = client
-        .signed(reqwest::Method::DELETE, rc, &cfg, &path, params)
-        .await;
+    // 现货 DELETE /openOrders 与合约 DELETE /allOpenOrders 均实测强制要求
+    // symbol（不带报 -1102，2026 API 收紧且文档滞后）——"本市场全部"退化为
+    // 按当前挂单的去重交易对逐个撤；全空视为成功
+    let res = if symbol.is_none() {
+        let syms: Vec<String> = {
+            let mut v: Vec<String> = state.orders.lock().open[market as usize]
+                .iter()
+                .map(|o| o.symbol.clone())
+                .collect();
+            v.sort();
+            v.dedup();
+            v
+        };
+        let mut last_err = None;
+        for s in syms {
+            let ps = vec![("symbol".into(), s.clone())];
+            if let Err(e) = client
+                .signed(reqwest::Method::DELETE, rc, &cfg, &path, ps)
+                .await
+            {
+                tracing::warn!("撤销挂单失败({s}): {e}");
+                last_err = Some(e);
+            }
+        }
+        match last_err {
+            Some(e) => Err(e),
+            None => Ok(serde_json::Value::Null),
+        }
+    } else {
+        client
+            .signed(reqwest::Method::DELETE, rc, &cfg, &path, params)
+            .await
+    };
     // 条件单（仓位止盈止损/追踪委托）在 Algo 体系，allOpenOrders 撤不到：
     // 指定交易对用批量端点 algoOpenOrders；全市场无批量端点，逐交易对撤
     if market == Market::UmFutures {

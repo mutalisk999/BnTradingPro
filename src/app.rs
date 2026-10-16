@@ -58,6 +58,7 @@ pub enum SubTab {
     Positions,
     History,
     Trades,
+    Flow,
 }
 
 /// 单个交易页（现货/期货各一份）的独立状态
@@ -265,6 +266,9 @@ pub struct BnApp {
     pub book_anim: crate::ui::market::BookAnim,
     /// 右栏内容页签：盘口 / 成交明细
     pub book_tab: crate::ui::market::BookTab,
+    /// 资金流水页签进入时已自动拉取过当前市场（防每帧重复下发；
+    /// 切市场时重置，重新触发一次）
+    pub flow_auto_done: bool,
     /// 缩放防抖：上一帧窗口物理尺寸（zoom 切换不改变物理尺寸，仅 resize 改变）
     ppp_last_phys: Option<(f32, f32)>,
     /// 缩放防抖：物理尺寸自该时刻起未变（egui time 域，秒）
@@ -342,6 +346,7 @@ impl BnApp {
             flash_header: Default::default(),
             book_anim: Default::default(),
             book_tab: crate::ui::market::BookTab::Book,
+            flow_auto_done: false,
             ppp_last_phys: None,
             ppp_stable_since: None,
         }
@@ -534,6 +539,8 @@ impl BnApp {
             // 不再按市场钳制面板宽度：现货/期货共用同一 trade_width，
             // 切换页签时图表右侧分割线保持原位（用户明确要求两市场一致）
             self.refresh_account_data(m);
+            // 资金流水按市场查询：切市场后允许流水页签重新自动拉取
+            self.flow_auto_done = false;
         }
     }
 
@@ -876,17 +883,30 @@ impl BnApp {
                         .inner_margin(8),
                 )
                 .show(ui, |ui| {
-                    // 收起按钮固定在列表顶部；symbol_filter 在 app.page 上，折叠不丢状态
-                    ui.horizontal(|ui| {
-                        if ui
-                            .small_button("«")
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .on_hover_text(crate::i18n::tr("收起侧边栏"))
-                            .clicked()
-                        {
-                            self.sidebar_expanded = false;
-                        }
-                    });
+                    // 收起按钮与搜索框同排：allocate_ui 把行区显式钳在 26px 高
+                    // （直接 with_layout 的子区会吞掉面板剩余高度，内容被
+                    // 居中到面板中部、顶部留大空白），Align::Center 让两控件
+                    // 互相垂直居中；symbol_filter 在 app.page 上，折叠不丢状态
+                    ui.allocate_ui(
+                        egui::vec2(ui.available_width(), crate::ui::theme::CONTROL_H),
+                        |ui| {
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    if ui
+                                        .small_button("«")
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .on_hover_text(crate::i18n::tr("收起侧边栏"))
+                                        .clicked()
+                                    {
+                                        self.sidebar_expanded = false;
+                                    }
+                                    crate::ui::symbols::show_search(self, ui);
+                                },
+                            );
+                        },
+                    );
+                    ui.add_space(2.0);
                     // 列表自身用 show_rows 虚拟化滚动，外层不再包 ScrollArea
                     crate::ui::symbols::show(self, ui);
                 });
@@ -997,18 +1017,43 @@ impl BnApp {
                             .inner_margin(8),
                     )
                     .show(ui, |ui| {
-                        // 收起按钮固定在下单卡顶部；表单状态都在 app.page，
-                        // 折叠不丢输入
-                        ui.horizontal(|ui| {
-                            if ui
-                                .small_button("»")
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text(crate::i18n::tr("收起下单面板"))
-                                .clicked()
-                            {
-                                self.trade_expanded = false;
-                            }
-                        });
+                        // 顶行：收起按钮居左，「下单 · <symbol>」居右——标题右缘
+                        // 对齐下方卖出按钮右缘（买卖按钮行总宽=面板内容宽）。
+                        // allocate_ui 把行区钳在 26px 高（直接 with_layout 会
+                        // 吞掉面板剩余高度、内容被居中到面板中部）。表单状态
+                        // 都在 app.page，折叠不丢输入
+                        ui.allocate_ui(
+                            egui::vec2(ui.available_width(), crate::ui::theme::CONTROL_H),
+                            |ui| {
+                                ui.with_layout(
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        if ui
+                                            .small_button("»")
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .on_hover_text(crate::i18n::tr("收起下单面板"))
+                                            .clicked()
+                                        {
+                                            self.trade_expanded = false;
+                                        }
+                                        let symbol = self.page.symbol.clone();
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(
+                                                    egui::RichText::new(format!(
+                                                        "{}{symbol}",
+                                                        crate::i18n::tr("下单 · ")
+                                                    ))
+                                                    .strong()
+                                                    .size(theme::FONT_BODY),
+                                                );
+                                            },
+                                        );
+                                    },
+                                );
+                            },
+                        );
                         egui::ScrollArea::vertical().show(ui, |ui| trade::show(self, ui));
                     });
                 // 图表右缘钳位用（见中央区 chart::show）
@@ -1071,8 +1116,10 @@ impl BnApp {
             });
     }
 
-    /// 交易页底部子页签：挂单 / 持仓(期货) / 历史 / 成交
+    /// 交易页底部子页签：挂单 / 持仓+资金流水(合约) / 历史 / 成交
     fn sub_tabs(&mut self, ui: &mut egui::Ui) {
+        // 资金流水与持仓一样仅合约提供（现货无统一流水端点）：
+        // 合约 = 挂单/持仓/历史/成交/流水，现货 = 挂单/历史/成交
         let mut tabs: Vec<(SubTab, &str)> = vec![
             (SubTab::Open, crate::i18n::tr("当前挂单")),
             (SubTab::History, crate::i18n::tr("订单历史")),
@@ -1080,6 +1127,7 @@ impl BnApp {
         ];
         if self.market == Market::UmFutures {
             tabs.insert(1, (SubTab::Positions, crate::i18n::tr("持仓")));
+            tabs.push((SubTab::Flow, crate::i18n::tr("资金流水")));
         }
         ui.horizontal(|ui| {
             ui.add_space(2.0);
@@ -1098,6 +1146,15 @@ impl BnApp {
             });
         });
         ui.separator();
+        // 进入资金流水页签后自动拉取一次当前市场（切市场重置标记重新触发；
+        // 手动「刷新」按钮随时可重拉，失败 toast 可见）
+        if self.page.sub_tab == SubTab::Flow && !self.flow_auto_done {
+            self.flow_auto_done = true;
+            if self.state.has_creds() {
+                self.state
+                    .send_cmd(Command::RefreshFlow { market: self.market });
+            }
+        }
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| match self.page.sub_tab {
@@ -1105,6 +1162,7 @@ impl BnApp {
                 SubTab::Positions => orders::show_positions(self, ui),
                 SubTab::History => orders::show_history(self, ui),
                 SubTab::Trades => orders::show_trades_history(self, ui),
+                SubTab::Flow => orders::show_flow(self, ui),
             });
     }
 

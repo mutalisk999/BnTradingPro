@@ -114,20 +114,15 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // 紧凑布局：下单面板夹在顶部栏与底部订单区之间（高度预算 ~300pt），
     // 行距 3 / 行高 22 / 按钮压到 28，保证默认窗口下全部可见、无滚动条
     ui.spacing_mut().item_spacing.y = 3.0;
-    ui.horizontal(|ui| {
+    // 「下单 · <symbol>」标题已移至面板顶行收起按钮右端（见 app.rs），
+    // 这里仅保留未配置密钥的提示
+    if !state.has_creds() {
         ui.label(
-            egui::RichText::new(format!("{}{symbol}", crate::i18n::tr("下单 · ")))
-                .strong()
-                .size(theme::FONT_BODY),
+            egui::RichText::new(crate::i18n::tr("未配置 API 密钥，仅可查看行情"))
+                .color(theme::cur().warn)
+                .size(theme::FONT_SM),
         );
-        if !state.has_creds() {
-            ui.label(
-                egui::RichText::new(crate::i18n::tr("未配置 API 密钥，仅可查看行情"))
-                    .color(theme::cur().warn)
-                    .size(theme::FONT_SM),
-            );
-        }
-    });
+    }
     ui.add_space(1.0);
 
     // ---------- 买/卖切换 ----------

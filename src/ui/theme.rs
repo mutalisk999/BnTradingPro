@@ -484,7 +484,29 @@ pub fn pill_tab(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response 
     );
     let pad_x = 12.0;
     let size = egui::vec2(galley.size().x + pad_x * 2.0, BTN_H);
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    pill_tab_rect(ui, rect, label, active)
+}
+
+/// 在指定矩形内绘制胶囊页签（文本水平垂直居中，命中区=整个 rect）：
+/// 供「半区等分」类布局复用——调用方先把可用区分成等宽半区再各自居中放置
+pub fn pill_tab_rect(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    label: &str,
+    active: bool,
+) -> egui::Response {
+    let t = cur();
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(FONT_BODY),
+        if active { t.accent } else { t.text_dim },
+    );
+    let resp = ui.interact(
+        rect,
+        egui::Id::new("pill_tab_rect").with(label),
+        egui::Sense::click(),
+    );
     let anim = ui
         .ctx()
         .animate_bool(egui::Id::new("pill_tab").with(label), active);

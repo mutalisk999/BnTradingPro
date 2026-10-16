@@ -111,6 +111,22 @@ pub struct AccountSnap {
     pub fut_margin_type: HashMap<String, String>,
 }
 
+/// 资金流水统一条目：合约 income / 现货充值+提现归一化后的视图模型。
+/// amount 带符号——流入为正、流出为负（提现金额取负、手续费另记 note）
+#[derive(Debug, Clone)]
+pub struct FundFlow {
+    /// 毫秒时间戳
+    pub time: i64,
+    /// 类型（已本地化：划转/资金费/已实现盈亏/手续费/充值/提现）
+    pub kind: &'static str,
+    /// 交易对；空 = 全局条目（划转/充值/提现等非交易对维度）
+    pub symbol: String,
+    pub asset: String,
+    pub amount: Decimal,
+    /// 附加信息：状态（充值/提现）、划转方向（划转）、网络等
+    pub note: String,
+}
+
 #[derive(Default)]
 pub struct OrdersSnap {
     pub open: [Vec<OrderInfo>; 2],
@@ -122,6 +138,9 @@ pub struct OrdersSnap {
     /// UI 每帧渲染无需深拷贝 ~100 条 × 十余 String 的历史
     pub history: std::sync::Arc<Vec<OrderInfo>>,
     pub trades: std::sync::Arc<Vec<MyTrade>>,
+    /// 资金流水（按市场查询，flow_market 记录当前数据归属）
+    pub flow: std::sync::Arc<Vec<FundFlow>>,
+    pub flow_market: Option<Market>,
 }
 
 impl OrdersSnap {
