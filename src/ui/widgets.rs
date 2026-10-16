@@ -96,10 +96,9 @@ pub fn f64_decimal(d: &Decimal) -> f64 {
 /// 展示层千分位分组：绝对值 ≥1000 时按 Decimal 自身小数位分组（不丢失精度语境），
 /// 其余保持 Decimal 全精度原文。价格不被四舍五入，仅加千分位分隔。
 pub fn fmt_dec_grouped(d: &Decimal) -> String {
-    let f = f64_decimal(d);
-    if f.abs() >= 1000.0 {
+    if d.abs() >= Decimal::from(1000) {
         let dp = (d.scale() as usize).min(8);
-        fmt_thousands(f, dp)
+        fmt_thousands_dec(d, dp)
     } else {
         d.normalize().to_string()
     }
@@ -109,26 +108,46 @@ pub fn fmt_dec_grouped(d: &Decimal) -> String {
 /// 价格用 quote 资产侧精度（tickSize 小数位）、数量用 base 资产侧精度
 /// （stepSize 小数位），同一列表格纵向小数点对齐
 pub fn fmt_dec_fixed(d: &Decimal, dp: usize) -> String {
-    let f = f64_decimal(d);
-    if f.abs() >= 1000.0 {
-        fmt_thousands(f, dp)
+    if d.abs() >= Decimal::from(1000) {
+        fmt_thousands_dec(d, dp)
     } else {
-        format!("{:.*}", dp, f)
+        fmt_dec_plain(d, dp)
     }
 }
 
 /// 按精度定长显示、不附千分位分组：侧栏等紧凑场景需要纯粹的价格数字，
 /// 逗号既占宽度又打断纵向扫读（68,432.15 → 68432.15）
 pub fn fmt_dec_plain(d: &Decimal, dp: usize) -> String {
-    format!("{:.*}", dp, f64_decimal(d))
+    // 纯 Decimal 路径：round_dp 负责按精度舍入，Display 的 {:.*} 负责末位补零。
+    // 全程不经过 f64——f64 只有 15~17 位有效数字，高精度币种（8 位小数）
+    // 或币昂服务端返回的双精度残差（如 entryPrice 86997.7000000001）
+    // 经 f64 中转后末位会露出脏数字
+    // 舍入策略显式取 MidpointAwayFromZero：rust_decimal 的 round_dp 默认是
+    // 银行家舍入（half-to-even，0.125 → 0.12），金融展示惯例是四舍五入（→ 0.13）
+    format!("{:.*}", dp, round_money(d, dp))
 }
 
-/// 千分位分组格式化（用于展示层；精确值仍走 Decimal）
+/// 金额/价格的展示舍入：half away from zero（四舍五入）
+fn round_money(d: &Decimal, dp: usize) -> Decimal {
+    d.round_dp_with_strategy(dp as u32, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
+}
+
+/// 千分位分组格式化（用于展示层；坐标轴等本身就是 f64 的场景）
 pub fn fmt_thousands(v: f64, dp: usize) -> String {
-    let s = format!("{:.*}", dp, v);
+    group_thousands(&format!("{:.*}", dp, v))
+}
+
+/// 千分位分组（Decimal 源）：舍入与定长由 Decimal 完成，仅分组逻辑与
+/// `fmt_thousands` 共用
+fn fmt_thousands_dec(d: &Decimal, dp: usize) -> String {
+    group_thousands(&format!("{:.*}", dp, round_money(d, dp)))
+}
+
+/// 已格式化数字串的 3 位分组：整数部分从右起每 3 位插一个逗号
+fn group_thousands(s: &str) -> String {
     let (int_part, frac) = match s.split_once('.') {
         Some((i, f)) => (i, Some(f)),
-        None => (s.as_str(), None),
+        None => (s, None),
     };
     let neg = int_part.starts_with('-');
     let digits = int_part.trim_start_matches('-');
@@ -414,6 +433,40 @@ mod tests {
         assert_eq!(fmt_dec_plain(&big, 2), "1234567.89");
         let small = rust_decimal::Decimal::from_str_exact("0.1").unwrap();
         assert_eq!(fmt_dec_plain(&small, 4), "0.1000");
+    }
+
+    #[test]
+    fn decimal_formatters_never_leak_float_residue() {
+        // 币昂返回的 entryPrice 原文带双精度尾数（服务端浮点残差），
+        // Decimal 全精度保留但在展示层必须按 tick 精度收敛
+        let d = rust_decimal::Decimal::from_str_exact("86997.7000000001").unwrap();
+        assert_eq!(fmt_dec_plain(&d, 2), "86997.70");
+        assert_eq!(fmt_dec_fixed(&d, 2), "86,997.70");
+        // 高精度币按其 tick 保留（SHIB 类 8 位小数）：f64 中转会让
+        // 第 8 位露出脏数字，纯 Decimal 路径下精确
+        let shib = rust_decimal::Decimal::from_str_exact("0.000012345678901234").unwrap();
+        assert_eq!(fmt_dec_plain(&shib, 8), "0.00001235");
+        // 舍入而非截断
+        assert_eq!(
+            fmt_dec_plain(&rust_decimal::Decimal::from_str_exact("0.125").unwrap(), 2),
+            "0.13"
+        );
+        // 大整数金额：f64 在 10^16 以上丢失精度，Decimal 不丢
+        let huge = rust_decimal::Decimal::from_str_exact("12345678901234567.89").unwrap();
+        assert_eq!(fmt_dec_fixed(&huge, 2), "12,345,678,901,234,567.89");
+    }
+
+    #[test]
+    fn grouped_formatting_keeps_decimal_text() {
+        // group_thousands 只分组不改数字：负数符号、零、纯整数均稳定
+        assert_eq!(
+            fmt_dec_grouped(&rust_decimal::Decimal::from_str_exact("1234567.891").unwrap()),
+            "1,234,567.891"
+        );
+        assert_eq!(
+            fmt_dec_grouped(&rust_decimal::Decimal::from_str_exact("123456789012345678.1").unwrap()),
+            "123,456,789,012,345,678.1"
+        );
     }
 
     #[test]

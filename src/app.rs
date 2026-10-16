@@ -345,7 +345,7 @@ impl BnApp {
     /// 逐帧评估预警：最新价来自全市场迷你 ticker（约 1s 一批，覆盖任意
     /// 交易对），活跃交易对回退 ticker24。触发即 toast + 移除（一次性）
     fn check_alerts(&mut self) {
-        let targets: Vec<(u8, String, f64, bool)> = {
+        let targets: Vec<(u8, String, rust_decimal::Decimal, bool)> = {
             let md = self.state.md.lock();
             let cfg = self.state.cfg.read();
             cfg.alerts
@@ -369,8 +369,9 @@ impl BnApp {
                                 .and_then(|s| s.ticker.as_ref())
                                 .map(|t| t.last_price)
                         })?;
-                    let f = crate::ui::widgets::f64_decimal(&last);
-                    let hit = if a.above { f >= a.price } else { f <= a.price };
+                    // 目标价与最新价都是 Decimal：直接比较，不经 f64 中转
+                    // （f64 比较在边界值上可能误判 ±1 ulp）
+                    let hit = if a.above { last >= a.price } else { last <= a.price };
                     hit.then(|| (a.market, a.symbol.clone(), a.price, a.above))
                 })
                 .collect()
@@ -435,12 +436,12 @@ impl BnApp {
         {
             let mut cfg = self.state.cfg.write();
             cfg.alerts.retain(|a| {
-                !(a.market == market as u8 && a.symbol == symbol && a.price == widgets::f64_decimal(&price))
+                !(a.market == market as u8 && a.symbol == symbol && a.price == price)
             });
             cfg.alerts.push(crate::config::AlertConfig {
                 market: market as u8,
                 symbol: symbol.clone(),
-                price: widgets::f64_decimal(&price),
+                price,
                 above,
             });
         }

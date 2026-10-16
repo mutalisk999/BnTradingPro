@@ -39,10 +39,44 @@ pub struct AlertConfig {
     /// 0 = 现货，1 = U 本位合约（与行情 tickers 槽位一致）
     pub market: u8,
     pub symbol: String,
-    /// 目标价
-    pub price: f64,
+    /// 目标价（Decimal 精确值，旧版 config.toml 以 f64 形式落盘，兼容读入）
+    #[serde(default, deserialize_with = "dec_compat")]
+    pub price: rust_decimal::Decimal,
     /// true = 上破触发（最新价 ≥ 目标价），false = 下破触发（≤）
     pub above: bool,
+}
+
+/// Decimal 反序列化兼容层：字符串（新版写入形式）、f64/i64（旧版 config.toml
+/// 的 `price = 86997.7` 形式）都可读入，f64 走字符串中转避免吸入双精度残差
+fn dec_compat<'de, D: serde::Deserializer<'de>>(d: D) -> Result<rust_decimal::Decimal, D::Error> {
+    use std::str::FromStr;
+
+    struct V;
+    impl<'de> serde::de::Visitor<'de> for V {
+        type Value = rust_decimal::Decimal;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "a price as string or number")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<rust_decimal::Decimal, E> {
+            rust_decimal::Decimal::from_str(v).map_err(E::custom)
+        }
+
+        fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<rust_decimal::Decimal, E> {
+            rust_decimal::Decimal::from_str(&format!("{v}")).map_err(E::custom)
+        }
+
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<rust_decimal::Decimal, E> {
+            Ok(rust_decimal::Decimal::from(v))
+        }
+
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<rust_decimal::Decimal, E> {
+            Ok(rust_decimal::Decimal::from(v))
+        }
+    }
+
+    d.deserialize_any(V)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

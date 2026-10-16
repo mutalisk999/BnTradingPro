@@ -1045,13 +1045,10 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 );
                 if let Some(t) = &tick {
                     ui.label(
-                        egui::RichText::new(widgets::fmt_thousands(
-                            widgets::f64_decimal(&t.last_price),
-                            dp,
-                        ))
-                        .monospace()
-                        .size(theme::FONT_SM)
-                        .color(theme::cur().text_dim),
+                        egui::RichText::new(widgets::fmt_dec_fixed(&t.last_price, dp))
+                            .monospace()
+                            .size(theme::FONT_SM)
+                            .color(theme::cur().text_dim),
                     );
                 }
             });
@@ -1130,7 +1127,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                                             egui::RichText::new(format!(
                                                 "{} {}",
                                                 if a.above { "≥" } else { "≤" },
-                                                widgets::fmt_thousands(a.price, adp(a.market, &a.symbol))
+                                                widgets::fmt_dec_fixed(&a.price, adp(a.market, &a.symbol))
                                             ))
                                             .monospace()
                                             .size(theme::FONT_MD)

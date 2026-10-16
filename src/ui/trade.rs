@@ -229,11 +229,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 field_label(ui, crate::i18n::tr("有效期"));
                 for &t in Tif::available(market) {
                     let on = app.page.form.tif == t;
-                    let txt = if t == Tif::Gtx {
-                        crate::i18n::tr("GTX 只做maker").to_string()
-                    } else {
-                        t.as_str().to_string()
-                    };
+                    // 按钮只留缩写（GTX 全长文案会挤占行宽，期货最小面板宽下
+                    // 第四枚胶囊被裁剪）；完整含义在悬停提示中给出
+                    let txt = t.as_str().to_string();
                     let btn = egui::Button::new(
                         egui::RichText::new(txt)
                             .size(theme::FONT_SM)

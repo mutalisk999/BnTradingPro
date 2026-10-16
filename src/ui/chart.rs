@@ -63,6 +63,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let dp = state.with_rule(app.market, &app.page.symbol, |r| {
         r.map(|x| x.price_dp()).unwrap_or(2)
     });
+    // 数量按 step 小数位显示（与下单/订单簿同精度），同样走纯 Decimal 路径
+    let qdp = state.with_rule(app.market, &app.page.symbol, |r| {
+        r.map(|x| x.qty_dp()).unwrap_or(3)
+    }) as usize;
 
     // ---------- 头部工具行 ----------
     // 第一行：周期直选（1m…1M）单独成行，不再与 MA 开关挤在一起；
@@ -166,13 +170,23 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     overlays.push(Overlay {
                         price: widgets::f64_decimal(&p),
                         color,
-                        label: format!("{}{} {}", crate::i18n::tr("挂单 "), side_txt, fmt_norm(&p)),
+                        label: format!(
+                            "{}{} {}",
+                            crate::i18n::tr("挂单 "),
+                            side_txt,
+                            widgets::fmt_dec_fixed(&p, dp as usize)
+                        ),
                     });
                 } else if let Some(s) = o.stop_price.filter(|s| !s.is_zero()) {
                     overlays.push(Overlay {
                         price: widgets::f64_decimal(&s),
                         color,
-                        label: format!("{}{} {}", crate::i18n::tr("触发 "), side_txt, fmt_norm(&s)),
+                        label: format!(
+                            "{}{} {}",
+                            crate::i18n::tr("触发 "),
+                            side_txt,
+                            widgets::fmt_dec_fixed(&s, dp as usize)
+                        ),
                     });
                 }
             }
@@ -186,7 +200,10 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         label: format!(
                             "{}{}",
                             crate::i18n::tr("持仓开仓 "),
-                            fmt_norm(&p.entry_price)
+                            // 开仓价按交易对 tick 精度显示：币安返回的 entryPrice
+                            // 原文带双精度尾数（如 86997.7000000001），全精度直出
+                            // 会把服务端浮点残差展示给用户
+                            widgets::fmt_dec_fixed(&p.entry_price, dp as usize)
                         ),
                     });
                 }
@@ -270,6 +287,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         &prefix,
         interval,
         dp,
+        qdp as u32,
         &overlays,
         sub.as_ref(),
     );
@@ -281,10 +299,6 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     }
 }
 
-fn fmt_norm(d: &Decimal) -> String {
-    d.normalize().to_string()
-}
-
 #[allow(clippy::too_many_arguments)]
 fn draw(
     ui: &mut egui::Ui,
@@ -293,6 +307,7 @@ fn draw(
     prefix: &[f64],
     interval: Interval,
     dp: u32,
+    qdp: u32,
     overlays: &[Overlay],
     sub: Option<&SubSeries>,
 ) {
@@ -689,7 +704,7 @@ fn draw(
                 crate::i18n::tr("收"),
                 widgets::fmt_thousands(close, dp as usize),
                 crate::i18n::tr("量"),
-                fmt_norm(&c.v),
+                widgets::fmt_dec_plain(&c.v, qdp as usize),
                 if chg >= 0.0 { "+" } else { "" },
                 chg
             );
