@@ -1711,14 +1711,30 @@ async fn market_ws_loop(
                                         }
                                         tokio_tungstenite::tungstenite::Message::Ping(p) => {
                                             // 主动回 Pong：不依赖服务端单向心跳，
-                                            // 部分代理仅在有客户端 Pong 时保活连接
-                                            let _ = write
-                                                .send(tokio_tungstenite::tungstenite::Message::Pong(p))
-                                                .await;
+                                            // 部分代理仅在有客户端 Pong 时保活连接。
+                                            // 与改订控制帧同等待遇：sink 阻塞 3s
+                                            // 即判写通道已死，read_fail 置位后由
+                                            // 循环底部跳出去走重连
+                                            let pong = tokio::time::timeout(
+                                                Duration::from_secs(3),
+                                                write.send(
+                                                    tokio_tungstenite::tungstenite::Message::Pong(p),
+                                                ),
+                                            )
+                                            .await;
+                                            if !matches!(pong, Ok(Ok(()))) {
+                                                read_fail = Some(
+                                                    crate::i18n::tr("Pong 发送失败").to_string(),
+                                                );
+                                            }
                                             None
                                         }
                                         _ => None,
                                     };
+                                    // Ping 分支置位 read_fail 后立即退出循环
+                                    if read_fail.is_some() {
+                                        break;
+                                    }
                                     if let Some(txt) = txt {
                                         if handle_market_msg_text(&state, &spec, &txt) {
                                             // 新符号的符号级帧到达 → 改订已生效
@@ -1848,7 +1864,8 @@ async fn market_ws_loop(
                 }
                 if let Some(msg) = read_fail {
                     let st = pair.lock().set(slot.idx(), spec.market, ConnState::Failed(msg));
-                    state.set_market_ws(spec.market, st);
+                    state.set_market_ws(spec.market, st.clone());
+                    state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
                 } else if !intentional {
                     let st = pair.lock().set(slot.idx(), spec.market, ConnState::Disconnected);
                     state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);

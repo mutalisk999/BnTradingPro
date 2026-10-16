@@ -320,7 +320,8 @@ impl BinanceRest {
             async move {
                 if !self.has_creds() {
                     return Err(BinanceError::NoCreds);
-                }                self.wait_for_weight(ctx.market).await?;
+                }
+                self.wait_for_weight(ctx.market).await?;
                 let url = format!("{}{}", ep.rest, path);
                 let key = self.api_key.as_ref().unwrap();
                 let mut req = self.http.request(method.clone(), &url);
@@ -613,7 +614,8 @@ fn with_endpoint_ctx(
     market: Market,
     method: &reqwest::Method,
     path: &str,
-) -> BinanceError {    match e {
+) -> BinanceError {
+    match e {
         BinanceError::Decode(m) => {
             BinanceError::Decode(format!("{method} {path}（{}）: {m}", market.label()))
         }

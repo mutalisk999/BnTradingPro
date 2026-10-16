@@ -9,6 +9,9 @@ use eframe::egui;
 const STAR_W: f32 = 24.0;
 /// 小节标题（theme::section）固定占位高度
 const SECTION_H: f32 = 22.0;
+/// 卡片右缘内边距：第二行涨跌幅靠最右，与左缘 6pt 缩进对称，
+/// 避免数字完全贴卡片右缘
+const CARD_RIGHT_PAD: f32 = 6.0;
 /// 行内第一行（名称）与第二行（价格/涨跌）之间的行隙
 const LINE_GAP: f32 = 2.0;
 /// 卡片左缘到名称文字的缩进：行首内边距 + 星标槽宽 + 星标/名称间距。
@@ -424,8 +427,9 @@ fn symbol_row(
                     .size(theme::FONT_SM)
                     .color(c),
             );
-            // RTL 首个控件自然贴卡片右缘
+            // RTL 首个控件先让出右缘内边距，涨跌幅不再贴卡片右边
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(CARD_RIGHT_PAD);
                 ui.label(
                     egui::RichText::new(format!("{chg:+.2}%"))
                         .monospace()
