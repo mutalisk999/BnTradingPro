@@ -26,7 +26,8 @@ const CARD_PAD: f32 = 4.0;
 /// 压到下一行的名称上——视觉上星标错位、价格贴着下个交易对。所有高度改为
 /// 按当前字体度量推导，pitch = 第一行 + 行隙 + 第二行 + 行间留白
 struct RowMetrics {
-    /// 第一行（名称 + 星标）高度 = 名称行高
+    /// 第一行（名称 + 星标）槽高：ui.horizontal 的行槽至少 interact_size.y 高，
+    /// 文字行高不足时按行槽取高
     l1: f32,
     /// 整行节距：show_rows 的行高须与行内实际排版严格一致，否则视口错位。
     /// 内容（背景色带）占 band = pitch - ROW_GAP，底部 ROW_GAP 留白作行间距
@@ -35,11 +36,21 @@ struct RowMetrics {
     band: f32,
 }
 
-fn row_metrics(ctx: &egui::Context) -> RowMetrics {
-    let l1 = ctx
+/// 行槽最小高：`ui.horizontal` 分配的子 Ui 高度恒为 `interact_size.y`
+/// （默认 18pt），行内文字在槽内垂直居中——文字行高（约 12~15pt）不够时
+/// **槽位仍然是 18pt**。band 若按文字行高算，第二行价格/涨跌的槽底就会
+/// 越出卡片下缘（实测越出 4.7pt：band=37.3 而两行实际占 46pt）。
+/// 故 band 按 slot = max(文字行高, interact_size.y) 推导
+fn row_metrics(ui: &egui::Ui) -> RowMetrics {
+    let slot_h = ui.spacing().interact_size.y;
+    let l1 = ui
+        .ctx()
         .fonts_mut(|f| f.row_height(&egui::FontId::proportional(theme::FONT_MD)));
-    let l2 = ctx
+    let l2 = ui
+        .ctx()
         .fonts_mut(|f| f.row_height(&egui::FontId::monospace(theme::FONT_SM)));
+    let l1 = l1.max(slot_h);
+    let l2 = l2.max(slot_h);
     let band = l1 + LINE_GAP + l2 + 2.0 * CARD_PAD;
     let mut pitch = band + ROW_GAP;
     // 小节标题固定 22pt 占位：行槽不能比它矮，否则标题溢出自己的槽位
@@ -71,7 +82,7 @@ struct RowAct<'a> {
 /// 左侧交易对列表：搜索 + 自选置顶 + 全量虚拟化列表
 pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // 字体度量在帧内是稳定的（除非用户改缩放，缩放后本帧自然重算）
-    let m = row_metrics(ui.ctx());
+    let m = row_metrics(ui);
 
     // 实体滚动条（非悬浮）：悬浮条不占布局宽度却会把子控件的可用区撑宽约一个
     // 条宽，行尾的星标因此被推出面板裁剪区（只露出半颗），还压住面板拖拽把手；

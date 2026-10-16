@@ -1501,11 +1501,12 @@ impl MarketWsSlot {
                 (s, url)
             }
             // 期货 public 类：部分深度（bookTicker 未用，不订阅）。
-            // 合约部分深度流支持 5/10/20/50 档，取 50 档：开启聚合档位
-            // （10×~1000× tick）时 20 档原始数据会合并成寥寥几桶、
-            // 面板大片留白；50 档才有足够的桶密度
+            // 深度同样取 20 档（@depth20@100ms）：50 档在本环境下与现货
+            // 一样被服务端静默忽略——连接成功、状态正常，但深度帧永不到达
+            // （盘口定格）。代价仅是开启大倍数聚合档位时桶密度变稀，
+            // 数据可用性优先于聚合密度
             (MarketWsSlot::A, true) => {
-                let s = vec![format!("{lower}@depth50@100ms")];
+                let s = vec![format!("{lower}@depth20@100ms")];
                 let url = format!("{base}/public/stream?streams={}", s.join("/"));
                 (s, url)
             }
@@ -1686,7 +1687,7 @@ async fn market_ws_loop(
                                     };
                                     if let Some(txt) = txt {
                                         handle_market_msg_text(&state, &spec, &txt);
-                                        // 行情帧可达每秒数百条（depth50@100ms +
+                                        // 行情帧可达每秒数百条（depth20@100ms +
                                         // aggTrade），逐帧立即重绘会让 UI 在无输入
                                         // 时也持续满帧率空转；合帧到 ~10fps，
                                         // 状态变迁/用户输入仍走立即重绘
@@ -1863,7 +1864,7 @@ fn handle_market_msg_text(state: &SharedState, spec: &SubSpec, text: &str) {
             state.apply_mini_tickers(spec.market, list);
         }
     } else if stream.contains("@depth") {
-        // 部分深度流（@depth50@100ms）。用 contains("@depth") 而非精确
+        // 部分深度流（@depth20@100ms）。用 contains("@depth") 而非精确
         // 档数串，后续调整订阅档数不必改这里
         if let Ok(d) = serde_json::from_str::<Depth>(data) {
             state.with_symbol_md(spec.market, &spec.symbol, |md| md.depth = d);

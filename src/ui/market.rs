@@ -1,6 +1,6 @@
 //! 盘口（深度）与逐笔成交列表
 //!
-//! 锁纪律：md 是全系统最热的锁（depth50@100ms / aggTrade 每条 WS 消息都要写），
+//! 锁纪律：md 是全系统最热的锁（depth20@100ms / aggTrade 每条 WS 消息都要写），
 //! 这里统一"短锁拷贝 → 释放 → 绘制"，绝不在面板构建期间持有锁。
 
 use crate::app::BnApp;
@@ -13,11 +13,10 @@ use std::sync::Arc;
 
 /// 每侧显示档数下限（面板过矮时的保底）。按用户要求每侧再增一档
 pub const BOOK_LEVELS: usize = 12;
-/// 每侧显示档数上限：订阅的 depth50@100ms 推满 50 档，
-/// 实际档位数随面板高度在两者之间自适应。上限取满订阅深度而非更小值：
-/// 聚合档位（10×~1000× tick）把原始档位合并成桶，20 档原始数据在高聚合
-/// 下只剩寥寥几桶、面板大片留白，必须有足够的原始档位才撑得起桶密度
-pub const BOOK_MAX_LEVELS: usize = 50;
+/// 每侧显示档数上限：与订阅的部分深度流档数一致（@depth20 推满 20 档）。
+/// 上限再大也没有数据——take(n) 只是取到原始推送为止，面板反而出现
+/// 半幅留白；档位数随面板高度在此区间自适应，行高微调（±<1pt）填满面板
+pub const BOOK_MAX_LEVELS: usize = 20;
 
 /// 盘口行闪光/残影强度：取全局 FLASH_ALPHA 的一半——盘口是整列大量行同时
 /// 更新，0.28 的整行底色在高频推送下连成整片红/绿，压到一半后只剩
@@ -27,7 +26,7 @@ const BOOK_FLASH_ALPHA: f32 = theme::FLASH_ALPHA * 0.5;
 /// 右栏内容页签：盘口 / 成交明细
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BookTab {
-    /// 盘口（档位随面板高度自适应，10~20 档）
+    /// 盘口（档位随面板高度自适应，12~20 档，行高微调填满面板）
     Book,
     /// 成交明细
     Trades,
@@ -48,7 +47,7 @@ pub fn show_book_panel(app: &mut BnApp, ui: &mut egui::Ui) {
             // 不扣除会把胶囊顶出面板底缘（egui 单遍布局不知道后续控件）
             let body_h = (ui.available_height() - BOOK_GROUP_H).max(0.0);
             ui.allocate_ui(egui::vec2(ui.available_width(), body_h), |ui| {
-                // 下限 11 档在极矮面板仍会溢出，保留滚动兜底
+                // 下限 12 档在极矮面板仍会溢出，保留滚动兜底
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| show_book(app, ui));
@@ -185,18 +184,22 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
         .unwrap_or(4);
 
     // 行距收紧为无缝 + 档位随面板高度自适应（同成交明细思路：内容恰好占满、
-    // 无需滚动条）。上限 50 档 = depth50 推送的完整档数，下限 12 档保底；
-    // SAFETY 防取整溢出顶出滚动条
+    // 无需滚动条）。上限 20 档 = depth20 推送的完整档数，下限 12 档保底。
+    // 档数 n 取「最接近可用高度」的整数（四舍五入，而非向下取整），
+    // 余数由行高分摊：行高在基准 17pt 上下微调（±<1pt），面板被恰好填满，
+    // 不再在卖盘顶部或买盘底部留下整条空档
     ui.spacing_mut().item_spacing.y = 0.0;
     const SPREAD_H: f32 = 24.0;
     const SPREAD_PAD: f32 = 8.0; // 价差行上下呼吸
-    const SAFETY: f32 = 6.0;
-    // 行高 17 与成交明细列表一致（同一字号的等宽行）：每侧多容纳一档，
-    // 全面板档位密度与成交明细对齐
+    // 基准行高与成交明细列表一致（同一字号的等宽行）；两侧各自再增一档后
+    // 由行高吸收高度零头，视觉密度与成交明细保持对齐
     const ROW_H: f32 = 17.0;
+    const ROW_H_MIN: f32 = ROW_H * 0.75; // 面板过矮（n 触底下限）时允许压缩
+    const ROW_H_MAX: f32 = ROW_H * 1.35; // n 触顶 20 档时允许拉伸
     let avail = ui.available_height();
-    let n = (((avail - SPREAD_H - SPREAD_PAD - SAFETY) / (2.0 * ROW_H)).floor() as usize)
-        .clamp(BOOK_LEVELS, BOOK_MAX_LEVELS);
+    let budget = (avail - SPREAD_H - SPREAD_PAD).max(2.0 * ROW_H_MIN);
+    let n = ((budget / (2.0 * ROW_H)).round() as usize).clamp(BOOK_LEVELS, BOOK_MAX_LEVELS);
+    let row_h = (budget / (2.0 * n as f32)).clamp(ROW_H_MIN, ROW_H_MAX);
 
     // 短锁拷贝（价格, 数量）。开启聚合时取全部原始档位按步长分桶：
     // bids 向下取整、asks 向上取整到桶边界，同桶数量合并（桶价与
@@ -282,10 +285,10 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
     let mut ask_rects = [egui::Rect::NOTHING; BOOK_MAX_LEVELS];
     let mut bid_rects = [egui::Rect::NOTHING; BOOK_MAX_LEVELS];
 
-    // 卖盘（高→低）：asks 升序（最近档在前），显示时倒序遍历
-    let gap = (avail - SAFETY - SPREAD_PAD - SPREAD_H - 2.0 * n as f32 * ROW_H).max(0.0);
-    // 弹性留白集中于面板最顶部：卖盘末行（卖一）紧贴价差行，与买盘首行
-    // （买一）对称——两侧最优价都贴着价差，远端档位的剩余空间留到顶部
+    // 卖盘（高→低）：asks 升序（最近档在前），显示时倒序遍历。
+    // 两侧最优价都贴着价差行；行高已吸收高度零头，残余留白（仅 n 触顶/
+    // 触底时存在）一分为二：一半顶到卖盘上方，另一半自然沉到买盘下方
+    let gap = (budget - 2.0 * n as f32 * row_h).max(0.0) / 2.0;
     if gap > 0.5 {
         ui.add_space(gap);
     }
@@ -293,7 +296,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
         ask_rects[i] = book_row(
             ui,
             app,
-            ROW_H,
+            row_h,
             w,
             ask_cums[i] / max_cum,
             theme::cur().down.gamma_multiply(0.28),
@@ -364,7 +367,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
         bid_rects[i] = book_row(
             ui,
             app,
-            ROW_H,
+            row_h,
             w,
             bid_cums[i] / max_cum,
             theme::cur().up.gamma_multiply(0.28),
