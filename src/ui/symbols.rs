@@ -218,13 +218,13 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // 行距与悬停热区都不一致）
     let mut rows: Vec<Row> = Vec::with_capacity(favs.len() + all_syms.len() + 2);
     if !favs.is_empty() {
-        rows.push(Row::Section("自选"));
+        rows.push(Row::Section(crate::i18n::tr("自选")));
         for s in &favs {
             rows.push(Row::Sym(s, true));
         }
     }
     if !all_syms.is_empty() {
-        rows.push(Row::Section("全部"));
+        rows.push(Row::Section(crate::i18n::tr("全部")));
         for s in &all_syms {
             rows.push(Row::Sym(s, false));
         }

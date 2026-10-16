@@ -1622,7 +1622,7 @@ pub fn order_rows(req: &OrderRequest) -> Vec<(String, String)> {
     let mut rows = vec![
         (tr("交易对").to_string(), req.symbol.clone()),
         (tr("方向").to_string(), req.side.label().to_string()),
-        (tr("类型").to_string(), tr(req.kind.label()).to_string()),
+        (tr("类型").to_string(), req.kind.label().to_string()),
         (
             tr("数量").to_string(),
             req.kind.qty().normalize().to_string(),

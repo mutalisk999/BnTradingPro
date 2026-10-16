@@ -775,22 +775,24 @@ pub enum OrderKind {
 
 impl OrderKind {
     pub fn label(&self) -> &'static str {
+        // 与 Market/Side/FutPosSide 的 label 同构：内部即走 tr()，
+        // 调用方直接拼接展示（外层再包 tr 会因缺键回退成英文）
         match self {
-            OrderKind::Limit { .. } => "限价",
-            OrderKind::Market { .. } => "市价",
+            OrderKind::Limit { .. } => crate::i18n::tr("限价"),
+            OrderKind::Market { .. } => crate::i18n::tr("市价"),
             OrderKind::StopLimit {
                 take_profit: false, ..
-            } => "止损限价",
+            } => crate::i18n::tr("止损限价"),
             OrderKind::StopLimit {
                 take_profit: true, ..
-            } => "止盈限价",
+            } => crate::i18n::tr("止盈限价"),
             OrderKind::StopMarket {
                 take_profit: false, ..
-            } => "止损市价",
+            } => crate::i18n::tr("止损市价"),
             OrderKind::StopMarket {
                 take_profit: true, ..
-            } => "止盈市价",
-            OrderKind::TrailingStop { .. } => "跟踪委托",
+            } => crate::i18n::tr("止盈市价"),
+            OrderKind::TrailingStop { .. } => crate::i18n::tr("跟踪委托"),
         }
     }
 

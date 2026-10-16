@@ -1,4 +1,4 @@
-//! 主题与字体：明暗双主题 + Windows 系统字体（雅黑 UI / 等宽数字）
+//! 主题与字体：明暗双主题 + Windows 系统字体（微软雅黑正文 / Cascadia 等宽数字）
 //!
 //! 颜色通过 `theme::cur()` 运行时取值（`theme::cur().up` 等），主题切换即时生效。
 
@@ -525,9 +525,13 @@ fn load_font(fonts: &mut FontDefinitions, key: &str, candidates: &[&str]) -> boo
 pub fn apply_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
 
-    // 等宽数字字体：Cascadia（Win11）→ Consolas（Win10 均有）。
-    // mono 优先：Proportional 首位命中拉丁/数字（交易终端数字对齐是第一优先级），
-    // CJK 与 emoji 逐字回退到后续字体
+    // UI 正文字体（Proportional 栈）：微软雅黑打头 → egui 默认兜底。
+    // 拉丁与中文同走雅黑：中英混排行（"已添加预警 BTCUSDT ≥ 88000"）
+    // 字形风格完全一体，不存在两种字体基调拼接的割裂感。实测雅黑
+    // 0-9 字宽恒等（tabular figures），价格类数字即使画在 proportional
+    // 语境（坐标轴 / 图例 / 浮层标签）也不会随数值跳动抖宽。
+    // 等宽数字场景另见 Monospace 栈：显式 .monospace() / num_cell 位
+    // 仍走 Cascadia，保证表格价格列小数点竖直对齐
     if load_font(
         &mut fonts,
         "mono",
@@ -538,14 +542,12 @@ pub fn apply_fonts(ctx: &egui::Context) {
             "lucon.ttf",
         ],
     ) {
-        if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-            fam.insert(0, "mono".to_owned());
-        }
         if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
             fam.insert(0, "mono".to_owned());
         }
     }
-    // UI 中文字体：微软雅黑，只作回退（拉丁/数字已被 mono 命中，中文才落到这里）
+    // UI 中文字体：同时作为 Proportional 栈首位（拉丁/中文一体）与
+    // Monospace 栈的中文回退（等宽列里的中文不落进缺字回退）
     if load_font(
         &mut fonts,
         "cjk",
@@ -558,7 +560,7 @@ pub fn apply_fonts(ctx: &egui::Context) {
         ],
     ) {
         if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-            fam.push("cjk".to_owned());
+            fam.insert(0, "cjk".to_owned());
         }
         if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
             fam.push("cjk".to_owned());

@@ -1098,7 +1098,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                         for (i, a) in alerts.iter().enumerate() {
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new(&a.symbol).size(theme::FONT_MD));
-                                let mkt_label = if a.market == 0 { "" } else { "· 合约" };
+                                let mkt_label = if a.market == 0 { "" } else { crate::i18n::tr("· 合约") };
                                 if !mkt_label.is_empty() {
                                     ui.label(
                                         egui::RichText::new(mkt_label)

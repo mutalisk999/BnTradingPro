@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
-    // vault 存在性走带缓存的访问器：此前每帧 data_dir() + stat vault.json，
-    // 结果在页面生命周期内只随保存/删除动作变化（动作内部各自失效缓存）
+    // data_dir 会话级缓存（OnceLock）：此前每帧推导一次目录并 stat vault.json，
+    // 结果在页面生命周期内只随保存/删除动作变化
     let dir = config::data_dir();
     let mut apply = false;
 

@@ -53,6 +53,8 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "无匹配交易对" => "No matching symbols",
         "自选" => "Favorites",
         "全部" => "All",
+        // 预警条目的市场后缀（侧栏/预警弹窗共用）
+        "· 合约" => " · Futures",
         "加入自选" => "Add to favorites",
         "取消自选" => "Remove from favorites",
         "REST 接口正常" => "REST OK",
