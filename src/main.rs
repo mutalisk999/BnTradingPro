@@ -18,8 +18,8 @@ use tracing_subscriber::EnvFilter;
 
 fn main() -> eframe::Result<()> {
     let dir = config::data_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let cfg = AppConfig::load(&dir);
+    let _ = std::fs::create_dir_all(dir);
+    let cfg = AppConfig::load(dir);
 
     cleanup_old_logs(&dir.join("logs"));
 

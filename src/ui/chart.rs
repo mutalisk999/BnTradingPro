@@ -118,9 +118,18 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 },
             );
             let mut resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-            if i == 0 {
-                resp = resp.on_hover_text(crate::i18n::tr("点按切换均线，图上叠加 MA5/10/20/60"));
-            }
+            // 每片各自的说明（此前只挂了第一片，MA10/20/60 悬停无任何提示）
+            resp = resp
+                .on_hover_text(crate::i18n::tr("点按切换均线，图上叠加 MA5/10/20/60"));
+            // 自绘热区补可访问名字：键盘 Tab 聚焦后 Enter/Space 亦可触发
+            // （Sense::click 的热区可获焦）
+            resp.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button,
+                    true,
+                    format!("MA{period}"),
+                )
+            });
             if resp.clicked() {
                 app.page.chart.ma[i] = !app.page.chart.ma[i];
             }
@@ -154,59 +163,76 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     // 叠加线：当前挂单（含止损触发价）+ 合约持仓开仓价
     let mut overlays: Vec<Overlay> = Vec::new();
     if state.has_creds() {
-        for o in state.orders.lock().open(app.market).iter() {
-            if o.symbol == app.page.symbol {
-                let color = if o.side == "BUY" {
-                    theme::cur().up
-                } else {
-                    theme::cur().down
-                };
-                let side_txt = if o.side == "BUY" {
-                    crate::i18n::tr("买")
-                } else {
-                    crate::i18n::tr("卖")
-                };
-                if let Some(p) = o.price.filter(|p| !p.is_zero()) {
-                    overlays.push(Overlay {
-                        price: widgets::f64_decimal(&p),
-                        color,
-                        label: format!(
-                            "{}{} {}",
-                            crate::i18n::tr("挂单 "),
-                            side_txt,
-                            widgets::fmt_dec_fixed(&p, dp as usize)
-                        ),
-                    });
-                } else if let Some(s) = o.stop_price.filter(|s| !s.is_zero()) {
-                    overlays.push(Overlay {
-                        price: widgets::f64_decimal(&s),
-                        color,
-                        label: format!(
-                            "{}{} {}",
-                            crate::i18n::tr("触发 "),
-                            side_txt,
-                            widgets::fmt_dec_fixed(&s, dp as usize)
-                        ),
-                    });
-                }
+        // 匹配项先在短锁内筛出克隆，再在锁外格式化绘制：orders/acct 是引擎
+        // 每个订单/账户事件都要写的热锁，跨整个收集循环持有（lifetime
+        // extension 会让 guard 活到循环结束）会阻塞用户数据流写入。
+        // 与同文件 md 锁的纪律一致（"绝不在绘制期间持有"）
+        let sym = app.page.symbol.clone();
+        let my_orders: Vec<_> = state
+            .orders
+            .lock()
+            .open(app.market)
+            .iter()
+            .filter(|o| o.symbol == sym)
+            .cloned()
+            .collect();
+        for o in &my_orders {
+            let color = if o.side == "BUY" {
+                theme::cur().up
+            } else {
+                theme::cur().down
+            };
+            let side_txt = if o.side == "BUY" {
+                crate::i18n::tr("买")
+            } else {
+                crate::i18n::tr("卖")
+            };
+            if let Some(p) = o.price.filter(|p| !p.is_zero()) {
+                overlays.push(Overlay {
+                    price: widgets::f64_decimal(&p),
+                    color,
+                    label: format!(
+                        "{}{} {}",
+                        crate::i18n::tr("挂单 "),
+                        side_txt,
+                        widgets::fmt_dec_fixed(&p, dp as usize)
+                    ),
+                });
+            } else if let Some(s) = o.stop_price.filter(|s| !s.is_zero()) {
+                overlays.push(Overlay {
+                    price: widgets::f64_decimal(&s),
+                    color,
+                    label: format!(
+                        "{}{} {}",
+                        crate::i18n::tr("触发 "),
+                        side_txt,
+                        widgets::fmt_dec_fixed(&s, dp as usize)
+                    ),
+                });
             }
         }
         if app.market == crate::binance::Market::UmFutures {
-            for p in state.acct.lock().fut_positions.iter() {
-                if p.symbol == app.page.symbol && p.amt != Decimal::ZERO {
-                    overlays.push(Overlay {
-                        price: widgets::f64_decimal(&p.entry_price),
-                        color: theme::cur().accent,
-                        label: format!(
-                            "{}{}",
-                            crate::i18n::tr("持仓开仓 "),
-                            // 开仓价按交易对 tick 精度显示：币安返回的 entryPrice
-                            // 原文带双精度尾数（如 86997.7000000001），全精度直出
-                            // 会把服务端浮点残差展示给用户
-                            widgets::fmt_dec_fixed(&p.entry_price, dp as usize)
-                        ),
-                    });
-                }
+            let my_positions: Vec<_> = state
+                .acct
+                .lock()
+                .fut_positions
+                .iter()
+                .filter(|p| p.symbol == sym && p.amt != Decimal::ZERO)
+                .cloned()
+                .collect();
+            for p in &my_positions {
+                overlays.push(Overlay {
+                    price: widgets::f64_decimal(&p.entry_price),
+                    color: theme::cur().accent,
+                    label: format!(
+                        "{}{}",
+                        crate::i18n::tr("持仓开仓 "),
+                        // 开仓价按交易对 tick 精度显示：币安返回的 entryPrice
+                        // 原文带双精度尾数（如 86997.7000000001），全精度直出
+                        // 会把服务端浮点残差展示给用户
+                        widgets::fmt_dec_fixed(&p.entry_price, dp as usize)
+                    ),
+                });
             }
         }
     }
@@ -332,7 +358,7 @@ fn draw(
         plot.center() - Vec2::new(0.0, plot.height() * 0.10),
         Align2::CENTER_CENTER,
         &app.page.symbol,
-        FontId::proportional(58.0),
+        FontId::proportional(theme::FONT_WATERMARK),
         Color32::from_rgba_unmultiplied(txt.r(), txt.g(), txt.b(), wm_alpha),
     );
 

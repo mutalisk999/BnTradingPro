@@ -108,7 +108,7 @@ fn card_frame(app: &mut BnApp, ui: &mut egui::Ui, card_w: f32) -> f32 {
     egui::Frame::default()
         .fill(theme::cur().card)
         .stroke(Stroke::new(1.0_f32, theme::cur().border))
-        .corner_radius(8)
+        .corner_radius(theme::R_LG)
         // 内边距收紧：原 26 四边留白过大，卡片显高、底部空洞
         .inner_margin(egui::Margin::symmetric(22, 12))
         .show(ui, |ui| {
@@ -231,6 +231,7 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
                     Err(_) => false,
                 };
                 if gone {
+                    app.state.invalidate_vault_exists();
                     app.pw1.clear();
                     app.pw2.clear();
                     app.pw_err.clear();
@@ -249,7 +250,7 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
 
 fn try_unlock(app: &mut BnApp) {
     let dir = config::data_dir();
-    match vault::load_creds(&dir, &app.pw1) {
+    match vault::load_creds(dir, &app.pw1) {
         Ok(creds) => {
             app.state.set_creds(Some(creds));
             app.pw1.clear();
@@ -271,7 +272,9 @@ fn try_unlock(app: &mut BnApp) {
 /// 无凭据库时主密码与密钥一体设置；已有凭据库时需先输入现有主密码。
 fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
     let dir = config::data_dir();
-    let vault_exists = vault::vault_exists(&dir);
+    // 存在性走带缓存的访问器（与设置页一致）：本页每帧重绘，裸 stat 是
+    // 无谓的系统调用；建库后由 save_keys 失效缓存
+    let vault_exists = app.state.vault_exists();
     let testnet = app.state.cfg.read().testnet;
     // 紧凑表单：默认 8px 行间距压到 3px，标签与输入框、按钮与跳过行都更贴近
     ui.spacing_mut().item_spacing.y = 3.0;
@@ -368,7 +371,18 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         && !app.api_secret.trim().is_empty()
         && (!need_master || !app.pw1.trim().is_empty());
     let mut do_save = false;
-    if primary_btn(ui, crate::i18n::tr("保存并连接"), can_save) {
+    // 禁用时给出具体原因：首屏主按钮灰掉而不知所以是最劝退的体验
+    // （覆盖 btn_primary 的通用提示）
+    let save_btn = theme::btn_primary(ui, crate::i18n::tr("保存并连接"), can_save);
+    let save_btn = if can_save {
+        save_btn
+    } else if need_master {
+        // 已有凭据库时缺的是主密码验证，而不是密钥本身
+        save_btn.on_disabled_hover_text(crate::i18n::tr("请输入主密码与 API Key/Secret"))
+    } else {
+        save_btn.on_disabled_hover_text(crate::i18n::tr("请填写 API Key 与 Secret"))
+    };
+    if save_btn.clicked() {
         do_save = true;
     }
     // Secret 是表单最后一项：输入完直接回车保存（与解锁页密码框行为一致）
@@ -376,7 +390,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
         do_save = true;
     }
     if do_save {
-        save_keys(app, &dir, vault_exists);
+        save_keys(app, dir, vault_exists);
     }
     // 跳过入口两种分支都要有：换钥流程（已有库）也需要能随时退出本页，
     // 否则用户点开"更换密钥"后无路可退。
@@ -440,6 +454,7 @@ fn save_keys(app: &mut BnApp, dir: &std::path::Path, vault_exists: bool) {
             }
             match vault::save_creds(dir, &pw, &creds) {
                 Ok(()) => {
+                    app.state.invalidate_vault_exists();
                     app.state.set_creds(Some(creds));
                     app.api_key.clear();
                     app.api_secret.clear();

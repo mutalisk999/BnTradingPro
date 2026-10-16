@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = Arc::clone(&app.state);
+    // vault 存在性走带缓存的访问器：此前每帧 data_dir() + stat vault.json，
+    // 结果在页面生命周期内只随保存/删除动作变化（动作内部各自失效缓存）
     let dir = config::data_dir();
     let mut apply = false;
 
@@ -351,7 +353,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     app.api_secret.clear();
                     app.phase = Phase::EnterKeys;
                 }
-                if vault::vault_exists(&dir) {
+                if state.vault_exists() {
                     // 破坏性操作两步确认：误点一次不会直接销毁唯一的本地密钥副本
                     let armed = app.vault_delete_armed;
                     let del = theme::btn_danger(
@@ -374,6 +376,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                                 Err(_) => false,
                             };
                             if gone {
+                                state.invalidate_vault_exists();
                                 state.set_creds(None);
                                 state.push_toast(
                                     ToastKind::Info,
@@ -462,9 +465,11 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         // 顺序反了会把旧配置写回 config.toml
         state.update_cfg(cfg);
         state.send_cmd(crate::engine::Command::PersistConfig);
+        // 内存已应用、重连已发起；磁盘写入由引擎侧反馈（成功不打扰、
+        // 失败推错误 toast），此处不替落盘结果下结论
         state.push_toast(
             ToastKind::Ok,
-            crate::i18n::tr("设置已保存，正在重连…").to_string(),
+            crate::i18n::tr("设置已应用，正在重连…").to_string(),
         );
     }
 }

@@ -46,6 +46,8 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "未连接" => "Disconnected",
         "未配置密钥" => "No API Key",
         "错误: " => "Error: ",
+        "引擎已断开，命令未提交" => "Engine disconnected — command not sent",
+        "配置保存失败: " => "Failed to save config: ",
         // ---- 页头 ----
         "搜索交易对…" => "Search symbols…",
         "无匹配交易对" => "No matching symbols",
@@ -153,6 +155,9 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "刷新" => "Refresh",
         "撤销" => "Cancel",
         "撤销全部" => "Cancel All",
+        // 撤销的两步确认标签（点击一次进入待确认态后显示）
+        "确认撤销" => "Confirm Cancel",
+        "再按一次 Ctrl+Shift+C 确认撤销: " => "Press Ctrl+Shift+C again to confirm: ",
         "U本位合约" => "USDT-M Futures",
         "现货" => "Spot",
         "个持仓" => " positions",
@@ -262,7 +267,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "浅色" => "Light",
         "中文" => "中文",
         "English" => "English",
-        "设置已保存，正在重连…" => "Settings saved, reconnecting…",
+        "设置已应用，正在重连…" => "Settings applied, reconnecting…",
         "已删除本机凭据库" => "Local vault deleted",
         "已清空端点覆盖：测试网与实盘端点不通用" => {
             "Endpoint overrides cleared: testnet and live endpoints are not interchangeable"
@@ -309,6 +314,10 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "取消" => "Cancel",
         "上一笔请求处理中…" => "Previous request in progress…",
         "请先修正表单中标红的错误" => "Fix the highlighted form errors first",
+        // 禁用主按钮的通用原因（unlock/settings 保存键；具体场景可自行覆盖）
+        "表单未填写完整或有错误" => "The form is incomplete or has errors",
+        "请填写 API Key 与 Secret" => "Enter the API Key and Secret",
+        "请输入主密码与 API Key/Secret" => "Enter the master password and API Key/Secret",
         "点按切换均线，图上叠加 MA5/10/20/60" => "Toggle moving averages (MA5/10/20/60 overlay)",
         "在设置页配置密钥后查看" => "Configure keys on the Settings page to view",
         "只减仓" => "Reduce-Only",
@@ -545,6 +554,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         }
         "Ctrl+Shift+C" => "Ctrl+Shift+C",
         "撤销当前交易对的全部挂单" => "Cancel all open orders for the current symbol",
+        "连按两次撤销当前交易对的全部挂单" => "Press twice to cancel all open orders for the current symbol",
         "当前挂单可单笔撤销、一键撤销该交易对全部挂单或本市场全部挂单；合约持仓支持行内 TP/SL、平仓、反手（市价平仓后反向开同等数量）与全部平仓（均走确认弹窗）。" => {
             "Open orders: cancel one by one, per symbol, or wipe the whole market; futures positions: inline TP/SL, close, reverse (market-close then reopen the same size on the other side) or close all (all with confirm dialogs)."
         }

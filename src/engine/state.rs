@@ -117,6 +117,9 @@ pub struct OrdersSnap {
     pub history_symbol: Option<(Market, String)>,
     pub history: Vec<OrderInfo>,
     pub trades: Vec<MyTrade>,
+    /// history/trades 内容版本：引擎每次覆盖写入后递增，UI 侧据此
+    /// 跳过每帧全量克隆（各 ~100 条、每条十余个 String 的深拷贝）
+    pub history_version: u64,
 }
 
 impl OrdersSnap {
@@ -147,6 +150,9 @@ pub struct SharedState {
     pub orders: Mutex<OrdersSnap>,
     pub toasts: Mutex<Vec<Toast>>,
     pub busy: Mutex<HashMap<String, u32>>,
+    /// vault.json 存在性缓存：None = 待重算。设置/配钥页每帧询问，
+    /// 裸 stat 每帧一次系统调用；建库/删库后由相关路径失效
+    vault_exists_cache: Mutex<Option<bool>>,
 
     /// 引擎命令通道（UI 与后台事件共用）
     pub cmd_tx: RwLock<Option<tokio::sync::mpsc::UnboundedSender<crate::engine::Command>>>,
@@ -168,6 +174,7 @@ impl Default for SharedState {
             orders: Mutex::new(OrdersSnap::default()),
             toasts: Mutex::new(Vec::new()),
             busy: Mutex::new(HashMap::new()),
+            vault_exists_cache: Mutex::new(None),
             cmd_tx: RwLock::new(None),
         }
     }
@@ -241,7 +248,15 @@ impl SharedState {
 
     pub fn send_cmd(&self, cmd: crate::engine::Command) {
         if let Some(tx) = self.cmd_tx.read().as_ref() {
-            let _ = tx.send(cmd);
+            if tx.send(cmd).is_err() {
+                // 命令循环已退出（panic 等致命故障）：send 失败此前完全静默，
+                // 用户点击无任何反馈。此处兜底提示——引擎任务监督也会推
+                // "请重启应用"toast，两者叠加保证崩溃可见
+                self.push_toast(
+                    ToastKind::Err,
+                    crate::i18n::tr("引擎已断开，命令未提交").to_string(),
+                );
+            }
         }
     }
 
@@ -281,6 +296,24 @@ impl SharedState {
 
     pub fn is_busy(&self, key: &str) -> bool {
         self.busy.lock().contains_key(key)
+    }
+
+    /// vault.json 是否存在：带缓存，未命中才 stat。
+    /// 设置页与配钥页每帧调用（~400ms 空闲重绘节拍），此前每次都做
+    /// data_dir 路径推导 + 一次系统调用；结果只在建库/删库时变化
+    pub fn vault_exists(&self) -> bool {
+        let mut c = self.vault_exists_cache.lock();
+        if let Some(v) = *c {
+            return v;
+        }
+        let v = crate::security::vault::vault_exists(crate::config::data_dir());
+        *c = Some(v);
+        v
+    }
+
+    /// 建库/删库后调用，让下一次 vault_exists 重新 stat
+    pub fn invalidate_vault_exists(&self) {
+        *self.vault_exists_cache.lock() = None;
     }
 
     // ---- 行情写入（由后台任务调用） ----

@@ -1117,7 +1117,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                                                         .color(theme::cur().text_dim),
                                                 )
                                                 .fill(egui::Color32::TRANSPARENT)
-                                                .corner_radius(3),
+                                                .corner_radius(theme::R_SM),
                                             )
                                             .on_hover_text(crate::i18n::tr("删除"))
                                             .clicked()

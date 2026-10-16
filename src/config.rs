@@ -165,27 +165,35 @@ impl AppConfig {
         }
     }
 
-    pub fn save(&self, dir: &std::path::Path) {
+    /// 落盘失败返回错误描述（路径 + 原因）：UI 据此向用户说明，
+    /// 而不是无条件宣称"已保存"——磁盘满/权限拒绝时配置实际并未写入
+    pub fn save(&self, dir: &std::path::Path) -> Result<(), String> {
         let _ = std::fs::create_dir_all(dir);
         let path = dir.join("config.toml");
-        if let Ok(s) = toml::to_string_pretty(self) {
-            if let Err(e) = std::fs::write(&path, s) {
-                tracing::error!("保存配置失败: {e}");
-            } else {
-                // unix 下收紧权限：config.toml 虽无密钥，但保持与凭据库同等的 0600 纪律
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-                }
-            }
+        let s = toml::to_string_pretty(self).map_err(|e| format!("{}: {e}", path.display()))?;
+        if let Err(e) = std::fs::write(&path, s) {
+            return Err(format!("{}: {e}", path.display()));
         }
+        // unix 下收紧权限：config.toml 虽无密钥，但保持与凭据库同等的 0600 纪律
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(())
     }
 }
 
-pub fn data_dir() -> PathBuf {
-    // 不回退 temp_dir：/tmp 全员可读，fail fast 优于静默降级到不安全位置
-    dirs::data_dir()
-        .expect("无法确定应用数据目录（请检查 HOME/XDG_DATA_HOME 环境变量）")
-        .join("BnTradingPro")
+/// 应用数据目录（Windows: %APPDATA%\BnTradingPro）。
+/// 会话级不变：首次调用推导一次（dirs 查询 %APPDATA% 环境变量并分配
+/// PathBuf），之后命中 OnceLock——设置/配钥页每帧调用，裸推导即每帧
+/// 一次环境变量查询。不回退 temp_dir：/tmp 全员可读，fail fast 优于
+/// 静默降级到不安全位置
+pub fn data_dir() -> &'static std::path::Path {
+    static DATA_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DATA_DIR.get_or_init(|| {
+        dirs::data_dir()
+            .expect("无法确定应用数据目录（请检查 HOME/XDG_DATA_HOME 环境变量）")
+            .join("BnTradingPro")
+    })
 }

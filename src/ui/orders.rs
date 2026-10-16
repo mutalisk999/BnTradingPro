@@ -105,14 +105,19 @@ fn toast_export(state: &Arc<crate::engine::state::SharedState>, r: Result<std::p
 /// 末列下限）时出横向滚动条，避免末尾几列被静默裁剪。
 /// egui_extras 0.36 的 TableBuilder 无内建横向滚动（内部 ScrollArea 写死
 /// [false, vscroll]）；这里用 set_min_width 把表格最小宽撑给外层横向
-/// 滚动区——视口更宽时内容不溢出、布局与不包裹时完全一致
-fn hscroll_table(ui: &mut egui::Ui, min_w: f32, add: impl FnOnce(&mut egui::Ui)) {
-    egui::ScrollArea::horizontal()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.set_min_width(min_w);
-            add(ui);
-        });
+/// 滚动区——视口更宽时内容不溢出、布局与不包裹时完全一致。
+/// salt 同时区隔横向 ScrollArea 与 TableBuilder 的持久化 Id：四张子表
+/// 互斥渲染于同一父 ui，默认 salt 会让横向滚动偏移与列宽跨表泄漏
+/// （订单历史与成交历史同为 8 列，会互相继承并棘轮式撑宽列宽）
+fn hscroll_table(ui: &mut egui::Ui, salt: &str, min_w: f32, add: impl FnOnce(&mut egui::Ui)) {
+    ui.push_id(salt, |ui| {
+        egui::ScrollArea::horizontal()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_min_width(min_w);
+                add(ui);
+            });
+    });
 }
 
 /// 当前挂单
@@ -153,17 +158,36 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
             let sym = app.page.symbol.clone();
             let sym_open = list.iter().filter(|o| o.symbol == sym).count();
             // 当前交易对没有挂单时禁用，避免"点了没反应"的静默空操作
+            // 两步确认（与本市场全撤同一纪律）：第一击进入待确认态，
+            // 第二击才真正发命令；撤销的是真实挂单，误点代价不可逆
+            let is_armed = app.sym_cancel_armed.as_deref() == Some(sym.as_str());
             let cancel_all = theme::btn_danger(
                 ui,
-                &format!("{} {}({sym_open})", crate::i18n::tr("撤销全部"), sym),
+                &if is_armed {
+                    format!("{} {}({sym_open})", crate::i18n::tr("确认撤销"), sym)
+                } else {
+                    format!("{} {}({sym_open})", crate::i18n::tr("撤销全部"), sym)
+                },
                 sym_open > 0,
             )
             .on_disabled_hover_text(crate::i18n::tr("该交易对无挂单"));
             if cancel_all.clicked() {
-                state.send_cmd(Command::CancelAll {
-                    market,
-                    symbol: Some(sym),
-                });
+                if is_armed {
+                    app.sym_cancel_armed = None;
+                    state.send_cmd(Command::CancelAll {
+                        market,
+                        symbol: Some(sym),
+                    });
+                } else {
+                    app.sym_cancel_armed = Some(sym);
+                    // 与行级武装互斥：同一时刻只有一个待确认态
+                    app.row_cancel_armed = None;
+                }
+            } else if app.sym_cancel_armed.is_some()
+                && ui.input(|i| i.pointer.any_click())
+            {
+                // 点其它位置退出待确认态
+                app.sym_cancel_armed = None;
             }
             // 撤销本市场全部挂单（跨交易对；两次点击确认，防误扫全局撤销）
             let mkt_all_n = list.len();
@@ -205,7 +229,10 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
 
     let mut cancel_id: Option<i64> = None;
     let mut cancel_sym = String::new();
-    hscroll_table(ui, 544.0, |ui| {
+    // 本帧是否点中了某行的撤销按钮：行级武装态的解除以它为准
+    // （any_click 是全局输入，按钮自身的点击必须在解除逻辑之前排除）
+    let mut row_cancel_clicked = false;
+    hscroll_table(ui, "orders_open", 544.0, |ui| {
         TableBuilder::new(ui)
             .striped(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -320,10 +347,29 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         });
                         row.col(|ui| {
                             // 操作列右对齐：撤销按钮贴行尾
+                            // 两步确认：第一击武装（标签变为"确认撤销"），
+                            // 第二击才发撤单命令；armed 键 = 订单号
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if theme::btn_danger(ui, crate::i18n::tr("撤销"), true).clicked() {
-                                    cancel_id = Some(o.order_id);
-                                    cancel_sym = o.symbol.clone();
+                                let row_armed = app.row_cancel_armed == Some(o.order_id);
+                                if theme::btn_danger(
+                                    ui,
+                                    if row_armed {
+                                        crate::i18n::tr("确认撤销")
+                                    } else {
+                                        crate::i18n::tr("撤销")
+                                    },
+                                    true,
+                                )
+                                .clicked()
+                                {
+                                    row_cancel_clicked = true;
+                                    if row_armed {
+                                        app.row_cancel_armed = None;
+                                        cancel_id = Some(o.order_id);
+                                        cancel_sym = o.symbol.clone();
+                                    } else {
+                                        app.row_cancel_armed = Some(o.order_id);
+                                    }
                                 }
                             });
                         });
@@ -332,6 +378,11 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
             });
     });
 
+    // 行级撤销武装解除：点击其它任意位置（未命中任意一行的撤销按钮）即退出
+    if !row_cancel_clicked && app.row_cancel_armed.is_some() && ui.input(|i| i.pointer.any_click())
+    {
+        app.row_cancel_armed = None;
+    }
     if let Some(id) = cancel_id {
         app.state.send_cmd(Command::CancelOrder {
             market,
@@ -449,7 +500,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
     let mut tpsl_open: Option<(String, bool, FutPosSide)> = None;
     let mut reverse_req: Option<(String, bool, Decimal, FutPosSide)> = None;
 
-    hscroll_table(ui, 712.0, |ui| {
+    hscroll_table(ui, "orders_positions", 712.0, |ui| {
         TableBuilder::new(ui)
             .striped(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -718,6 +769,10 @@ fn show_tpsl_window(app: &mut BnApp, ui: &mut egui::Ui) {
         .strong()
         .size(theme::FONT_LG),
     )
+    // 标题由 i18n 文案 + 交易对 + 方向拼成，Window 的 Id 默认派生自标题：
+    // 换仓位开窗或中/EN 切换都会改标题，窗口位置/焦点状态随之丢失。
+    // 固定 Id 后标题可任意变化（与预警窗 alerts_win 同一范式）
+    .id(egui::Id::new("tpsl_win"))
     .anchor(egui::Align2::CENTER_TOP, [0.0, 96.0])
     .collapsible(false)
     .resizable(false)
@@ -792,9 +847,19 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
         );
         return;
     }
-    let (hist, key) = {
+    // 版本键缓存：history 只在引擎刷新覆盖时变化；版本不变直接复用 Arc，
+    // 此前每帧 o.history.clone() 是 ~100 条 × 十余 String 的深拷贝
+    let (v, key) = {
         let o = state.orders.lock();
-        (o.history.clone(), o.history_symbol.clone())
+        (o.history_version, o.history_symbol.clone())
+    };
+    let hist = match app.history_cache.clone() {
+        Some((cv, h)) if cv == v => h,
+        _ => {
+            let h = Arc::new(state.orders.lock().history.clone());
+            app.history_cache = Some((v, Arc::clone(&h)));
+            h
+        }
     };
     // 价格小数位 = quote 资产侧精度（tick 小数位）；数量 = base 资产侧精度（step 小数位）。
     // 历史按 (市场, 交易对) 查询，行内交易对即查询键，市场取查询键的市场
@@ -884,7 +949,7 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
         );
         return;
     }
-    hscroll_table(ui, 494.0, |ui| {
+    hscroll_table(ui, "orders_history", 494.0, |ui| {
         TableBuilder::new(ui)
             .striped(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -914,7 +979,7 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 }
             })
             .body(|mut body| {
-                for o in &hist {
+                for o in hist.iter() {
                     body.row(22.0, |mut row| {
                         row.col(|ui| {
                             widgets::num_cell(ui, widgets::fmt_time(o.time), None);
@@ -997,9 +1062,18 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
         );
         return;
     }
-    let (trades, hist_key) = {
+    // 版本键缓存（与 show_history 同构）：trades 只随引擎刷新变化
+    let (v, hist_key) = {
         let o = state.orders.lock();
-        (o.trades.clone(), o.history_symbol.clone())
+        (o.history_version, o.history_symbol.clone())
+    };
+    let trades = match app.trades_cache.clone() {
+        Some((cv, t)) if cv == v => t,
+        _ => {
+            let t = Arc::new(state.orders.lock().trades.clone());
+            app.trades_cache = Some((v, Arc::clone(&t)));
+            t
+        }
     };
     // 价格小数位 = quote 资产侧精度（tick 小数位）；数量 = base 资产侧精度（step 小数位）。
     // 成交按 (市场, 交易对) 查询，行内交易对即查询键，市场取查询键的市场
@@ -1090,7 +1164,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
         );
         return;
     }
-    hscroll_table(ui, 514.0, |ui| {
+    hscroll_table(ui, "orders_trades", 514.0, |ui| {
         TableBuilder::new(ui)
             .striped(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -1120,7 +1194,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 }
             })
             .body(|mut body| {
-                for t in &trades {
+                for t in trades.iter() {
                     body.row(22.0, |mut row| {
                         row.col(|ui| {
                             widgets::num_cell(ui, widgets::fmt_time(t.time), None);

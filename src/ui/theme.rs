@@ -16,6 +16,9 @@ pub const FONT_LG: f32 = 16.5;
 pub const FONT_HERO: f32 = 20.0;
 /// 解锁/配钥页的品牌标题（页面级展示字，不属于常规字号阶梯）
 pub const FONT_BRAND: f32 = 34.0;
+/// 图表水位印（装饰性大字，同样不属于常规字号阶梯，但纳入 token 体系
+/// 统一管理，避免裸字面量散落在绘制代码里）
+pub const FONT_WATERMARK: f32 = 58.0;
 /// 常规按钮/页签高度
 pub const BTN_H: f32 = 28.0;
 /// 主操作按钮高度（买卖切换、下单提交）
@@ -280,21 +283,23 @@ pub fn trade_color(buyer_maker: bool) -> Color32 {
     }
 }
 
-/// MA 均线配色：浅色主题用加深变体（原色在近白图表背景上对比度不足 3:1）
+/// MA 均线配色：浅色主题用加深变体（原色在近白图表背景上对比度不足 3:1）。
+/// 色域约束：琥珀 / 青 / 蓝 / 灰蓝四轴——不使用粉、紫（设计规范明确禁止），
+/// 也不复用涨跌语义色，避免均线与 K 线方向暗示混淆
 pub fn ma_colors() -> [Color32; 4] {
     if is_light() {
         [
             Color32::from_rgb(178, 122, 0),  // 琥珀（加深）
-            Color32::from_rgb(186, 32, 118), // 粉（加深）
             Color32::from_rgb(0, 116, 172),  // 青（加深）
-            Color32::from_rgb(104, 66, 180), // 紫（加深）
+            Color32::from_rgb(26, 95, 214),  // 蓝（加深）
+            Color32::from_rgb(90, 105, 130), // 灰蓝（加深）
         ]
     } else {
         [
             Color32::from_rgb(255, 193, 61),
-            Color32::from_rgb(240, 100, 181),
             Color32::from_rgb(80, 200, 255),
-            Color32::from_rgb(170, 130, 255),
+            Color32::from_rgb(96, 150, 255),
+            Color32::from_rgb(148, 163, 184),
         ]
     }
 }
@@ -316,7 +321,8 @@ pub fn badge(ui: &mut egui::Ui, text: &str, fg: Color32) {
 
 // ---------- 按钮层级 ----------
 
-/// 主操作按钮：全宽 + accent 填充 + on_accent 文字（保存、提交、解锁等唯一主入口）
+/// 主操作按钮：全宽 + accent 填充 + on_accent 文字（保存、提交、解锁等唯一主入口）。
+/// 禁用时附通用原因提示（调用方链自己的 on_disabled_hover_text 会覆盖为本场景文案）
 pub fn btn_primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
     let btn = egui::Button::new(
         egui::RichText::new(text)
@@ -329,6 +335,7 @@ pub fn btn_primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respon
     .min_size(egui::vec2(ui.available_width(), BTN_LG));
     ui.add_enabled(enabled, btn)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_disabled_hover_text(crate::i18n::tr("表单未填写完整或有错误"))
 }
 
 /// 普通按钮：card 底 + 中性文字。不显式设 stroke——交给 egui 按交互状态

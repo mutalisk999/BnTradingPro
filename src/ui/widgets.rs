@@ -106,8 +106,17 @@ pub fn glyph_button(
 
 /// 弹性填宽数字输入框：desired_width 取本行剩余可用宽减去 tail（行尾
 /// 伴随控件的总宽），输入框总是占满行内空隙、右缘与伴随控件对齐。
-/// fixed 120 宽在任意面板宽下右缘参差不齐；flex 后面板宽变化亦成列
-pub fn num_field_flex(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str, h: f32, tail: f32) {
+/// fixed 120 宽在任意面板宽下右缘参差不齐；flex 后面板宽变化亦成列。
+/// 返回 Response：调用方可据此响应 .changed() / .lost_focus()，
+/// 而不必每帧重解析输入串（此前 show 返回 ()，编辑信号被结构性丢弃）
+pub fn num_field_flex(
+    ui: &mut egui::Ui,
+    id: &str,
+    text: &mut String,
+    hint: &str,
+    h: f32,
+    tail: f32,
+) -> egui::Response {
     let w = (ui.available_width() - tail).max(56.0);
     egui::TextEdit::singleline(text)
         .id_salt(id)
@@ -116,7 +125,9 @@ pub fn num_field_flex(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str
         .font(egui::TextStyle::Monospace)
         .text_color(theme::cur().text)
         .hint_text(hint)
-        .show(ui);
+        .show(ui)
+        .response
+        .response
 }
 
 pub fn parse_dec(s: &str) -> Option<Decimal> {

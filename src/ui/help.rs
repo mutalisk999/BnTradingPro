@@ -123,7 +123,7 @@ pub fn show(_app: &mut BnApp, ui: &mut egui::Ui) {
 
     section(ui, "快捷键（交易页）", |ui| {
         kv(ui, "B / S", "买入 / 卖出方向切换，并聚焦数量输入框（输入框获得焦点时不生效）");
-        kv(ui, "Ctrl+Shift+C", "撤销当前交易对的全部挂单");
+        kv(ui, "Ctrl+Shift+C", "连按两次撤销当前交易对的全部挂单");
     });
 
     section(ui, "网络与代理", |ui| {

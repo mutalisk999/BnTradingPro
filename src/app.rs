@@ -228,6 +228,20 @@ pub struct BnApp {
     pub vault_delete_armed: bool,
     /// 「撤销本市场全部」两步确认（第一次点击进入待确认态，点击其他位置解除）
     pub market_cancel_armed: bool,
+    /// 「撤销全部（当前交易对）」两步确认：武装的交易对名，点击其他位置解除
+    pub sym_cancel_armed: Option<String>,
+    /// 行级「撤销」两步确认：武装的订单号，点击其他位置解除
+    pub row_cancel_armed: Option<i64>,
+    /// Ctrl+Shift+C 连按确认：(交易对, 武装时刻)，4 秒窗口内第二次按下才执行
+    pub shortcut_cancel_armed: Option<(String, std::time::Instant)>,
+    /// 订单历史版本化缓存：history 只在引擎刷新时变化（每条十余个 String），
+    /// 版本不变直接复用 Arc，跳过每帧全量深拷贝
+    pub history_cache: Option<(
+        u64,
+        std::sync::Arc<Vec<crate::binance::model::OrderInfo>>,
+    )>,
+    /// 成交历史的同名缓存
+    pub trades_cache: Option<(u64, std::sync::Arc<Vec<crate::binance::model::MyTrade>>)>,
     /// 持仓行内 TP/SL 弹窗：(symbol, 多头?, 持仓方向, 止损触发价, 止盈触发价)
     pub tpsl_edit: Option<(String, bool, FutPosSide, String, String)>,
     /// 价格预警弹窗开关（页头铃铛）
@@ -276,7 +290,7 @@ impl BnApp {
         *state.cfg.write() = cfg.clone();
         let engine = crate::engine::spawn(cc.egui_ctx.clone(), Arc::clone(&state));
 
-        let phase = if vault::vault_exists(&dir) {
+        let phase = if vault::vault_exists(dir) {
             Phase::Unlock
         } else {
             Phase::EnterKeys
@@ -318,6 +332,11 @@ impl BnApp {
             active_sub: Some((Market::Spot, default_symbol, interval)),
             vault_delete_armed: false,
             market_cancel_armed: false,
+            sym_cancel_armed: None,
+            row_cancel_armed: None,
+            shortcut_cancel_armed: None,
+            history_cache: None,
+            trades_cache: None,
             tpsl_edit: None,
             alerts_open: false,
             alert_input: String::new(),
@@ -500,6 +519,8 @@ impl BnApp {
         self.book_anim.clear();
         // 全撤待确认态不得跨市场残留：换市场后第一次点击应重新确认
         self.market_cancel_armed = false;
+        self.sym_cancel_armed = None;
+        self.row_cancel_armed = None;
         // 切换顶层页签退出图表最大化：资产/设置页没有图表，残留状态会让
         // 交易页在下次进入时仍处于全屏、找不到还原按钮以外的面板
         self.chart_maximized = false;
@@ -628,7 +649,11 @@ impl BnApp {
             Tab::Spot | Tab::Futures => self.trading_ui(ui),
             Tab::Portfolio => {
                 egui::CentralPanel::default().show(ui, |ui| {
+                    // 三个顶层页的 ScrollArea 显式区隔 Id：CentralPanel 子 ui 的
+                    // 稳定 Id 与页签无关，默认 salt 会让三页共享一个滚动状态——
+                    // 设置页滚到底再切到资产页时仍停在滚动偏移处
                     egui::ScrollArea::vertical()
+                        .id_salt("assets_scroll")
                         .auto_shrink([false, false])
                         .show(ui, |ui| crate::ui::assets::show(self, ui));
                 });
@@ -636,6 +661,7 @@ impl BnApp {
             Tab::Settings => {
                 egui::CentralPanel::default().show(ui, |ui| {
                     egui::ScrollArea::vertical()
+                        .id_salt("settings_scroll")
                         .auto_shrink([false, false])
                         .show(ui, |ui| settings::show(self, ui));
                 });
@@ -643,6 +669,7 @@ impl BnApp {
             Tab::Help => {
                 egui::CentralPanel::default().show(ui, |ui| {
                     egui::ScrollArea::vertical()
+                        .id_salt("help_scroll")
                         .auto_shrink([false, false])
                         .show(ui, |ui| crate::ui::help::show(self, ui));
                 });
@@ -787,7 +814,9 @@ impl BnApp {
     fn trading_ui(&mut self, ui: &mut egui::Ui) {
         // ---------- 快捷键 ----------
         // B/S 切换买卖侧并聚焦数量框（输入框聚焦时不抢键）；
-        // Ctrl+Shift+C 撤销当前交易对全部挂单
+        // Ctrl+Shift+C 连按两次撤销当前交易对全部挂单：单次和弦键误按风险高，
+        // 与按钮路径同一两步纪律——第一击武装（4 秒窗口内）并提示，
+        // 第二击才真正执行
         if self.confirm.is_none() {
             let (b, s, ctrl_shift_c) = ui.ctx().input(|i| {
                 (
@@ -815,10 +844,30 @@ impl BnApp {
             }
             if ctrl_shift_c && self.state.has_creds() {
                 let sym = self.page.symbol.clone();
-                self.state.send_cmd(Command::CancelAll {
-                    market: self.market,
-                    symbol: Some(sym),
-                });
+                let now = std::time::Instant::now();
+                // 武装态按 (交易对, 4 秒窗口) 匹配：换交易对或超时即视为
+                // 首次按下，重新武装，杜绝"多久之前误按一次后被补键撤销"
+                let primed = matches!(
+                    self.shortcut_cancel_armed,
+                    Some((ref s, t)) if *s == sym && now.duration_since(t).as_secs_f64() < 4.0
+                );
+                if primed {
+                    self.shortcut_cancel_armed = None;
+                    self.state.send_cmd(Command::CancelAll {
+                        market: self.market,
+                        symbol: Some(sym),
+                    });
+                } else {
+                    self.shortcut_cancel_armed = Some((sym, now));
+                    self.state.push_toast(
+                        crate::engine::state::ToastKind::Warn,
+                        format!(
+                            "{}{}",
+                            crate::i18n::tr("再按一次 Ctrl+Shift+C 确认撤销: "),
+                            self.page.symbol
+                        ),
+                    );
+                }
             }
         }
 
@@ -1201,15 +1250,32 @@ impl BnApp {
             // 之后"的窗口，期间提交按钮禁用，防止双击双单。
             // OCO 单条命令提交；多单（主单+附加止盈止损）顺序入队
             self.state.set_busy("place", true);
+            let mut failed = false;
             if let Some(oco) = c.oco {
-                self.engine.send(Command::PlaceOco { req: oco });
+                if !self.engine.send(Command::PlaceOco { req: oco }) {
+                    failed = true;
+                }
             } else {
                 for req in c.reqs {
-                    self.engine.send(Command::PlaceOrder {
-                        market: c.market,
-                        req,
-                    });
+                    if !self
+                        .engine
+                        .send(Command::PlaceOrder {
+                            market: c.market,
+                            req,
+                        })
+                    {
+                        failed = true;
+                    }
                 }
+            }
+            if failed {
+                // send 失败 = 命令循环已退出：引擎收不到本单，也不会释放
+                // busy。立即回滚 busy 并提示，否则提交键永久禁用且无解释
+                self.state.set_busy("place", false);
+                self.state.push_toast(
+                    crate::engine::state::ToastKind::Err,
+                    crate::i18n::tr("引擎已断开，下单未提交").to_string(),
+                );
             }
         } else if !keep || cancel {
             self.confirm = None;

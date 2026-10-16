@@ -389,6 +389,22 @@ fn symbol_row(
                 } else {
                     crate::i18n::tr("加入自选")
                 });
+            // 自绘热区默认对辅助技术不可见：星标是每行唯一的交互控件，
+            // 补可访问名字（动作 + 交易对，状态由 ★/☆ 字形与颜色双编码）
+            star_resp.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button,
+                    true,
+                    format!(
+                        "{} {sym}",
+                        if is_fav {
+                            crate::i18n::tr("取消自选")
+                        } else {
+                            crate::i18n::tr("加入自选")
+                        }
+                    ),
+                )
+            });
             let star_clicked = star_resp.clicked();
             // 名称：纯展示（截断防长名溢出），点击切换由整卡热区负责
             let name_txt = {

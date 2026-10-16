@@ -882,7 +882,7 @@ fn err_bar(ui: &mut egui::Ui, err: &str) {
     }
     egui::Frame::default()
         .fill(theme::cur().err.gamma_multiply(0.16))
-        .corner_radius(3)
+        .corner_radius(theme::R_SM)
         .inner_margin(egui::Margin::symmetric(8, 5))
         .show(ui, |ui| {
             ui.label(

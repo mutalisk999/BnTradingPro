@@ -90,8 +90,12 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn send(&self, cmd: Command) {
-        let _ = self.tx.send(cmd);
+    /// 命令入队是否成功：失败（命令循环已退出、接收端被丢弃）时调用方需
+    /// 回滚 UI 预置的 busy 等状态，否则提交键永久禁用且无任何解释。
+    /// 返回 bool 而非 Result<SendError<Command>>：Command 体积大，
+    /// Err 分支会让每次调用的 Result 膨胀
+    pub fn send(&self, cmd: Command) -> bool {
+        self.tx.send(cmd).is_ok()
     }
 }
 
@@ -935,17 +939,23 @@ async fn handle_cmd(
             {
                 let (po_ok, pt_ok) = (po.is_ok(), pt.is_ok());
                 let mut o = state.orders.lock();
+                let mut changed = false;
                 if let Ok(v) = po {
                     if let Ok(mut list) = serde_json::from_value::<Vec<OrderInfo>>(v) {
                         list.sort_by_key(|x| std::cmp::Reverse(x.time));
                         o.history = list;
+                        changed = true;
                     }
                 }
                 if let Ok(v) = pt {
                     if let Ok(mut list) = serde_json::from_value::<Vec<MyTrade>>(v) {
                         list.sort_by_key(|x| std::cmp::Reverse(x.time));
                         o.trades = list;
+                        changed = true;
                     }
+                }
+                if changed {
+                    o.history_version = o.history_version.wrapping_add(1);
                 }
                 o.history_symbol = if po_ok || pt_ok {
                     // 至少一个请求成功才更新归属标记：双双失败时保留旧数据 +
@@ -1074,7 +1084,16 @@ async fn handle_cmd(
         Command::PersistConfig => {
             // 配置落盘统一在引擎侧执行，UI 线程只改内存
             let cfg = state.cfg_snapshot();
-            cfg.save(&crate::config::data_dir());
+            if let Err(e) = cfg.save(crate::config::data_dir()) {
+                tracing::error!("配置保存失败: {e}");
+                // 仅在失败时打扰用户：保存成功是后台常态（切自选也会触发），
+                // 成功 toast 会刷屏；失败必须明确告知，否则用户直到重启后
+                // 才发现自选/预警/端点配置从未写入
+                state.push_toast(
+                    ToastKind::Err,
+                    format!("{}{e}", crate::i18n::tr("配置保存失败: ")),
+                );
+            }
         }
         Command::RefreshKlines {
             market,
