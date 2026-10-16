@@ -1770,16 +1770,7 @@ async fn market_ws_loop(
                             state.with_symbol_md(ns.market, &ns.symbol, |md| md.ws = st);
                             let nl = ns.symbol.to_lowercase();
                             let new_scoped = slot.scoped_streams(&nl, ns.interval.as_str(), fut);
-                            let drop_s: Vec<String> = server_streams
-                                .iter()
-                                .filter(|s| !s.starts_with('!') && !new_scoped.contains(s))
-                                .cloned()
-                                .collect();
-                            let add_s: Vec<String> = new_scoped
-                                .iter()
-                                .filter(|s| !server_streams.contains(s))
-                                .cloned()
-                                .collect();
+                            let (drop_s, add_s) = resub_diff(&server_streams, &new_scoped);
                             if drop_s.is_empty() && add_s.is_empty() {
                                 // 同交易对同周期重复下发（如 ReloadAll 重发订阅）：
                                 // 流无变化，只更新本地规格
@@ -1998,6 +1989,26 @@ struct StreamFrame<'a> {
     stream: &'a str,
     #[serde(borrow)]
     data: &'a serde_json::value::RawValue,
+}
+
+/// 原地改订的流差集：服务端当前已订阅 vs 新规格需要的符号级流。
+///
+/// `drop` = 服务端有但新规格不再需要的（市场级 '!' 流永不退订——它
+/// 随初始连接建立，与单个交易对无关）；`add` = 新规格需要但服务端
+/// 尚未订阅的（本轮符号级流全换或周期变化时常见）。两者皆空 = 重复
+/// 下发同一订阅，改订本身可跳过
+fn resub_diff(server: &[String], new_scoped: &[String]) -> (Vec<String>, Vec<String>) {
+    let drop_s = server
+        .iter()
+        .filter(|s| !s.starts_with('!') && !new_scoped.contains(s))
+        .cloned()
+        .collect();
+    let add_s = new_scoped
+        .iter()
+        .filter(|s| !server.contains(s))
+        .cloned()
+        .collect();
+    (drop_s, add_s)
 }
 
 /// 分发一条组合流文本帧。
@@ -2465,6 +2476,58 @@ mod tests {
             assert_eq!(o.open[Market::UmFutures as usize].len(), 0);
             assert_eq!(o.open[Market::Spot as usize].len(), 1);
         }
+    }
+
+    #[test]
+    fn resub_diff_symbol_switch() {
+        // 现货槽位 A 连接建立后的服务端流（含市场级 miniTicker）
+        let server = vec![
+            "btcusdt@ticker".into(),
+            "btcusdt@depth20@100ms".into(),
+            "btcusdt@aggTrade".into(),
+            "btcusdt@kline_1m".into(),
+            "!miniTicker@arr".into(),
+        ];
+        // 切换到 ETHUSDT、周期不变
+        let new = MarketWsSlot::A.scoped_streams("ethusdt", "1m", false);
+        let (drop, add) = resub_diff(&server, &new);
+        // 旧符号四个符号级流全部退订；市场级流必须保留
+        assert_eq!(
+            drop,
+            vec![
+                "btcusdt@ticker",
+                "btcusdt@depth20@100ms",
+                "btcusdt@aggTrade",
+                "btcusdt@kline_1m"
+            ]
+        );
+        assert_eq!(
+            add,
+            vec![
+                "ethusdt@ticker",
+                "ethusdt@depth20@100ms",
+                "ethusdt@aggTrade",
+                "ethusdt@kline_1m"
+            ]
+        );
+        // 下一轮以新服务端视图计算：miniTicker 仍在
+        let server2: Vec<String> = {
+            let mut v = new.clone();
+            v.push("!miniTicker@arr".into());
+            v
+        };
+        let (d2, a2) = resub_diff(&server2, &new);
+        assert!(d2.is_empty() && a2.is_empty(), "同订阅重复下发须判定为空差集");
+    }
+
+    #[test]
+    fn resub_diff_interval_only() {
+        // 同交易对换周期：只有 kline 流变化
+        let server = MarketWsSlot::B.scoped_streams("btcusdt", "15m", true);
+        let new = MarketWsSlot::B.scoped_streams("btcusdt", "1h", true);
+        let (drop, add) = resub_diff(&server, &new);
+        assert_eq!(drop, vec!["btcusdt@kline_15m"]);
+        assert_eq!(add, vec!["btcusdt@kline_1h"]);
     }
 
     #[test]
