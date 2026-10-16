@@ -1,10 +1,9 @@
 //! 盘口（深度）与逐笔成交列表
 //!
-//! 锁纪律：md 是全系统最热的锁（depth20@100ms / aggTrade 每条 WS 消息都要写），
+//! 锁纪律：md 是全系统最热的锁（depth50@100ms / aggTrade 每条 WS 消息都要写），
 //! 这里统一"短锁拷贝 → 释放 → 绘制"，绝不在面板构建期间持有锁。
 
 use crate::app::BnApp;
-use crate::binance::Interval;
 use crate::ui::flash;
 use crate::ui::theme;
 use crate::ui::widgets;
@@ -12,11 +11,13 @@ use eframe::egui;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 
-/// 每侧显示档数下限（面板过矮时的保底）。按用户要求每侧比此前多显一档
-pub const BOOK_LEVELS: usize = 11;
-/// 每侧显示档数上限：订阅的 depth20@100ms 推满 20 档，
-/// 实际档位数随面板高度在两者之间自适应
-pub const BOOK_MAX_LEVELS: usize = 20;
+/// 每侧显示档数下限（面板过矮时的保底）。按用户要求每侧再增一档
+pub const BOOK_LEVELS: usize = 12;
+/// 每侧显示档数上限：订阅的 depth50@100ms 推满 50 档，
+/// 实际档位数随面板高度在两者之间自适应。上限取满订阅深度而非更小值：
+/// 聚合档位（10×~1000× tick）把原始档位合并成桶，20 档原始数据在高聚合
+/// 下只剩寥寥几桶、面板大片留白，必须有足够的原始档位才撑得起桶密度
+pub const BOOK_MAX_LEVELS: usize = 50;
 
 /// 盘口行闪光/残影强度：取全局 FLASH_ALPHA 的一半——盘口是整列大量行同时
 /// 更新，0.28 的整行底色在高频推送下连成整片红/绿，压到一半后只剩
@@ -184,7 +185,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
         .unwrap_or(4);
 
     // 行距收紧为无缝 + 档位随面板高度自适应（同成交明细思路：内容恰好占满、
-    // 无需滚动条）。上限 20 档 = depth20 推送的完整档数，下限 10 档保底；
+    // 无需滚动条）。上限 50 档 = depth50 推送的完整档数，下限 12 档保底；
     // SAFETY 防取整溢出顶出滚动条
     ui.spacing_mut().item_spacing.y = 0.0;
     const SPREAD_H: f32 = 24.0;
@@ -763,7 +764,7 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
     }
 }
 
-/// 页头：交易对 / 最新价与涨跌 / 24h 统计（合约附资金费率）/ 周期直选
+/// 页头：交易对 / 最新价与涨跌 / 24h 统计（合约附资金费率）
 pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
     let state = app.state.clone();
     let dp = state
@@ -790,7 +791,6 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
     };
 
     // 第一行：交易对 | 最新价/涨跌 | 自选星标 / 预警
-    // 周期直选拆到第四行独占一行（见下），本行只剩交易对信息成组
     ui.horizontal_wrapped(|ui| {
         // 交易对双色标题：base（标的）强调、quote（计价）弱化，
         // 与交易所惯例一致；规则未加载/结构不符时整体回退单色原文
@@ -1015,18 +1015,8 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
         }
     });
 
-    // 第四行：周期直选（紧凑胶囊）独占一行，位于 24h 统计之下。
-    // 14 档挤在第一行会与交易对信息抢宽度、窄窗口下还换行截断；独占一行
-    // 后一行内排满、顺次切换不换行（ui.horizontal 而非 wrapped）：
-    // 极窄窗口宁可右侧裁掉也保持单行
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        for iv in Interval::all() {
-            if theme::pill_tab_sm(ui, iv.label(), app.page.interval == iv).clicked() {
-                app.switch_interval(iv);
-            }
-        }
-    });
+    // 周期直选已移到图上方工具行（chart.rs 工具行，MA 开关左侧），
+    // 页头不再渲染——页头只保留行情信息，周期切换贴近图表操作
 
     // 价格预警弹窗：当前交易对添加 + 全部预警列表（一次性触发，到价 toast）
     if app.alerts_open {

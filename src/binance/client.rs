@@ -245,7 +245,7 @@ impl BinanceRest {
         let ep = endpoints(ctx.market, ctx.testnet, overrides);
         let url = format!("{}{}", ep.rest, path);
         let key = self.api_key.as_ref().unwrap();
-        let mut req = self.http.request(method, &url);
+        let mut req = self.http.request(method.clone(), &url);
         if !params.is_empty() {
             req = req.query(params);
         }
@@ -255,7 +255,9 @@ impl BinanceRest {
             .await
             .map_err(map_req_err)?;
         self.track_weight(ctx.market, &resp);
-        parse_response(resp).await
+        parse_response(resp)
+            .await
+            .map_err(|e| with_endpoint_ctx(e, ctx.market, &method, path))
     }
 
     async fn wait_for_weight(&self, market: Market) -> Result<(), BinanceError> {
@@ -325,7 +327,9 @@ impl BinanceRest {
         }
         let resp = req.send().await.map_err(map_req_err)?;
         self.track_weight(market, &resp);
-        parse_response(resp).await
+        parse_response(resp)
+            .await
+            .map_err(|e| with_endpoint_ctx(e, market, &reqwest::Method::GET, path))
     }
 
     async fn signed_raw(
@@ -363,7 +367,11 @@ impl BinanceRest {
                 Err(BinanceError::Api { code: -1021, .. }) if attempt == 0 => {
                     self.resync_time(ep, ctx.market).await?;
                 }
-                other => return other,
+                other => {
+                    return other.map_err(|e| {
+                        with_endpoint_ctx(e, ctx.market, &method, path)
+                    })
+                }
             }
         }
         unreachable!("循环恰好两次且第二次必经 other 分支返回")
@@ -491,6 +499,27 @@ fn urlencode(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
 
+/// 为 HTTP 级失败附加端点上下文（方法 + 路径 + 市场）。
+/// 一个光秃秃的「HTTP 410 Gone」无法定位是哪个调用挂了——现货/合约
+/// 那么多端点，带上路径用户（和日志）才能一眼看出该查哪个
+fn with_endpoint_ctx(
+    e: BinanceError,
+    market: Market,
+    method: &reqwest::Method,
+    path: &str,
+) -> BinanceError {
+    match e {
+        BinanceError::Decode(m) => {
+            BinanceError::Decode(format!("{method} {path}（{}）: {m}", market.label()))
+        }
+        BinanceError::Api { code, msg } => BinanceError::Api {
+            code,
+            msg: format!("{method} {path}（{}）: {msg}", market.label()),
+        },
+        other => other,
+    }
+}
+
 async fn parse_response(resp: reqwest::Response) -> Result<Value, BinanceError> {
     let status = resp.status();
     // 429 限频 / 418 IP 封禁：读取 Retry-After 头，返回专用错误（含可重试时间）
@@ -528,7 +557,12 @@ async fn parse_response(resp: reqwest::Response) -> Result<Value, BinanceError> 
                 msg: msg.to_string(),
             });
         }
-        return Err(BinanceError::Decode(format!("HTTP {status}: {text}")));
+        // 代理/拦截层返回的 HTML 错误页可能很长，截断避免撑爆 toast 与日志
+        let excerpt: String = text.chars().take(120).collect();
+        let suffix = if text.chars().count() > 120 { "…" } else { "" };
+        return Err(BinanceError::Decode(format!(
+            "HTTP {status}: {excerpt}{suffix}"
+        )));
     }
     // 部分合约端点（如 positionSide/dual）成功时返回 {"code":200,"msg":"success"}；
     // 错误码为负数，其余正数 code 视为异常

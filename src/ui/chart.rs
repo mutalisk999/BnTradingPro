@@ -64,9 +64,18 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         r.map(|x| x.price_dp()).unwrap_or(2)
     });
 
-    // ---------- 头部工具行：MA 开关 | 副图指标切换 + 最大化 ----------
+    // ---------- 头部工具行：周期直选 + MA 开关 | 副图指标切换 + 最大化 ----------
     let ma_colors = theme::ma_colors();
-    ui.horizontal(|ui| {
+    // 周期与均线同为图上层开关，放同一工具行；整行允许换行（极窄窗口下
+    // 副图切换/全屏按钮不被挤出可视区，宁可 MA 胶囊折到第二行）
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        // 周期直选：pill_tab_sm 胶囊，与页头同一样式
+        for iv in Interval::all() {
+            if theme::pill_tab_sm(ui, iv.label(), app.page.interval == iv).clicked() {
+                app.switch_interval(iv);
+            }
+        }
         for (i, &period) in MA_PERIODS.iter().enumerate() {
             let on = app.page.chart.ma[i];
             let label = format!("MA{period}");

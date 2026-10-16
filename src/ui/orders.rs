@@ -427,19 +427,19 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
         TableBuilder::new(ui)
             .striped(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            // 列宽合计（含操作列 at_least 64）≈ 612pt，须容于底部订单区默认宽
-            // （~680pt）：auto 列随内容加宽，at_least 只兜底；列再宽就会被裁掉
-            // 强平价/杠杆/操作（egui_extras 0.36 无横向滚动可用）
+            // 列宽合计 ≈ 830pt：底部订单区默认宽（~680pt）放不下，但
+            // hscroll_table 已包横向滚动，窄面板下可拖出来看全列
             .column(Column::auto().clip(true).at_least(68.0)) // 交易对
             .column(Column::auto().clip(true).at_least(32.0)) // 方向
-            .column(Column::auto().clip(true).at_least(60.0)) // 数量
+            .column(Column::auto().clip(true).at_least(56.0)) // 数量
             .column(Column::auto().clip(true).at_least(68.0)) // 开仓价
-            .column(Column::auto().clip(true).at_least(88.0)) // 损益两平价
-            .column(Column::auto().clip(true).at_least(68.0)) // 标记价
+            .column(Column::auto().clip(true).at_least(80.0)) // 损益两平价
+            .column(Column::auto().clip(true).at_least(64.0)) // 标记价
             .column(Column::auto().clip(true).at_least(68.0)) // 未实现盈亏
-            .column(Column::auto().clip(true).at_least(68.0)) // 强平价
+            .column(Column::auto().clip(true).at_least(62.0)) // 强平价
             .column(Column::auto().clip(true).at_least(28.0)) // 杠杆
-            .column(Column::remainder().clip(true).at_least(160.0)) // 操作（TP/SL + 反手 + 平仓）
+            .column(Column::auto().clip(true).at_least(104.0)) // 仓位止盈止损
+            .column(Column::remainder().clip(true).at_least(190.0)) // 操作（TP/SL + 平仓 + 反手交易）
             .header(22.0, |mut h| {
                 for (i, t) in [
                     "交易对",
@@ -451,12 +451,31 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                     "未实现盈亏",
                     "强平价",
                     "杠杆",
+                    "仓位止盈止损",
                     "操作",
                 ]
                 .into_iter()
                 .enumerate()
                 {
-                    h.col(|ui| head_cell(ui, crate::i18n::tr(t), i == 0 || i == 9 || (2..=8).contains(&i)));
+                    h.col(|ui| {
+                        head_cell(
+                            ui,
+                            crate::i18n::tr(t),
+                            i == 0 || i == 10 || (2..=9).contains(&i),
+                        );
+                        if i == 9 {
+                            // 仓位止盈止损语义特殊（整仓触发、平仓即取消），
+                            // 表头挂完整说明，悬停可查
+                            ui.interact(
+                                ui.max_rect(),
+                                egui::Id::new("pos_tpsl_head"),
+                                egui::Sense::hover(),
+                            )
+                            .on_hover_text(crate::i18n::tr(
+                                "该止盈止损针对整个仓位（无论加仓或者减仓）。平仓后该止盈止损将被自动取消。当价格到达设定的触发价格时，将执行市价平仓委托。如果仓位数量超过市价委托单笔最大数量限制，委托将被拒绝。",
+                            ));
+                        }
+                    });
                 }
             })
             .body(|mut body| {
@@ -547,9 +566,68 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                             );
                         });
                         row.col(|ui| {
-                            // 操作列右对齐：按钮贴行尾（RTL 先加的贴最右）
+                            // 仓位止盈/止损触发价（0 = 未设置）：止盈用涨色、
+                            // 止损用跌色，未设置显示 —。两值由 v3 positionRisk
+                            // 返回，与 TP/SL 按钮提交的条件单同源
+                            if p.take_profit.is_zero() && p.stop_loss.is_zero() {
+                                widgets::num_cell(ui, "—".into(), None);
+                            } else {
+                                let dp = pxd(&p.symbol);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        let tp = if p.take_profit.is_zero() {
+                                            "—".to_string()
+                                        } else {
+                                            widgets::fmt_dec_fixed(&p.take_profit, dp)
+                                        };
+                                        let sl = if p.stop_loss.is_zero() {
+                                            "—".to_string()
+                                        } else {
+                                            widgets::fmt_dec_fixed(&p.stop_loss, dp)
+                                        };
+                                        // RTL 先加的贴最右：自左向右呈 止盈 / 止损，
+                                        // 与表头「仓位止盈止损」语序一致
+                                        ui.label(
+                                            egui::RichText::new(sl)
+                                                .monospace()
+                                                .size(theme::FONT_SM)
+                                                .color(theme::cur().down),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new("/")
+                                                .monospace()
+                                                .size(theme::FONT_SM)
+                                                .color(theme::cur().text_dim),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(tp)
+                                                .monospace()
+                                                .size(theme::FONT_SM)
+                                                .color(theme::cur().up),
+                                        );
+                                    },
+                                );
+                            }
+                        });
+                        row.col(|ui| {
+                            // 操作列右对齐：按钮贴行尾（RTL 先加的贴最右）。
+                            // 视觉顺序（自左向右）TP/SL | 平仓 | 反手交易：
+                            // 平仓紧邻反手交易——两者都是「了结当前持仓」的
+                            // 高频操作，TP/SL 作为条件单配置单独靠左
                             ui.spacing_mut().item_spacing.x = 4.0;
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                // 反手交易（最右，最先添加）
+                                if theme::btn_default(ui, crate::i18n::tr("反手交易"), true)
+                                    .on_hover_text(crate::i18n::tr(
+                                        "市价平仓并反向开同等数量（有确认弹窗）",
+                                    ))
+                                    .clicked()
+                                {
+                                    reverse_req = Some((p.symbol.clone(), long, p.amt.abs(), FutPosSide::parse(&p.side)));
+                                }
+                                // 平仓（居中）
                                 // 与资产页持仓表一致的短文案（市价语义放悬停提示，省列宽）
                                 if theme::btn_danger(ui, crate::i18n::tr("平仓"), true)
                                     .on_hover_text(crate::i18n::tr("市价平仓（有确认弹窗）"))
@@ -560,6 +638,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                                     close_req =
                                         Some((p.symbol.clone(), side, p.amt.abs(), pos_side));
                                 }
+                                // TP/SL（最左）
                                 if theme::btn_default(ui, crate::i18n::tr("TP/SL"), true)
                                     .on_hover_text(crate::i18n::tr("附加止盈/止损（触发后市价全平）"))
                                     .clicked()
@@ -569,14 +648,6 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                                         long,
                                         FutPosSide::parse(&p.side),
                                     ));
-                                }
-                                if theme::btn_default(ui, crate::i18n::tr("反手"), true)
-                                    .on_hover_text(crate::i18n::tr(
-                                        "市价平仓并反向开同等数量（有确认弹窗）",
-                                    ))
-                                    .clicked()
-                                {
-                                    reverse_req = Some((p.symbol.clone(), long, p.amt.abs(), FutPosSide::parse(&p.side)));
                                 }
                             });
                         });

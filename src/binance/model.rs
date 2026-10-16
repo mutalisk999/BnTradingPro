@@ -212,6 +212,13 @@ pub struct PositionRisk {
     pub leverage: Decimal,
     #[serde(rename = "positionSide", default)]
     pub side: String,
+    /// 仓位止盈触发价（0 = 未设置；由 v3 positionRisk 返回，键缺失时为 0）
+    #[serde(rename = "takeProfit", default)]
+    pub take_profit: Decimal,
+    /// 仓位止损触发价（0 = 未设置；官方键名拼写为 stopLos，此处兼容
+    /// stopLoss 写法与键缺失两种回退，解析不会因字段差异整体失败）
+    #[serde(alias = "stopLos", alias = "stopLoss", default)]
+    pub stop_loss: Decimal,
 }
 
 /// 交易对配置（GET /fapi/v1/symbolConfig）：杠杆/保证金模式等配置类字段
@@ -545,6 +552,27 @@ mod tests {
         let p: PositionRisk = serde_json::from_str(raw).unwrap();
         assert_eq!(p.amt.to_string(), "0.01");
         assert_eq!(p.side, "BOTH");
+
+        // v3 positionRisk 样本：带 breakEvenPrice / takeProfit / stopLos
+        // （官方止损键名拼写为 stopLos）
+        let raw = r#"{"symbol":"BTCUSDT","positionAmt":"0.010","entryPrice":"22185.2","breakEvenPrice":"22190.5",
+            "markPrice":"21123.0","unRealizedProfit":"-0.1062210","liquidationPrice":"0","leverage":"10",
+            "positionSide":"BOTH","updateTime":"0","maxNotionalValue":"1000","isolated":true,
+            "isolatedWallet":"99.9","notional":"-211.23","isAutoAddMargin":"false",
+            "takeProfit":"50000.00","stopLos":"20000.00"}"#;
+        let p: PositionRisk = serde_json::from_str(raw).unwrap();
+        assert_eq!(p.break_even_price.to_string(), "22190.5");
+        assert_eq!(p.take_profit.to_string(), "50000.00");
+        assert_eq!(p.stop_loss.to_string(), "20000.00");
+
+        // 无 TP/SL 键的旧样本：字段回退 0，不破坏整体解析
+        let p: PositionRisk = serde_json::from_str(
+            r#"{"symbol":"ETHUSDT","positionAmt":"1","entryPrice":"2000","markPrice":"2100",
+            "unRealizedProfit":"100","liquidationPrice":"0","leverage":"5","positionSide":"BOTH"}"#,
+        )
+        .unwrap();
+        assert_eq!(p.take_profit.to_string(), "0");
+        assert_eq!(p.stop_loss.to_string(), "0");
 
         let raw = r#"{"feeTier":0,"canTrade":true,"totalWalletBalance":"105.1","totalUnrealizedProfit":"-1.2",
             "totalMarginBalance":"103.9","availableBalance":"88.5","maxWithdrawAmount":"77",

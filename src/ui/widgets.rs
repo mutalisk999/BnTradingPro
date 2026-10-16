@@ -117,6 +117,12 @@ pub fn fmt_dec_fixed(d: &Decimal, dp: usize) -> String {
     }
 }
 
+/// 按精度定长显示、不附千分位分组：侧栏等紧凑场景需要纯粹的价格数字，
+/// 逗号既占宽度又打断纵向扫读（68,432.15 → 68432.15）
+pub fn fmt_dec_plain(d: &Decimal, dp: usize) -> String {
+    format!("{:.*}", dp, f64_decimal(d))
+}
+
 /// 千分位分组格式化（用于展示层；精确值仍走 Decimal）
 pub fn fmt_thousands(v: f64, dp: usize) -> String {
     let s = format!("{:.*}", dp, v);
@@ -398,6 +404,16 @@ mod tests {
         assert_eq!(fmt_thousands(-1234.5, 1), "-1,234.5");
         assert_eq!(fmt_thousands(42.0, 0), "42");
         assert_eq!(fmt_thousands(0.15, 4), "0.1500");
+    }
+
+    #[test]
+    fn plain_formatting_no_grouping() {
+        let d = rust_decimal::Decimal::from_str_exact("68432.15").unwrap();
+        assert_eq!(fmt_dec_plain(&d, 2), "68432.15");
+        let big = rust_decimal::Decimal::from_str_exact("1234567.891").unwrap();
+        assert_eq!(fmt_dec_plain(&big, 2), "1234567.89");
+        let small = rust_decimal::Decimal::from_str_exact("0.1").unwrap();
+        assert_eq!(fmt_dec_plain(&small, 4), "0.1000");
     }
 
     #[test]

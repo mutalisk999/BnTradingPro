@@ -250,7 +250,7 @@ pub struct BnApp {
     pub trade_expanded: bool,
     /// 右侧下单面板宽度（pt），左缘把手拖动调节，范围 236~360
     pub trade_width: f32,
-    /// 盘口逐档价格变动高亮（按 BookSite 分组，长度随 BOOK_LEVELS）
+    /// 盘口逐档价格变动高亮（按 BookSite 分组，长度随 BOOK_MAX_LEVELS）
     pub flash_book: crate::ui::flash::FlashBook,
     /// 逐笔成交最新行价格变动高亮
     pub flash_trade: crate::ui::flash::FlashTrade,
@@ -1355,6 +1355,8 @@ impl BnApp {
                 liquidation_price: d("73500.00"),
                 leverage: d("10"),
                 side: "BOTH".into(),
+                take_profit: d("88000.00"),
+                stop_loss: d("76000.00"),
             },
             PositionRisk {
                 symbol: "ETHUSDT".into(),
@@ -1366,6 +1368,8 @@ impl BnApp {
                 liquidation_price: d("3620.00"),
                 leverage: d("5"),
                 side: "BOTH".into(),
+                take_profit: d("2900.00"),
+                stop_loss: d("3350.00"),
             },
         ];
     }

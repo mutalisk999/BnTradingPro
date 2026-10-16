@@ -9,18 +9,27 @@ use eframe::egui;
 const STAR_W: f32 = 24.0;
 /// 小节标题（theme::section）固定占位高度
 const SECTION_H: f32 = 22.0;
+/// 行内第一行（名称）与第二行（价格/涨跌）之间的行隙
+const LINE_GAP: f32 = 2.0;
+/// 卡片左缘到名称文字的缩进：行首内边距 + 星标槽宽 + 星标/名称间距。
+/// 第二行价格按此缩进，与名称文字严格左对齐
+const NAME_X: f32 = 6.0 + STAR_W + 4.0;
+/// 相邻两个交易对行之间的留白：悬停/选中色带不覆盖这部分，
+/// 视觉上每行各自成为独立卡片、不再「粘」在一起
+const ROW_GAP: f32 = 7.0;
 
 /// 行槽真实尺度：egui 的文本行高不是字号本身（≈字号 ×1.3~1.5，含字距行隙），
 /// 早期用固定 34pt 槽位、星标按 FONT_BODY 自然撑高，第二行价格被挤出槽位、
 /// 压到下一行的名称上——视觉上星标错位、价格贴着下个交易对。所有高度改为
-/// 按当前字体度量推导，pitch = 第一行 + 2pt 行隙 + 第二行
+/// 按当前字体度量推导，pitch = 第一行 + 行隙 + 第二行 + 行间留白
 struct RowMetrics {
     /// 第一行（名称 + 星标）高度 = 名称行高
     l1: f32,
     /// 整行节距：show_rows 的行高须与行内实际排版严格一致，否则视口错位。
-    /// pitch = 第一行 + 2pt 行隙 + 第二行（第二行行高在构造时并入 pitch，
-    /// 单独保留字段无读取处）
+    /// 内容（背景色带）占 band = pitch - ROW_GAP，底部 ROW_GAP 留白作行间距
     pitch: f32,
+    /// 单行悬停/选中色带高度
+    band: f32,
 }
 
 fn row_metrics(ctx: &egui::Context) -> RowMetrics {
@@ -28,18 +37,32 @@ fn row_metrics(ctx: &egui::Context) -> RowMetrics {
         .fonts_mut(|f| f.row_height(&egui::FontId::proportional(theme::FONT_MD)));
     let l2 = ctx
         .fonts_mut(|f| f.row_height(&egui::FontId::monospace(theme::FONT_SM)));
-    let mut pitch = l1 + 2.0 + l2;
+    let band = l1 + LINE_GAP + l2;
+    let mut pitch = band + ROW_GAP;
     // 小节标题固定 22pt 占位：行槽不能比它矮，否则标题溢出自己的槽位
     if pitch < SECTION_H {
         pitch = SECTION_H;
     }
-    RowMetrics { l1, pitch }
+    RowMetrics {
+        l1,
+        pitch,
+        band: (pitch - ROW_GAP).max(band),
+    }
 }
 
 /// 虚拟化列表的行模型：小节标题或交易对行（bool = 是否已自选）
 enum Row<'a> {
     Section(&'static str),
     Sym(&'a str, bool),
+}
+
+/// 单行的渲染上下文：把价格精度与点击回传的出参打包成一个入参，
+/// 避免 symbol_row 参数超过 clippy 的 too_many_arguments 阈值
+struct RowAct<'a> {
+    /// 价格显示精度（tick 小数位）
+    dp: usize,
+    switched: &'a mut Option<String>,
+    toggled: &'a mut Option<String>,
 }
 
 /// 左侧交易对列表：搜索 + 自选置顶 + 全量虚拟化列表
@@ -106,7 +129,13 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         if !favs.is_empty() {
             theme::section(ui, crate::i18n::tr("自选"));
             for sym in &favs {
-                symbol_row(ui, app, sym, true, &m, &mut switched, &mut toggled);
+                // 规则书未加载时无 tick 可依，回退 2 位（USDT 计价对的常见精度）
+                let mut act = RowAct {
+                    dp: 2,
+                    switched: &mut switched,
+                    toggled: &mut toggled,
+                };
+                symbol_row(ui, app, sym, true, &m, &mut act);
             }
             ui.add_space(2.0);
         }
@@ -204,7 +233,22 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     |row_ui| match &rows[i] {
                         Row::Section(title) => section_row(row_ui, title, &m),
                         Row::Sym(sym, is_fav) => {
-                            symbol_row(row_ui, app, sym, *is_fav, &m, &mut switched, &mut toggled);
+                            // 价格精度取该交易对 tick 的小数位（= quote 侧报价精度，
+                            // 与盘口/交易页同源，USDT 计价对显示 2 位、
+                            // SHIB 这类低价币保留其 tick 全部位数不被压成 0.00）。
+                            // 只对可见行逐个查规则书，全量 2600 个符号每帧查会
+                            // 无谓地抢锁
+                            let dp = app
+                                .state
+                                .with_rule(app.market, sym, |r| {
+                                    r.map(|x| x.price_dp() as usize).unwrap_or(2)
+                                });
+                            let mut act = RowAct {
+                                dp,
+                                switched: &mut switched,
+                                toggled: &mut toggled,
+                            };
+                            symbol_row(row_ui, app, sym, *is_fav, &m, &mut act);
                         }
                     },
                 );
@@ -238,28 +282,25 @@ fn section_row(ui: &mut egui::Ui, title: &str, m: &RowMetrics) {
     });
 }
 
-/// 侧边栏交易对行：两行显示——第一行 名称+星标，第二行 实时价格+涨跌幅
-/// （!miniTicker@arr 数据，无行情时第二行留空占位）
+/// 侧边栏交易对行：整行是一张卡片——星标在卡片最前，名称紧随其后，
+/// 第二行（实时价格 + 24h 涨跌幅，无行情时留空占位）缩进与名称对齐。
+/// 点击卡片任意位置即切换交易对；星标点击单独拦截为加/取自选
 fn symbol_row(
     ui: &mut egui::Ui,
     app: &BnApp,
     sym: &str,
     is_fav: bool,
     m: &RowMetrics,
-    switched: &mut Option<String>,
-    toggled: &mut Option<String>,
+    act: &mut RowAct,
 ) {
     let selected = *sym == app.page.symbol;
-    // 行悬停高亮：先在控件下层铺底色，再放按钮。
-    // 悬停用 animate_bool 渐变（进/出淡入淡出）；选中行常亮 + 左侧 3px accent 条
+    // 卡片始终铺一层 card 底色（与面板底色拉开层级），高度 = 行内容高
+    // （名称行 + 行隙 + 价格行），底部 ROW_GAP 留白不动，相邻卡片之间
+    // 由此出现呼吸间隙
     let row_rect = egui::Rect::from_min_size(
         ui.cursor().min,
-        egui::vec2(ui.available_width(), m.pitch - 2.0),
+        egui::vec2(ui.available_width(), m.band),
     );
-    let hovered = ui.rect_contains_pointer(row_rect);
-    let anim = ui
-        .ctx()
-        .animate_bool(egui::Id::new("symrow").with(sym), hovered && !selected);
     let painter = ui.painter();
     if selected {
         painter.rect_filled(row_rect, 3.0, theme::cur().row_hover);
@@ -268,99 +309,87 @@ fn symbol_row(
             2.0,
             theme::cur().accent,
         );
-    } else if anim > 0.0 {
+    } else {
+        painter.rect_filled(row_rect, 3.0, theme::cur().card);
+    }
+    // 悬停渐变叠在卡片底色之上（进/出淡入淡出），选中行不重复叠加
+    let hovered = ui.rect_contains_pointer(row_rect);
+    let anim = ui
+        .ctx()
+        .animate_bool(egui::Id::new("symrow").with(sym), hovered && !selected);
+    if anim > 0.0 {
         painter.rect_filled(row_rect, 3.0, theme::cur().row_hover.gamma_multiply(anim));
     }
-    ui.spacing_mut().item_spacing.y = 2.0;
+    // 整卡热区：interact 不推进光标，仅注册点击/悬停。星标在其后注册，
+    // 层级更靠上、优先命中；二者点击互斥分发
+    let card_resp = ui
+        .interact(
+            row_rect,
+            egui::Id::new("symcard").with(sym),
+            egui::Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(sym);
+    ui.spacing_mut().item_spacing.y = LINE_GAP;
     let tick = app.state.ticker_of(app.market, sym);
 
-    // ---- 第一行：名称 + 星标 ----
-    // 行高严格锁定在 m.l1：星标不用 Button（Button 的内边距会把行撑高 6pt
-    // 而与下一行重叠），改为先生格里 painter 手绘 + allocate_exact_size
-    // 的点击热区，高度精确、悬停态完全自控
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        // 行首内边距：选中行的 3px accent 条压在槽位最左，内容须让开
-        ui.add_space(6.0);
-        let name_txt = {
-            let t = egui::RichText::new(sym)
-                .size(theme::FONT_MD)
-                .color(if selected {
+    // ---- 第一行：星标 + 名称 ----
+    // 星标热区固定宽高（STAR_W × m.l1），字形居中手绘：宽度不随
+    // ★/☆ 字形回落变化，所有行的星标严格同一 X、同一 Y
+    let star_clicked = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            // 行首内边距：选中行的 3px accent 条压在卡片最左，内容须让开
+            ui.add_space(6.0);
+            let (star_rect, star_resp) = ui
+                .allocate_exact_size(egui::vec2(STAR_W, m.l1), egui::Sense::click());
+            if star_resp.hovered() {
+                ui.painter().rect_filled(
+                    star_rect.shrink(2.0),
+                    3.0,
+                    theme::cur().row_hover.gamma_multiply(0.6),
+                );
+            }
+            ui.painter().text(
+                star_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                if is_fav { "★" } else { "☆" },
+                egui::FontId::proportional(theme::FONT_MD),
+                if is_fav {
                     theme::cur().accent
                 } else {
-                    theme::cur().text
-                });
-            if selected {
-                t.strong()
-            } else {
-                t
-            }
-        };
-        let name_w = (ui.available_width() - STAR_W - 4.0).max(0.0);
-        // Label 而非 Button：Button 会把文本在定宽槽内居中，观察列表名称应左对齐；
-        // Label::truncate 按槽宽截断，sense(click) 保留点击切换交易对
-        let name_clicked = ui
-            .allocate_ui(egui::vec2(name_w, m.l1), |ui| {
-                ui.add(
-                    egui::Label::new(name_txt)
-                        .truncate()
-                        .sense(egui::Sense::click()),
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-            })
-            .inner;
-        if name_clicked {
-            *switched = Some(sym.to_string());
-        }
-        // 星标热区固定宽高（STAR_W × m.l1），字形居中手绘：宽度不随
-        // ★/☆ 字形回落变化，所有行的星标严格同一 X、同一 Y
-        let (star_rect, star_resp) = ui
-            .allocate_exact_size(egui::vec2(STAR_W, m.l1), egui::Sense::click());
-        if star_resp.hovered() {
-            ui.painter().rect_filled(
-                star_rect.shrink(2.0),
-                3.0,
-                theme::cur().row_hover.gamma_multiply(0.6),
+                    theme::cur().text_dim
+                },
             );
-        }
-        ui.painter().text(
-            star_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            if is_fav { "★" } else { "☆" },
-            egui::FontId::proportional(theme::FONT_MD),
-            if is_fav {
-                theme::cur().accent
-            } else {
-                theme::cur().text_dim
-            },
-        );
-        let star_resp = star_resp
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(if is_fav {
-                crate::i18n::tr("取消自选")
-            } else {
-                crate::i18n::tr("加入自选")
-            });
-        if star_resp.clicked() {
-            *toggled = Some(sym.to_string());
-        }
-    });
+            let star_resp = star_resp
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(if is_fav {
+                    crate::i18n::tr("取消自选")
+                } else {
+                    crate::i18n::tr("加入自选")
+                });
+            star_resp.clicked()
+        })
+        .inner;
 
     // ---- 第二行：实时价格 + 24h 涨跌幅 ----
     if let Some(t) = tick {
         let chg = widgets::f64_decimal(&t.chg_pct());
+        // 价格与涨跌幅同色：涨跌方向在一行内一眼可辨（白价格 + 彩涨跌时
+        // 视线要在两段颜色间往返对照）
         let c = theme::signed_color(chg);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add_space(6.0);
+            // 与第一行名称文字左对齐（星标槽之后）
+            ui.add_space(NAME_X);
+            // 不附千分位分组：侧栏紧凑场景需要纯粹的价格数字，逗号既占
+            // 宽度又打断纵向扫读（68,432.15 → 68432.15）
             ui.label(
-                egui::RichText::new(widgets::fmt_dec_grouped(&t.close))
+                egui::RichText::new(widgets::fmt_dec_plain(&t.close, act.dp))
                     .monospace()
                     .size(theme::FONT_SM)
-                    .color(theme::cur().text),
+                    .color(c),
             );
-            // RTL 首个控件自然贴行右缘（与第一行星标同列）
+            // RTL 首个控件自然贴卡片右缘
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     egui::RichText::new(format!("{chg:+.2}%"))
@@ -374,7 +403,7 @@ fn symbol_row(
     } else {
         // 无行情时占住第二行槽位，避免有/无数据的行高不一致造成列表跳动
         ui.horizontal(|ui| {
-            ui.add_space(6.0);
+            ui.add_space(NAME_X);
             ui.label(
                 egui::RichText::new("—")
                     .monospace()
@@ -382,5 +411,13 @@ fn symbol_row(
                     .color(theme::cur().text_dim),
             );
         });
+    }
+
+    // 点击分发：星标区域命中时只加/取自选，卡片其余区域才切换交易对
+    // （星标热区注册更晚、层级在卡片之上，两处 clicked 互斥兜底）
+    if star_clicked {
+        *act.toggled = Some(sym.to_string());
+    } else if card_resp.clicked() {
+        *act.switched = Some(sym.to_string());
     }
 }

@@ -1486,10 +1486,13 @@ impl MarketWsSlot {
     ) -> (Vec<String>, String) {
         match (self, fut) {
             // 现货：legacy 组合流承载全部
+            // 现货：legacy 组合流承载全部。深度订阅 50 档（而非 20）：
+            // 开启聚合档位（10×~1000× tick）时 20 档原始数据会合并成寥寥几桶、
+            // 面板大片留白；50 档才有足够的桶密度
             (MarketWsSlot::A, false) => {
                 let s = vec![
                     format!("{lower}@ticker"),
-                    format!("{lower}@depth20@100ms"),
+                    format!("{lower}@depth50@100ms"),
                     format!("{lower}@aggTrade"),
                     format!("{lower}@kline_{interval}"),
                     "!miniTicker@arr".to_string(),
@@ -1497,9 +1500,9 @@ impl MarketWsSlot {
                 let url = format!("{base}/stream?streams={}", s.join("/"));
                 (s, url)
             }
-            // 期货 public 类：部分深度（bookTicker 未用，不订阅）
+            // 期货 public 类：部分深度（bookTicker 未用，不订阅）。同现货取 50 档
             (MarketWsSlot::A, true) => {
-                let s = vec![format!("{lower}@depth20@100ms")];
+                let s = vec![format!("{lower}@depth50@100ms")];
                 let url = format!("{base}/public/stream?streams={}", s.join("/"));
                 (s, url)
             }
@@ -1530,7 +1533,14 @@ struct WsPairState {
 }
 
 impl WsPairState {
-    fn set(&mut self, slot: usize, s: ConnState) -> ConnState {
+    fn set(&mut self, slot: usize, market: Market, s: ConnState) -> ConnState {
+        // 现货只走槽位 A：一旦为现货写入状态，立即清掉槽位 B 残留的上一次
+        // 合约会话状态。否则切换回现货时，B 槽位的陈旧 Disconnected/Failed
+        // 会参与合并（seen=2），把「槽位 A 已连接」的现货判成未连接——
+        // 数据正常流入但状态栏恒显示未连接，正是由此而来
+        if market == Market::Spot {
+            self.st[MarketWsSlot::B.idx()] = None;
+        }
         self.st[slot] = Some(s);
         // None = 该槽位对当前市场不适用（现货 B 槽），不参与合并；
         // 失败优先展示，其次连接中，全部已连接才算已连接
@@ -1561,6 +1571,11 @@ impl WsPairState {
         }
         ConnState::Disconnected
     }
+
+    /// 清空槽位状态（现货下槽位 B 空转前自我清场，避免陈旧状态泄漏）
+    fn clear(&mut self, slot: usize) {
+        self.st[slot] = None;
+    }
 }
 
 async fn market_ws_loop(
@@ -1584,8 +1599,11 @@ async fn market_ws_loop(
                 }
             }
         };
-        // 现货只需槽位 A 一条连接；B 槽静候下一次订阅变化
+        // 现货只需槽位 A 一条连接；B 槽静候下一次订阅变化。
+        // 等待前先清掉自己的陈旧状态：上一次合约会话的 Disconnected/Failed
+        // 若留着，下一次槽位 A 为现货写状态时仍会被合并进来
         if slot == MarketWsSlot::B && spec.market != Market::UmFutures {
+            pair.lock().clear(slot.idx());
             if rx_sub.changed().await.is_err() {
                 return;
             }
@@ -1597,7 +1615,7 @@ async fn market_ws_loop(
         let fut = spec.market == Market::UmFutures;
         let (_, url) = slot.streams_and_url(&ep.ws, &lower, spec.interval.as_str(), fut);
 
-        let st = pair.lock().set(slot.idx(), ConnState::Connecting);
+        let st = pair.lock().set(slot.idx(), spec.market, ConnState::Connecting);
         state.set_market_ws(spec.market, st.clone());
         state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
         repaint(&ctx);
@@ -1606,7 +1624,7 @@ async fn market_ws_loop(
             Err(e) => {
                 tracing::warn!("行情WS连接失败({}): {e}", spec.market);
                 let msg = short_err(&e);
-                let st = pair.lock().set(slot.idx(), ConnState::Failed(msg.clone()));
+                let st = pair.lock().set(slot.idx(), spec.market, ConnState::Failed(msg.clone()));
                 state.set_market_ws(spec.market, st.clone());
                 state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
                 repaint(&ctx);
@@ -1616,7 +1634,7 @@ async fn market_ws_loop(
             Ok(ws) => {
                 tracing::info!("行情WS已连接: {}", spec.market);
                 let connected_at = std::time::Instant::now();
-                let st = pair.lock().set(slot.idx(), ConnState::Connected);
+                let st = pair.lock().set(slot.idx(), spec.market, ConnState::Connected);
                 state.set_market_ws(spec.market, st.clone());
                 state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
                 repaint(&ctx);
@@ -1644,7 +1662,7 @@ async fn market_ws_loop(
                                     read_fail = Some(msg.clone());
                                     let st = pair
                                         .lock()
-                                        .set(slot.idx(), ConnState::Failed(msg.clone()));
+                                        .set(slot.idx(), spec.market, ConnState::Failed(msg.clone()));
                                     state.with_symbol_md(spec.market, &spec.symbol, |md| {
                                         md.ws = st
                                     });
@@ -1665,7 +1683,7 @@ async fn market_ws_loop(
                                     };
                                     if let Some(txt) = txt {
                                         handle_market_msg_text(&state, &spec, &txt);
-                                        // 行情帧可达每秒数百条（depth20@100ms +
+                                        // 行情帧可达每秒数百条（depth50@100ms +
                                         // aggTrade），逐帧立即重绘会让 UI 在无输入
                                         // 时也持续满帧率空转；合帧到 ~10fps，
                                         // 状态变迁/用户输入仍走立即重绘
@@ -1693,10 +1711,10 @@ async fn market_ws_loop(
                     });
                 }
                 if let Some(msg) = read_fail {
-                    let st = pair.lock().set(slot.idx(), ConnState::Failed(msg));
+                    let st = pair.lock().set(slot.idx(), spec.market, ConnState::Failed(msg));
                     state.set_market_ws(spec.market, st);
                 } else {
-                    let st = pair.lock().set(slot.idx(), ConnState::Disconnected);
+                    let st = pair.lock().set(slot.idx(), spec.market, ConnState::Disconnected);
                     state.with_symbol_md(spec.market, &spec.symbol, |md| md.ws = st);
                 }
                 // 连接未稳定（<2min）即断开 → 指数退避，防止对端抖动时重连风暴；
@@ -1710,7 +1728,7 @@ async fn market_ws_loop(
             }
         }
         if !matches!(state.md.lock().market_ws(spec.market), ConnState::Failed(_)) {
-            let st = pair.lock().set(slot.idx(), ConnState::Disconnected);
+            let st = pair.lock().set(slot.idx(), spec.market, ConnState::Disconnected);
             state.set_market_ws(spec.market, st);
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1841,7 +1859,9 @@ fn handle_market_msg_text(state: &SharedState, spec: &SubSpec, text: &str) {
         if let Ok(list) = serde_json::from_str::<Vec<MiniTicker>>(data) {
             state.apply_mini_tickers(spec.market, list);
         }
-    } else if stream.contains("@depth20") {
+    } else if stream.contains("@depth") {
+        // 部分深度流（@depth50@100ms）。用 contains("@depth") 而非精确
+        // 档数串，后续调整订阅档数不必改这里
         if let Ok(d) = serde_json::from_str::<Depth>(data) {
             state.with_symbol_md(spec.market, &spec.symbol, |md| md.depth = d);
         }

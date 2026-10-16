@@ -484,6 +484,8 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "附加止盈" => "Attach TP",
         "附加止损" => "Attach SL",
         "附加止盈/止损（触发后市价全平）" => "Attach TP/SL (market-close all on trigger)",
+        "仓位止盈止损" => "Position TP/SL",
+        "该止盈止损针对整个仓位（无论加仓或者减仓）。平仓后该止盈止损将被自动取消。当价格到达设定的触发价格时，将执行市价平仓委托。如果仓位数量超过市价委托单笔最大数量限制，委托将被拒绝。" => "This TP/SL applies to the whole position (regardless of later adds or reduces). It is cancelled automatically once the position closes. When price reaches the trigger, a market-close order is placed; if the position size exceeds the max quantity for a single market order, the order will be rejected.",
         "下单同时挂出触发即全平的止盈/止损单" => {
             "Also place trigger-to-close TP/SL orders with this order"
         }
@@ -572,6 +574,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "百分比" => "percent",
         "%（0.1-10）" => "% (0.1-10)",
         "反手" => "Reverse",
+        "反手交易" => "Reverse",
         "市价平仓并反向开同等数量（有确认弹窗）" => {
             "Market-close and reopen the same size on the opposite side (with confirm dialog)"
         }
