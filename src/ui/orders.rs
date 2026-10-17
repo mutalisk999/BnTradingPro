@@ -1,14 +1,33 @@
 //! 订单与持仓：当前挂单（撤销）、合约持仓（平仓/杠杆）、订单历史、成交历史
 
 use crate::app::BnApp;
-use crate::binance::model::PositionRisk;
-use crate::binance::{FutPosSide, Side};
+use crate::binance::model::{OrderInfo, PositionRisk};
+use crate::binance::{FutPosSide, Market, Side};
 use crate::engine::Command;
 use crate::ui::{theme, widgets};
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use rust_decimal::Decimal;
 use std::sync::Arc;
+
+/// 订单历史筛选：基础单来自 allOrders，条件单来自 allAlgoOrders
+/// （两类合并同表展示，默认全选）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistKind {
+    All,
+    Basic,
+    Conditional,
+}
+
+impl HistKind {
+    fn label(&self) -> &'static str {
+        match self {
+            HistKind::All => crate::i18n::tr("全部"),
+            HistKind::Basic => crate::i18n::tr("基础单"),
+            HistKind::Conditional => crate::i18n::tr("条件单"),
+        }
+    }
+}
 
 pub fn status_cn(s: &str) -> &'static str {
     let zh = match s {
@@ -21,6 +40,10 @@ pub fn status_cn(s: &str) -> &'static str {
         "EXPIRED" => "已过期",
         "EXPIRED_IN_MATCH" => "匹配过期",
         "NEW_ADL" => "ADL",
+        // 条件单（Algo）状态：触发后转出的普通单有自己的状态流，
+        // 这里记录条件单自身的生命周期
+        "TRIGGERED" => "已触发",
+        "CANCELLED" => "已撤销",
         _ => "其他",
     };
     crate::i18n::tr(zh)
@@ -1057,6 +1080,13 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
     };
     let qtd =
         |sym: &str| state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4));
+    // 筛选视图：is_conditional 由引擎在合并 allAlgoOrders 条件单历史时
+    // 置位（基础单来源 allOrders 恒为 false）
+    let view: Vec<&OrderInfo> = match app.hist_kind {
+        HistKind::All => hist.iter().collect(),
+        HistKind::Basic => hist.iter().filter(|o| !o.is_conditional).collect(),
+        HistKind::Conditional => hist.iter().filter(|o| o.is_conditional).collect(),
+    };
     theme::form_row(ui, |ui| {
         match &key {
             Some((m, s)) => ui.label(
@@ -1064,7 +1094,13 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     "{} {} · {}",
                     m.label(),
                     s,
-                    crate::i18n::tr("最近 100 笔")
+                    // 合约历史按 30 天窗口分段拉取（默认窗口太窄），
+                    // 现货仍是单次 limit=100
+                    if *m == Market::UmFutures {
+                        crate::i18n::tr("最近 30 天")
+                    } else {
+                        crate::i18n::tr("最近 100 笔")
+                    }
                 ))
                 .size(theme::FONT_MD),
             ),
@@ -1074,20 +1110,32 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                     .color(theme::cur().text_dim),
             ),
         };
+        // 基础单/条件单分段筛选：pill_tab 与两侧按钮同为 BTN_H，
+        // form_row 垂直居中放置，整行同高对齐
+        for k in [HistKind::All, HistKind::Basic, HistKind::Conditional] {
+            if theme::pill_tab(ui, k.label(), app.hist_kind == k).clicked() {
+                app.hist_kind = k;
+            }
+        }
         // 不再要求 key 已存在：key 为空（首次进入/上次拉取失败）时用
         // 当前页市场+交易对兜底，避免"按钮灰死"导致永远无法手动重试
         if theme::btn_default(ui, crate::i18n::tr("刷新"), true).clicked() {
-            let (m, s) = key
-                .clone()
-                .unwrap_or((app.market, app.page.symbol.clone()));
-            state.send_cmd(Command::RefreshHistory { market: m, symbol: s });
+            let (m, s) = key.clone().unwrap_or((app.market, app.page.symbol.clone()));
+            state.send_cmd(Command::RefreshHistory {
+                market: m,
+                symbol: s,
+            });
         }
-        // 导出当前展示的订单历史（最多 100 笔）
-        if theme::btn_default(ui, crate::i18n::tr("导出 CSV"), !hist.is_empty())
-            .on_disabled_hover_text(crate::i18n::tr("暂无订单历史"))
+        // 导出当前筛选下展示的订单历史
+        if theme::btn_default(ui, crate::i18n::tr("导出 CSV"), !view.is_empty())
+            .on_disabled_hover_text(if hist.is_empty() {
+                crate::i18n::tr("暂无订单历史")
+            } else {
+                crate::i18n::tr("当前筛选无订单")
+            })
             .clicked()
         {
-            let rows = hist
+            let rows = view
                 .iter()
                 .map(|o| {
                     vec![
@@ -1132,6 +1180,16 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
         );
         return;
     }
+    if view.is_empty() {
+        // 有历史但被筛选全部过滤（如只看基础单而该交易对只有条件单）
+        widgets::empty_state(
+            ui,
+            "◎",
+            crate::i18n::tr("当前筛选无订单"),
+            crate::i18n::tr("切换筛选查看其它订单"),
+        );
+        return;
+    }
     hscroll_table(ui, "orders_history", 494.0, |ui| {
         TableBuilder::new(ui)
             .striped(true)
@@ -1162,7 +1220,7 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 }
             })
             .body(|mut body| {
-                for o in hist.iter() {
+                for o in view.iter() {
                     body.row(22.0, |mut row| {
                         row.col(|ui| {
                             widgets::num_cell(ui, widgets::fmt_time(o.time), None);
@@ -1278,7 +1336,10 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
             let (m, s) = hist_key
                 .clone()
                 .unwrap_or((app.market, app.page.symbol.clone()));
-            state.send_cmd(Command::RefreshHistory { market: m, symbol: s });
+            state.send_cmd(Command::RefreshHistory {
+                market: m,
+                symbol: s,
+            });
         }
         // 导出当前展示的成交明细
         if theme::btn_default(ui, crate::i18n::tr("导出 CSV"), !trades.is_empty())
@@ -1519,16 +1580,9 @@ pub fn show_flow(app: &mut BnApp, ui: &mut egui::Ui) {
             .column(Column::auto().clip(true).at_least(96.0))
             .column(Column::remainder().clip(true).at_least(72.0))
             .header(22.0, |mut h| {
-                for (i, t) in [
-                    "时间",
-                    "类型",
-                    "交易对",
-                    "资产",
-                    "金额",
-                    "备注",
-                ]
-                .into_iter()
-                .enumerate()
+                for (i, t) in ["时间", "类型", "交易对", "资产", "金额", "备注"]
+                    .into_iter()
+                    .enumerate()
                 {
                     h.col(|ui| head_cell(ui, crate::i18n::tr(t), i == 4));
                 }
@@ -1541,8 +1595,7 @@ pub fn show_flow(app: &mut BnApp, ui: &mut egui::Ui) {
                         });
                         row.col(|ui| {
                             ui.label(
-                                egui::RichText::new(crate::i18n::tr(f.kind))
-                                    .size(theme::FONT_MD),
+                                egui::RichText::new(crate::i18n::tr(f.kind)).size(theme::FONT_MD),
                             );
                         });
                         row.col(|ui| {

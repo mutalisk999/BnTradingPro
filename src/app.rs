@@ -269,6 +269,9 @@ pub struct BnApp {
     /// 资金流水页签进入时已自动拉取过当前市场（防每帧重复下发；
     /// 切市场时重置，重新触发一次）
     pub flow_auto_done: bool,
+    /// 订单历史筛选：全部 / 仅基础单 / 仅条件单（引擎合并了 Algo 条件单
+    /// 历史，默认两类都展示）
+    pub hist_kind: crate::ui::orders::HistKind,
     /// 缩放防抖：上一帧窗口物理尺寸（zoom 切换不改变物理尺寸，仅 resize 改变）
     ppp_last_phys: Option<(f32, f32)>,
     /// 缩放防抖：物理尺寸自该时刻起未变（egui time 域，秒）
@@ -279,6 +282,12 @@ impl BnApp {
     pub fn new(cc: &eframe::CreationContext, cfg: AppConfig) -> Self {
         theme::apply_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
+        // 启动预置缩放（详见 theme::auto_ppp_initial 注释）：在首帧绘制前落位
+        // 目标 ppi，否则窗口先以偏大的原生 DPI 渲染再骤缩
+        if let Some(p) = theme::auto_ppp_initial(&cc.egui_ctx) {
+            tracing::info!("启动预置 ppi: {p}");
+            cc.egui_ctx.set_pixels_per_point(p);
+        }
 
         let dir = config::data_dir();
         let state = Arc::new(SharedState::default());
@@ -347,6 +356,7 @@ impl BnApp {
             book_anim: Default::default(),
             book_tab: crate::ui::market::BookTab::Book,
             flow_auto_done: false,
+            hist_kind: crate::ui::orders::HistKind::All,
             ppp_last_phys: None,
             ppp_stable_since: None,
         }
@@ -1151,8 +1161,9 @@ impl BnApp {
         if self.page.sub_tab == SubTab::Flow && !self.flow_auto_done {
             self.flow_auto_done = true;
             if self.state.has_creds() {
-                self.state
-                    .send_cmd(Command::RefreshFlow { market: self.market });
+                self.state.send_cmd(Command::RefreshFlow {
+                    market: self.market,
+                });
             }
         }
         egui::ScrollArea::vertical()

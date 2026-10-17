@@ -430,11 +430,6 @@ impl BinanceRest {
                 self.api_secret.as_ref().unwrap().as_str(),
             );
             let url = format!("{}{}?{}", ep.rest, path, qs);
-            // 诊断：历史类端点空响应问题定位——打印去签名后的完整请求 URL
-            if path.contains("allOrders") || path.contains("userTrades") {
-                let qs_nosig = qs.split("&signature=").next().unwrap_or(&qs);
-                tracing::info!("诊断请求: {}{}?{}", ep.rest, path, qs_nosig);
-            }
             let key = self.api_key.as_ref().unwrap();
             let resp = self
                 .http

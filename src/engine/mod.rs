@@ -12,12 +12,14 @@ use crate::binance::client::{
 use crate::binance::model::*;
 use crate::binance::symbols::{parse_exchange_info, quantize_price, quantize_qty, RuleBook};
 use crate::binance::{endpoints, Interval, Market, Side};
-use futures_util::{SinkExt, StreamExt};
+use crate::config::AppConfig;
+use futures_util::{future::join_all, SinkExt, StreamExt};
 use rust_decimal::Decimal;
 use state::{ConnState, SharedState, ToastKind};
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, watch};
 
 #[derive(Debug, Clone)]
@@ -385,6 +387,12 @@ struct CmdCtx {
     current_sub: Option<SubSpec>,
     /// 上次账户刷新时间（RefreshAccount 节流用）
     last_acct_refresh: Option<Instant>,
+    /// 上次订单历史刷新时间（按 市场+交易对 节流）：历史 REST 每份数秒且
+    /// 串行执行，手动按钮被连续点击时积压命令会逐条以每秒一条的速率
+    /// 执行（实测日志），3s 内同键重复直接丢弃，切换交易对不受影响
+    history_debounce: HashMap<(Market, String), Instant>,
+    /// 上次资金流水刷新时间（RefreshFlow 节流，按市场）
+    flow_debounce: HashMap<Market, Instant>,
 }
 
 async fn cmd_loop(
@@ -400,6 +408,8 @@ async fn cmd_loop(
         built_for: (0, 0),
         current_sub: None,
         last_acct_refresh: None,
+        history_debounce: HashMap::new(),
+        flow_debounce: HashMap::new(),
     };
     while let Some(cmd) = rx.recv().await {
         ensure_client(&mut c).await;
@@ -415,6 +425,10 @@ async fn cmd_loop(
         }
         let mut acct_seen = false;
         let mut orders_seen = [false; 2];
+        // 历史按 (市场, 交易对) 合并、流水按市场合并：串行 REST 命令积压时
+        // 同键重复只保留最后一条（与 RefreshAccount 同理）
+        let mut hist_seen: Vec<(Market, String)> = Vec::new();
+        let mut flow_seen = [false; 2];
         batch.retain(|cmd| match cmd {
             Command::RefreshAccount => {
                 if acct_seen {
@@ -430,6 +444,24 @@ async fn cmd_loop(
                     false
                 } else {
                     orders_seen[i] = true;
+                    true
+                }
+            }
+            Command::RefreshHistory { market, symbol } => {
+                let k = (*market, symbol.clone());
+                if hist_seen.contains(&k) {
+                    false
+                } else {
+                    hist_seen.push(k);
+                    true
+                }
+            }
+            Command::RefreshFlow { market } => {
+                let i = *market as usize;
+                if flow_seen[i] {
+                    false
+                } else {
+                    flow_seen[i] = true;
                     true
                 }
             }
@@ -988,6 +1020,16 @@ async fn handle_cmd(
             }
         }
         Command::RefreshHistory { market, symbol } => {
+            // 节流（3s 键 = 市场+交易对）：历史 REST 串行且每份数秒，手动按钮
+            // 被连续点击时积压命令会逐条以每秒一条的速率执行（实测日志）。
+            // 同交易对 3s 内重复直接丢弃；切换交易对换键不受影响
+            let hkey = (market, symbol.clone());
+            if let Some(t) = c.history_debounce.get(&hkey) {
+                if t.elapsed() < Duration::from_secs(3) {
+                    return;
+                }
+            }
+            c.history_debounce.insert(hkey, Instant::now());
             if !state.has_creds() {
                 return;
             }
@@ -1000,34 +1042,83 @@ async fn handle_cmd(
             let orders_path = format!("{}/allOrders", market.api_prefix());
             let trades_path = match market {
                 Market::Spot => "/api/v3/myTrades".to_string(),
-                Market::UmFutures => "/fapi/v1/userTrades".to_string(),
+                Market::UmFutures => format!("{}/userTrades", market.api_prefix()),
             };
-            let po = client
-                .signed(
-                    reqwest::Method::GET,
-                    rc,
-                    &cfg,
-                    &orders_path,
-                    vec![
-                        ("symbol".into(), symbol.clone()),
-                        ("limit".into(), "100".into()),
-                    ],
-                )
-                .await;
-            let pt = client
-                .signed(
-                    reqwest::Method::GET,
-                    rc,
-                    &cfg,
-                    &trades_path,
-                    vec![
-                        ("symbol".into(), symbol.clone()),
-                        ("limit".into(), "100".into()),
-                    ],
-                )
-                .await;
+            // 现货维持单次全量（limit=100，现状可用）；合约历史端点不传
+            // startTime 时默认窗口很窄（实测 8 天前的订单已查不到），改按
+            // 7 天分段回填 30 天并发拉取（见 history_segments）
+            let po = match market {
+                Market::Spot => client
+                    .signed(
+                        reqwest::Method::GET,
+                        rc,
+                        &cfg,
+                        &orders_path,
+                        vec![
+                            ("symbol".into(), symbol.clone()),
+                            ("limit".into(), "100".into()),
+                        ],
+                    )
+                    .await
+                    .map(|v| vec![v]),
+                Market::UmFutures => {
+                    fetch_history_segments(client, rc, &cfg, &orders_path, &symbol, now_ms(), true)
+                        .await
+                }
+            };
+            let pt = match market {
+                Market::Spot => client
+                    .signed(
+                        reqwest::Method::GET,
+                        rc,
+                        &cfg,
+                        &trades_path,
+                        vec![
+                            ("symbol".into(), symbol.clone()),
+                            ("limit".into(), "100".into()),
+                        ],
+                    )
+                    .await
+                    .map(|v| vec![v]),
+                Market::UmFutures => {
+                    fetch_history_segments(client, rc, &cfg, &trades_path, &symbol, now_ms(), true)
+                        .await
+                }
+            };
+            // 条件单历史（/fapi/v1/allAlgoOrders，与 openAlgoOrders 同族）：
+            // 参数集无官方文档可核对（文档站反爬无法抓取），先按 allOrders
+            // 同款参数请求；交易所若拒绝参数（-1102/-1104）则退化为仅
+            // symbol+limit 重试一遍，自愈式兼容
+            let pa = if market == Market::UmFutures {
+                let algo_path = format!("{}/allAlgoOrders", market.api_prefix());
+                let mut r =
+                    fetch_history_segments(client, rc, &cfg, &algo_path, &symbol, now_ms(), true)
+                        .await;
+                if matches!(
+                    &r,
+                    Err(BinanceError::Api {
+                        code: -1102 | -1104,
+                        ..
+                    })
+                ) {
+                    r = fetch_history_segments(
+                        client,
+                        rc,
+                        &cfg,
+                        &algo_path,
+                        &symbol,
+                        now_ms(),
+                        false,
+                    )
+                    .await;
+                }
+                Some(r)
+            } else {
+                None
+            };
             {
                 let (po_ok, pt_ok) = (po.is_ok(), pt.is_ok());
+                let pa_ok = pa.as_ref().map(|r| r.is_ok()).unwrap_or(false);
                 // 失败必须可见：静默吞掉时 UI 恒为空态，用户无法区分
                 // "没有历史"与"请求失败"（期货历史查不到即此形态）
                 if let Err(e) = &po {
@@ -1059,14 +1150,18 @@ async fn handle_cmd(
                     }
                 }
                 let mut o = state.orders.lock();
-                if let Ok(v) = po {
-                    // 诊断：空响应时打印原文（区分真空数组/包裹对象/镜像页）
-                    if v.as_array().map(|a| a.is_empty()).unwrap_or(false) {
-                        let raw = serde_json::to_string(&v).unwrap_or_default();
-                        tracing::warn!("订单历史空响应原文: {}", &raw[..raw.len().min(400)]);
-                    }
-                    match serde_json::from_value::<Vec<OrderInfo>>(v) {
+                if let Ok(vals) = po {
+                    match flatten_history::<OrderInfo>(vals) {
                         Ok(mut list) => {
+                            // 合并条件单历史：自 2025-12 条件单迁至 Algo 体系
+                            // 后不会出现在 allOrders 里，不合并则持仓止盈止损
+                            // 单在订单历史中永远查不到
+                            if let Some(Ok(avals)) = pa {
+                                match flatten_history::<AlgoOrderInfo>(avals) {
+                                    Ok(algos) => list.extend(algos.iter().map(algo_to_order_info)),
+                                    Err(e) => tracing::warn!("解析条件单历史失败: {e}"),
+                                }
+                            }
                             list.sort_by_key(|x| std::cmp::Reverse(x.time));
                             tracing::info!("订单历史 {market} {symbol}: {} 条", list.len());
                             // 整体替换 Arc：UI 侧持有旧 Arc 的帧不受影响，
@@ -1076,8 +1171,8 @@ async fn handle_cmd(
                         Err(e) => tracing::warn!("解析订单历史失败: {e}"),
                     }
                 }
-                if let Ok(v) = pt {
-                    match serde_json::from_value::<Vec<MyTrade>>(v) {
+                if let Ok(vals) = pt {
+                    match flatten_history::<MyTrade>(vals) {
                         Ok(mut list) => {
                             list.sort_by_key(|x| std::cmp::Reverse(x.time));
                             tracing::info!("成交历史 {market} {symbol}: {} 条", list.len());
@@ -1086,8 +1181,8 @@ async fn handle_cmd(
                         Err(e) => tracing::warn!("解析成交历史失败: {e}"),
                     }
                 }
-                o.history_symbol = if po_ok || pt_ok {
-                    // 至少一个请求成功才更新归属标记：双双失败时保留旧数据 +
+                o.history_symbol = if po_ok || pt_ok || pa_ok {
+                    // 至少一个请求成功才更新归属标记：全部失败时保留旧数据 +
                     // 旧标记，避免表头显示新交易对而内容仍是旧交易对
                     Some((market, symbol))
                 } else {
@@ -1097,6 +1192,15 @@ async fn handle_cmd(
             repaint(ctx);
         }
         Command::RefreshFlow { market } => {
+            // 节流（3s 键 = 市场）：与 RefreshHistory 同因——手动按钮可被
+            // 连续点击，串行 REST 期间积压命令逐条执行。按市场防抖，
+            // 切换市场换键不受影响
+            if let Some(t) = c.flow_debounce.get(&market) {
+                if t.elapsed() < Duration::from_secs(3) {
+                    return;
+                }
+            }
+            c.flow_debounce.insert(market, Instant::now());
             if !state.has_creds() {
                 return;
             }
@@ -1114,13 +1218,7 @@ async fn handle_cmd(
                 Market::UmFutures => {
                     // income 不带 symbol：返回全部交易对 + 划转/资金费等全局条目
                     match client
-                        .signed(
-                            reqwest::Method::GET,
-                            rc,
-                            &cfg,
-                            "/fapi/v1/income",
-                            limit,
-                        )
+                        .signed(reqwest::Method::GET, rc, &cfg, "/fapi/v1/income", limit)
                         .await
                     {
                         Ok(v) => match serde_json::from_value::<Vec<FutIncome>>(v) {
@@ -1172,7 +1270,11 @@ async fn handle_cmd(
                                     note: format!(
                                         "{}{} · {}",
                                         crate::i18n::tr("网络 "),
-                                        if d.network.is_empty() { "—" } else { &d.network },
+                                        if d.network.is_empty() {
+                                            "—"
+                                        } else {
+                                            &d.network
+                                        },
                                         deposit_status(d.status)
                                     ),
                                 }));
@@ -1198,7 +1300,11 @@ async fn handle_cmd(
                                     let mut note = format!(
                                         "{}{} · {}",
                                         crate::i18n::tr("网络 "),
-                                        if w.network.is_empty() { "—" } else { &w.network },
+                                        if w.network.is_empty() {
+                                            "—"
+                                        } else {
+                                            &w.network
+                                        },
                                         withdraw_status(w.status)
                                     );
                                     if !w.transaction_fee.is_zero() {
@@ -1768,6 +1874,135 @@ async fn place_oco(
 
 /// 撤销挂单（symbol=None 撤销该市场全部；busy 置位/释放由本函数负责，
 /// 命令循环可并发派发）
+/// 历史查询覆盖的天数（期货）：allOrders/userTrades 不传 startTime 时
+/// 默认窗口很窄（实测 8 天前的订单已查不到），故回填一段历史
+const HISTORY_DAYS_BACK: u32 = 30;
+
+/// 本地毫秒时间戳（历史窗口边界用，±几百 ms 偏差对 30 天窗口无意义）
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 把 [now-days_back, now] 切成若干 ≤7 天的区间（新→旧）。分段同时规避
+/// 两件事：默认窗口太窄查不到旧数据，且各端点单次时间跨度上限不一致
+fn history_segments(now_ms: i64, days_back: u32) -> Vec<(i64, i64)> {
+    const DAY_MS: i64 = 86_400_000;
+    const CHUNK_DAYS: i64 = 7;
+    let floor = now_ms - days_back as i64 * DAY_MS;
+    let mut segs = Vec::new();
+    let mut end = now_ms;
+    while end > floor {
+        let start = (end - CHUNK_DAYS * DAY_MS).max(floor);
+        segs.push((start, end));
+        end = start;
+    }
+    segs
+}
+
+/// 分段并发拉取历史端点：各段独立成败，部分失败时返回已成功的响应、
+/// 全部失败才返回错误（首段错误优先）。段间无重叠故结果不去重
+async fn fetch_history_segments(
+    client: &BinanceRest,
+    rc: RestCtx,
+    cfg: &AppConfig,
+    path: &str,
+    symbol: &str,
+    now_ms: i64,
+    with_time: bool,
+) -> Result<Vec<serde_json::Value>, BinanceError> {
+    let futs: Vec<_> = history_segments(now_ms, HISTORY_DAYS_BACK)
+        .into_iter()
+        .map(|(start, end)| {
+            let mut params = vec![
+                ("symbol".into(), symbol.to_string()),
+                ("limit".into(), "1000".into()),
+            ];
+            if with_time {
+                params.push(("startTime".into(), start.to_string()));
+                params.push(("endTime".into(), end.to_string()));
+            }
+            let cfg = cfg.clone();
+            async move {
+                client
+                    .signed(reqwest::Method::GET, rc, &cfg, path, params)
+                    .await
+            }
+        })
+        .collect();
+    let results = join_all(futs).await;
+    let mut ok = Vec::new();
+    let mut first_err = None;
+    for r in results {
+        match r {
+            Ok(v) => ok.push(v),
+            Err(e) => {
+                tracing::warn!("历史分段请求失败({path}): {e}");
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+    }
+    if ok.is_empty() {
+        Err(first_err.unwrap_or_else(|| BinanceError::Decode("历史分段全部失败".into())))
+    } else {
+        Ok(ok)
+    }
+}
+
+/// 各段响应合并为列表：段为 JSON 数组直接拼接；个别端点把数组包在
+/// {orders:[...]} 里（SAPI 风格），解包后拼接。非数组段记录原文后跳过
+fn flatten_history<T: serde::de::DeserializeOwned>(
+    vals: Vec<serde_json::Value>,
+) -> Result<Vec<T>, serde_json::Error> {
+    let mut out = Vec::new();
+    for v in vals {
+        let arr = if v.is_array() {
+            v
+        } else {
+            match v.get("orders").filter(|x| x.is_array()) {
+                Some(a) => a.clone(),
+                None => {
+                    let raw = serde_json::to_string(&v).unwrap_or_default();
+                    tracing::warn!("历史响应非数组: {}", &raw[..raw.len().min(400)]);
+                    continue;
+                }
+            }
+        };
+        out.extend(serde_json::from_value::<Vec<T>>(arr)?);
+    }
+    Ok(out)
+}
+
+/// 条件单历史行 → 订单历史表行：algoId 入 orderId 列，触发价同时入
+/// 价格/触发价列；未触发条件单 actualQty 为 0，algoStatus 为空按 NEW 兜底
+fn algo_to_order_info(a: &AlgoOrderInfo) -> OrderInfo {
+    OrderInfo {
+        symbol: a.symbol.clone(),
+        order_id: a.algo_id,
+        client_order_id: a.client_algo_id.clone(),
+        price: a.trigger_price,
+        orig_qty: a.quantity,
+        executed_qty: a.actual_qty,
+        status: if a.algo_status.is_empty() {
+            "NEW".to_string()
+        } else {
+            a.algo_status.clone()
+        },
+        side: a.side.clone(),
+        order_type: a.order_type.clone(),
+        stop_price: a.trigger_price,
+        time: a.create_time,
+        update_time: a.update_time,
+        position_side: a.position_side.clone(),
+        reduce_only: a.reduce_only,
+        is_conditional: true,
+    }
+}
+
 async fn cancel_all_orders(
     client: &BinanceRest,
     state: &Arc<SharedState>,
@@ -2837,6 +3072,7 @@ fn handle_user_event(
                 update_time: r.event_time,
                 position_side: crate::binance::FutPosSide::Both.as_str().to_string(),
                 reduce_only: false,
+                is_conditional: false,
             };
             apply_order_update(state, market, o);
             if r.exec_type == "TRADE" && r.last_qty > Decimal::ZERO {
@@ -2896,6 +3132,7 @@ fn handle_user_event(
                 update_time: f.o.trade_time,
                 position_side: f.o.position_side.clone(),
                 reduce_only: f.o.reduce_only,
+                is_conditional: false,
             };
             apply_order_update(state, market, o);
             let filled_now = f.o.last_qty.map(|q| q > Decimal::ZERO).unwrap_or(false);
@@ -3154,5 +3391,83 @@ mod tests {
             &spec,
             r#"{"result":null,"id":7}"#
         ));
+    }
+
+    #[test]
+    fn history_segments_covers_window_in_7day_chunks() {
+        const DAY: i64 = 86_400_000;
+        let now = 1792175581000;
+        let segs = history_segments(now, 30);
+        // 30 天 = 5 段，段间首尾相接、无重叠，总覆盖 [now-30d, now]
+        assert_eq!(segs.len(), 5);
+        assert_eq!(segs[0].1, now);
+        assert_eq!(segs.last().unwrap().0, now - 30 * DAY);
+        for w in segs.windows(2) {
+            assert_eq!(w[0].0, w[1].1, "相邻段应首尾相接");
+        }
+        for (s, e) in &segs {
+            assert!(*e - *s <= 7 * DAY, "每段不超过 7 天");
+        }
+        // 回退到非整周：floor 截断最后一段
+        let segs = history_segments(now, 9);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[1].0, now - 9 * DAY);
+    }
+
+    #[test]
+    fn flatten_history_merges_arrays_and_orders_wrapper() {
+        // 数组段直接拼接
+        let vals = vec![
+            serde_json::json!([{"orderId": 1, "time": 2}]),
+            serde_json::json!([{"orderId": 3, "time": 1}]),
+        ];
+        let list: Vec<OrderInfo> = flatten_history(vals).unwrap();
+        assert_eq!(list.len(), 2);
+
+        // {orders: [...]} 包裹段解包
+        let vals = vec![serde_json::json!({"orders": [{"orderId": 7}]})];
+        let list: Vec<OrderInfo> = flatten_history(vals).unwrap();
+        assert_eq!(list[0].order_id, 7);
+
+        // 非数组且无 orders 键：跳过该段（不污染其它段、不整体失败）
+        let vals = vec![
+            serde_json::json!([{"orderId": 1}]),
+            serde_json::json!({"code": -1, "msg": "odd"}),
+        ];
+        let list: Vec<OrderInfo> = flatten_history(vals).unwrap();
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn algo_to_order_info_maps_columns() {
+        let a = AlgoOrderInfo {
+            algo_id: 4000001973360743,
+            symbol: "BTCUSDT".into(),
+            side: "SELL".into(),
+            order_type: "TAKE_PROFIT_MARKET".into(),
+            algo_status: "NEW".into(),
+            trigger_price: Some(Decimal::from(87200)),
+            actual_qty: Decimal::ZERO,
+            create_time: 1791449695293,
+            ..Default::default()
+        };
+        let o = algo_to_order_info(&a);
+        assert_eq!(o.order_id, a.algo_id);
+        assert_eq!(o.order_type, "TAKE_PROFIT_MARKET");
+        // 触发价同时落在价格列与触发价列
+        assert_eq!(o.price.map(|x| x.to_string()).as_deref(), Some("87200"));
+        assert_eq!(o.stop_price, o.price);
+        assert_eq!(o.time, a.create_time);
+        assert_eq!(o.status, "NEW");
+    }
+
+    #[test]
+    fn algo_to_order_info_empty_status_defaults_to_new() {
+        let a = AlgoOrderInfo {
+            algo_id: 1,
+            ..Default::default()
+        };
+        let o = algo_to_order_info(&a);
+        assert_eq!(o.status, "NEW");
     }
 }

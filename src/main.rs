@@ -67,7 +67,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("BnTradingPro")
             .with_icon(app_icon())
-            .with_inner_size([960.0, 600.0])
+            .with_inner_size([ui::theme::START_W, ui::theme::START_H])
             .with_min_inner_size([733.0, 453.0]),
         ..Default::default()
     };

@@ -53,6 +53,11 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "无匹配交易对" => "No matching symbols",
         "自选" => "Favorites",
         "全部" => "All",
+        // 订单历史筛选：基础单来自 allOrders，条件单来自 allAlgoOrders
+        "基础单" => "Regular",
+        "条件单" => "Conditional",
+        "当前筛选无订单" => "No orders match this filter",
+        "切换筛选查看其它订单" => "Try another filter to see other orders",
         // 预警条目的市场后缀（侧栏/预警弹窗共用）
         "· 合约" => " · Futures",
         "加入自选" => "Add to favorites",
@@ -166,6 +171,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "切换单向持仓" => "Switch to One-way",
         "切换双向持仓" => "Switch to Hedge",
         "待成交" => "New",
+        "已触发" => "Triggered",
         "部分成交" => "Partially Filled",
         "已撤销" => "Canceled",
         "撤销中" => "Canceling",
@@ -190,6 +196,7 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "未实现盈亏" => "Unrealized PnL",
         "强平价" => "Liq. Price",
         "最近 100 笔" => "Last 100 orders",
+        "最近 30 天" => "Last 30 days",
         "切换交易对后自动加载" => "Auto-loads after selecting a symbol",
         "暂无挂单" => "No open orders",
         "暂无持仓" => "No positions",

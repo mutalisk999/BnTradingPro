@@ -307,6 +307,10 @@ pub struct OrderInfo {
     pub position_side: String,
     #[serde(rename = "reduceOnly", default)]
     pub reduce_only: bool,
+    /// 是否为 Algo 条件单（由 allAlgoOrders 历史合并而来；反序列化时
+    /// 恒为 false——基础单来源为 allOrders）。仅用于 UI 筛选，不落盘
+    #[serde(skip)]
+    pub is_conditional: bool,
 }
 
 /// 合约条件单（Algo Order 体系，GET /fapi/v1/openAlgoOrders）：
@@ -811,7 +815,8 @@ mod tests {
 
         // income 为 null/缺省时归 0，不破坏整体解析
         let list: Vec<FutIncome> =
-            serde_json::from_str(r#"[{"incomeType":"COMMISSION","income":null,"time":1}]"#).unwrap();
+            serde_json::from_str(r#"[{"incomeType":"COMMISSION","income":null,"time":1}]"#)
+                .unwrap();
         assert!(list[0].income.is_zero());
 
         // 充值/提现记录

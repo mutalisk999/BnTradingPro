@@ -67,9 +67,23 @@ pub const REPAINT_IDLE: u64 = 400;
 /// 设计基准逻辑尺寸：全部布局常量（面板宽/行高/字号）按此基准标定
 pub const BASE_W: f32 = 1280.0;
 pub const BASE_H: f32 = 720.0;
+/// 窗口初始逻辑尺寸（main.rs 的 ViewportBuilder 与启动预置缩放共用：
+/// 预置时还没有第一帧的 screen_rect，只能按已知初始尺寸算）
+pub const START_W: f32 = 960.0;
+pub const START_H: f32 = 600.0;
 /// 等比缩放上下限：小于基准最多缩到 ×0.85，大于基准最多放大到 ×1.5
 pub const SCALE_MIN: f32 = 0.85;
 pub const SCALE_MAX: f32 = 1.5;
+
+/// 按物理尺寸推算目标 ppi（auto_ppi 与启动预置共用纯计算）
+fn target_ppp(native: f32, phys: egui::Vec2) -> f32 {
+    let s = (phys.x / (BASE_W * native)).min(phys.y / (BASE_H * native));
+    // 向下取整而非四舍五入：zoom 变更帧 egui 会用 ratio×content_rect 重写 screen_rect，
+    // 物理尺寸带亚像素回抖（1440 → 1439.9）；1.125 这类边界值用 round 会在相邻档位
+    // 间漂移（1.15↔1.1），floor 对亚像素噪声稳定——恢复后回到与启动一致的档位
+    let s = ((s * 20.0 + 0.001).floor() / 20.0).clamp(SCALE_MIN, SCALE_MAX);
+    native * s
+}
 
 /// 按窗口物理尺寸推算全局 pixels_per_point，锁定逻辑工作区 ≈ 基准尺寸，
 /// 实现"窗口变大 → 全站字号/行高/面板/图表等比变大"。返回 None 表示无需调整。
@@ -80,13 +94,17 @@ pub fn auto_ppi(ctx: &egui::Context) -> Option<f32> {
     let native = ctx.native_pixels_per_point().unwrap_or(1.0);
     // 0.36 起 screen_rect 在 RawInput 里（Option<Rect>）：逻辑 rect × 当前 ppi = 物理尺寸
     let rect = ctx.input(|i| i.raw.screen_rect).unwrap_or(egui::Rect::ZERO);
-    let phys = rect.size() * ctx.pixels_per_point();
-    let s = (phys.x / (BASE_W * native)).min(phys.y / (BASE_H * native));
-    // 向下取整而非四舍五入：zoom 变更帧 egui 会用 ratio×content_rect 重写 screen_rect，
-    // 物理尺寸带亚像素回抖（1440 → 1439.9）；1.125 这类边界值用 round 会在相邻档位
-    // 间漂移（1.15↔1.1），floor 对亚像素噪声稳定——恢复后回到与启动一致的档位
-    let s = ((s * 20.0 + 0.001).floor() / 20.0).clamp(SCALE_MIN, SCALE_MAX);
-    let target = native * s;
+    let target = target_ppp(native, rect.size() * ctx.pixels_per_point());
+    ((ctx.pixels_per_point() - target).abs() > 0.01).then_some(target)
+}
+
+/// 启动预置：在 App::new（首帧绘制前）按已知初始逻辑尺寸算目标 ppi。
+/// 否则首帧以原生 DPI 绘制，而 ui() 里的 auto_ppi 有 0.25s 防抖（为错开
+/// 最大化/恢复的 resize 过渡帧），启动时从零计时——窗口必先以偏大的
+/// 原生比例渲染约 0.25s 再骤缩（每开必现的"先大后小"）
+pub fn auto_ppp_initial(ctx: &egui::Context) -> Option<f32> {
+    let native = ctx.native_pixels_per_point().unwrap_or(1.0);
+    let target = target_ppp(native, egui::vec2(START_W, START_H) * native);
     ((ctx.pixels_per_point() - target).abs() > 0.01).then_some(target)
 }
 

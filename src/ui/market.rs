@@ -65,8 +65,7 @@ fn show_book_tabs(app: &mut BnApp, ui: &mut egui::Ui) {
     // 竖向分隔线（上下各留 4px 不顶满）
     let full_w = ui.available_width();
     let row_h = theme::BTN_H;
-    let (row_rect, _) =
-        ui.allocate_exact_size(egui::vec2(full_w, row_h), egui::Sense::hover());
+    let (row_rect, _) = ui.allocate_exact_size(egui::vec2(full_w, row_h), egui::Sense::hover());
     let half_w = row_rect.width() / 2.0;
     let left_rect = egui::Rect::from_min_max(
         row_rect.left_top(),
@@ -76,8 +75,13 @@ fn show_book_tabs(app: &mut BnApp, ui: &mut egui::Ui) {
         egui::pos2(row_rect.right() - half_w, row_rect.top()),
         row_rect.right_bottom(),
     );
-    if theme::pill_tab_rect(ui, left_rect, crate::i18n::tr("盘口"), app.book_tab == BookTab::Book)
-        .clicked()
+    if theme::pill_tab_rect(
+        ui,
+        left_rect,
+        crate::i18n::tr("盘口"),
+        app.book_tab == BookTab::Book,
+    )
+    .clicked()
     {
         app.book_tab = BookTab::Book;
     }
@@ -118,9 +122,8 @@ pub fn show_book_group(app: &mut BnApp, ui: &mut egui::Ui) {
         egui::Stroke::new(1.0, theme::cur().border),
     );
     ui.allocate_ui(egui::vec2(ui.available_width(), BOOK_GROUP_H), |ui| {
-        ui.add_space(7.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+            ui.add_space(7.0);
             let tick = app.state.with_rule(app.market, &app.page.symbol, |r| {
                 r.map(|x| x.tick).unwrap_or_default()
             });
@@ -134,11 +137,6 @@ pub fn show_book_group(app: &mut BnApp, ui: &mut egui::Ui) {
                 tick * Decimal::from(1000),
             ];
             let group_idx = app.page.book_group.min(steps.len() - 1);
-            ui.label(
-                egui::RichText::new(crate::i18n::tr("档位"))
-                    .size(theme::FONT_SM)
-                    .color(theme::cur().text_dim),
-            );
             // 等宽胶囊：四个步长标签自然宽不一（"0.1" vs "100"），按最宽标签
             // 统一槽宽，选中态同色块，视觉上才成一组协调的切换条
             let labels: Vec<String> = steps
@@ -156,35 +154,65 @@ pub fn show_book_group(app: &mut BnApp, ui: &mut egui::Ui) {
                 })
                 .fold(0.0f32, f32::max);
             let btn_w = widest + 12.0;
-            for (i, label) in labels.iter().enumerate() {
-                let selected = i == group_idx;
-                let txt = egui::RichText::new(label)
-                    .size(theme::FONT_SM)
-                    .color(if selected {
-                        theme::cur().accent
-                    } else {
-                        theme::cur().text_dim
-                    });
-                let btn = egui::Button::new(txt)
-                    .fill(if selected {
-                        theme::cur().row_hover
-                    } else {
-                        egui::Color32::TRANSPARENT
-                    })
-                    .stroke(egui::Stroke::NONE)
-                    .corner_radius(theme::R_SM)
-                    .min_size(egui::vec2(btn_w, 20.0));
-                if ui
-                    .add(btn)
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    app.page.book_group = i;
-                    // 桶价与原始价不同源：切换聚合后闪光/残影基线一并重置
-                    app.flash_book = Default::default();
-                    app.book_anim.clear();
-                }
-            }
+            let label_w = ui
+                .painter()
+                .layout_no_wrap(
+                    crate::i18n::tr("档位").to_string(),
+                    head,
+                    theme::cur().text_dim,
+                )
+                .size()
+                .x;
+            // 整组自然宽 = 标签 + 4 个等宽胶囊 + 4 个 3pt 间隔（5 件 4 间隔）
+            // top_down(Center) 只居中按自然宽分配的子控件——ui.horizontal 会
+            // 占满全宽且内容从左缘流排，实测整组贴左（左右留白差 -136）。
+            // 故先量宽再按该宽分配子区域，整组即被父级横向居中
+            let group_w = (label_w + 4.0 * btn_w + 4.0 * 3.0).min(ui.available_width());
+            ui.allocate_ui_with_layout(
+                egui::vec2(group_w, 20.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    // 交叉轴居中：「档位」纯文本与步长按钮（min_height 20）若顶
+                    // 对齐，两者文字中心差数像素——按文字中心对齐（同 pill_tab
+                    // 与 form_row 的做法）
+                    ui.spacing_mut().item_spacing.x = 3.0;
+                    ui.label(
+                        egui::RichText::new(crate::i18n::tr("档位"))
+                            .size(theme::FONT_SM)
+                            .color(theme::cur().text_dim),
+                    );
+                    for (i, label) in labels.iter().enumerate() {
+                        let selected = i == group_idx;
+                        let txt =
+                            egui::RichText::new(label)
+                                .size(theme::FONT_SM)
+                                .color(if selected {
+                                    theme::cur().accent
+                                } else {
+                                    theme::cur().text_dim
+                                });
+                        let btn = egui::Button::new(txt)
+                            .fill(if selected {
+                                theme::cur().row_hover
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            })
+                            .stroke(egui::Stroke::NONE)
+                            .corner_radius(theme::R_SM)
+                            .min_size(egui::vec2(btn_w, 20.0));
+                        if ui
+                            .add(btn)
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            app.page.book_group = i;
+                            // 桶价与原始价不同源：切换聚合后闪光/残影基线一并重置
+                            app.flash_book = Default::default();
+                            app.book_anim.clear();
+                        }
+                    }
+                },
+            );
         });
     });
 }
@@ -1178,4 +1206,100 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
         }
     }
     ui.separator();
+}
+
+#[cfg(test)]
+mod group_center_probe {
+    use super::*;
+
+    /// 复刻 show_book_group 的布局并量出组的水平位置：
+    /// offset = 左留白 - 右留白，0 = 整组在面板内横向居中
+    fn measure(build: fn(&mut egui::Ui) -> egui::Rect, panel_w: f32) -> f32 {
+        let ctx = egui::Context::default();
+        let mut captured: Option<(egui::Rect, egui::Rect)> = None;
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.allocate_ui(egui::vec2(panel_w, 36.0), |ui| {
+                let panel = ui.max_rect();
+                let group = build(ui);
+                captured = Some((panel, group));
+            });
+        });
+        out.textures_delta.clear();
+        let (panel, group) = captured.unwrap();
+        group.left() - panel.left() - (panel.right() - group.right())
+    }
+
+    /// 正确结构（show_book_group 采用）：top_down(Center) 下按整组自然宽
+    /// allocate_ui_with_layout —— top_down(Center) 只居中自然宽子控件
+    fn sized_group(ui: &mut egui::Ui) -> egui::Rect {
+        // 量文本宽（代替真实 tick/标签，几何结构等价）
+        let head = egui::FontId::proportional(theme::FONT_SM);
+        let w = |t: &str| {
+            ui.painter()
+                .layout_no_wrap(t.to_string(), head.clone(), theme::cur().text)
+                .size()
+                .x
+        };
+        let label_w = w("档位");
+        let widest = ["0.01", "0.1", "1", "10"]
+            .iter()
+            .map(|t| w(t))
+            .fold(0.0f32, f32::max);
+        let btn_w = widest + 12.0;
+        let group_w = label_w + 4.0 * btn_w + 4.0 * 3.0;
+        let mut group = egui::Rect::NOTHING;
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+            ui.add_space(7.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(group_w.min(ui.available_width()), 20.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 3.0;
+                    ui.label(egui::RichText::new("档位").size(theme::FONT_SM));
+                    for s in ["0.01", "0.1", "1", "10"] {
+                        let _ = ui.add(
+                            egui::Button::new(egui::RichText::new(s).size(theme::FONT_SM))
+                                .min_size(egui::vec2(btn_w, 20.0)),
+                        );
+                    }
+                    group = ui.min_rect();
+                },
+            );
+        });
+        group
+    }
+
+    /// 反例：top_down(Center) 内套 ui.horizontal_centered——行占满全宽、
+    /// 内容从左缘流排，整组贴左（记录此坑，避免回退）
+    fn horizontal_row(ui: &mut egui::Ui) -> egui::Rect {
+        let mut group = egui::Rect::NOTHING;
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+            ui.add_space(7.0);
+            ui.horizontal_centered(|ui| {
+                ui.label(egui::RichText::new("档位"));
+                for s in ["0.01", "0.1", "1", "10"] {
+                    let _ = ui.add(egui::Button::new(s).min_size(egui::vec2(48.0, 20.0)));
+                }
+                group = ui.min_rect();
+            });
+        });
+        group
+    }
+
+    #[test]
+    fn sized_group_is_centered() {
+        // 宽面板：整组横向居中
+        let off400 = measure(sized_group, 400.0);
+        assert!(off400.abs() < 1.0, "整组未水平居中 offset={off400:+.1}");
+        // 窄面板：组宽接近面板宽时仍不应偏出（min() 兜底）
+        let off200 = measure(sized_group, 200.0);
+        assert!(off200.abs() < 8.0, "窄面板居中异常 offset={off200:+.1}");
+    }
+
+    #[test]
+    fn horizontal_row_wraps_full_width_left_aligned() {
+        // 坑位记录：offset 应为大负数（贴左），触发改动时提醒
+        let offset = measure(horizontal_row, 400.0);
+        assert!(offset < -100.0, "horizontal 行意外居中？offset={offset:.1}");
+    }
 }

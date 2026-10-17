@@ -483,9 +483,15 @@ fn draw(
     // K 线区右缘（烛区/价格轴分界）切市场时横移几像素；按较宽者
     // 预留后分割线在两市场位置一致
     let axis_chars = |d: f64| {
-        (widgets::fmt_thousands(hi as f64, d as usize).chars().count() as f32) * 8.2 + 16.0
+        (widgets::fmt_thousands(hi as f64, d as usize)
+            .chars()
+            .count() as f32)
+            * 8.2
+            + 16.0
     };
-    let axis_w = axis_chars(2.0).max(axis_chars(dp as f64)).clamp(58.0, 120.0);
+    let axis_w = axis_chars(2.0)
+        .max(axis_chars(dp as f64))
+        .clamp(58.0, 120.0);
     // 窄窗口下轴宽可能超过 plot 宽：钳非负，防后续 clamp 的 min>max panic
     let chart_w = (plot.width() - axis_w).max(0.0);
 
