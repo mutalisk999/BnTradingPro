@@ -163,11 +163,14 @@ pub fn show_book_group(app: &mut BnApp, ui: &mut egui::Ui) {
                 )
                 .size()
                 .x;
-            // 整组自然宽 = 标签 + 4 个等宽胶囊 + 4 个 3pt 间隔（5 件 4 间隔）
+            // 整组自然宽 = 标签 + N 个等宽胶囊 + (N-1) 个 3pt 间隔。
             // top_down(Center) 只居中按自然宽分配的子控件——ui.horizontal 会
             // 占满全宽且内容从左缘流排，实测整组贴左（左右留白差 -136）。
-            // 故先量宽再按该宽分配子区域，整组即被父级横向居中
-            let group_w = (label_w + 4.0 * btn_w + 4.0 * 3.0).min(ui.available_width());
+            // 故先量宽再按该宽分配子区域，整组即被父级横向居中；
+            // 胶囊数取 steps.len() 而非常量，档位增减时居中不漂移
+            let n = steps.len() as f32;
+            let group_w =
+                (label_w + n * btn_w + (n - 1.0).max(0.0) * 3.0).min(ui.available_width());
             ui.allocate_ui_with_layout(
                 egui::vec2(group_w, 20.0),
                 egui::Layout::left_to_right(egui::Align::Center),

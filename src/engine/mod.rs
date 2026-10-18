@@ -1022,17 +1022,19 @@ async fn handle_cmd(
         Command::RefreshHistory { market, symbol } => {
             // 节流（3s 键 = 市场+交易对）：历史 REST 串行且每份数秒，手动按钮
             // 被连续点击时积压命令会逐条以每秒一条的速率执行（实测日志）。
-            // 同交易对 3s 内重复直接丢弃；切换交易对换键不受影响
+            // 同交易对 3s 内重复直接丢弃；切换交易对换键不受影响。
+            // 登记放在 has_creds 之后：无凭证的尝试不应占用节流窗口，
+            // 否则"无凭证点一下→填凭证 3 秒内再点"的第二次会被吞
             let hkey = (market, symbol.clone());
             if let Some(t) = c.history_debounce.get(&hkey) {
                 if t.elapsed() < Duration::from_secs(3) {
                     return;
                 }
             }
-            c.history_debounce.insert(hkey, Instant::now());
             if !state.has_creds() {
                 return;
             }
+            c.history_debounce.insert(hkey, Instant::now());
             let cfg = state.cfg_snapshot();
             let rc = RestCtx {
                 market,
@@ -1194,16 +1196,17 @@ async fn handle_cmd(
         Command::RefreshFlow { market } => {
             // 节流（3s 键 = 市场）：与 RefreshHistory 同因——手动按钮可被
             // 连续点击，串行 REST 期间积压命令逐条执行。按市场防抖，
-            // 切换市场换键不受影响
+            // 切换市场换键不受影响。登记放在 has_creds 之后
+            // （RefreshHistory 同理：无凭证尝试不占节流窗口）
             if let Some(t) = c.flow_debounce.get(&market) {
                 if t.elapsed() < Duration::from_secs(3) {
                     return;
                 }
             }
-            c.flow_debounce.insert(market, Instant::now());
             if !state.has_creds() {
                 return;
             }
+            c.flow_debounce.insert(market, Instant::now());
             let cfg = state.cfg_snapshot();
             let rc = RestCtx {
                 market,
@@ -1872,8 +1875,6 @@ async fn place_oco(
     }
 }
 
-/// 撤销挂单（symbol=None 撤销该市场全部；busy 置位/释放由本函数负责，
-/// 命令循环可并发派发）
 /// 历史查询覆盖的天数（期货）：allOrders/userTrades 不传 startTime 时
 /// 默认窗口很窄（实测 8 天前的订单已查不到），故回填一段历史
 const HISTORY_DAYS_BACK: u32 = 30;
@@ -1902,8 +1903,22 @@ fn history_segments(now_ms: i64, days_back: u32) -> Vec<(i64, i64)> {
     segs
 }
 
+/// 拉取用的分段列表：带时间参数时按 30 天 / 7 天分段；回退模式
+/// （with_time=false）只返回一段占位区间——调用方不使用边界，
+/// 拼接结果也不会因多发相同请求而重复
+fn fetch_segments(now_ms: i64, with_time: bool) -> Vec<(i64, i64)> {
+    if with_time {
+        history_segments(now_ms, HISTORY_DAYS_BACK)
+    } else {
+        vec![(0, 0)]
+    }
+}
+
 /// 分段并发拉取历史端点：各段独立成败，部分失败时返回已成功的响应、
-/// 全部失败才返回错误（首段错误优先）。段间无重叠故结果不去重
+/// 全部失败才返回错误（首段错误优先）。段间无重叠故结果不去重。
+/// with_time=false（端点拒绝时间参数时的回退）只发一次：此时段边界
+/// 无意义，仍按分段发出会是 N 个参数完全相同的请求，拼接后每条记录
+/// 重复 N 次
 async fn fetch_history_segments(
     client: &BinanceRest,
     rc: RestCtx,
@@ -1913,7 +1928,8 @@ async fn fetch_history_segments(
     now_ms: i64,
     with_time: bool,
 ) -> Result<Vec<serde_json::Value>, BinanceError> {
-    let futs: Vec<_> = history_segments(now_ms, HISTORY_DAYS_BACK)
+    let segs = fetch_segments(now_ms, with_time);
+    let futs: Vec<_> = segs
         .into_iter()
         .map(|(start, end)| {
             let mut params = vec![
@@ -2003,6 +2019,8 @@ fn algo_to_order_info(a: &AlgoOrderInfo) -> OrderInfo {
     }
 }
 
+/// 撤销挂单（symbol=None 撤销该市场全部；busy 置位/释放由本函数负责，
+/// 命令循环可并发派发）
 async fn cancel_all_orders(
     client: &BinanceRest,
     state: &Arc<SharedState>,
@@ -3469,5 +3487,14 @@ mod tests {
         };
         let o = algo_to_order_info(&a);
         assert_eq!(o.status, "NEW");
+    }
+
+    #[test]
+    fn fetch_segments_fallback_is_single_request() {
+        // 带时间参数：30 天分 5 段
+        assert_eq!(fetch_segments(1_792_175_581_000, true).len(), 5);
+        // 回退模式（端点拒绝 startTime/endTime）：只允许一段，
+        // 否则会发出 N 个参数完全相同的请求、结果被拼接成 N 份重复记录
+        assert_eq!(fetch_segments(1_792_175_581_000, false).len(), 1);
     }
 }
