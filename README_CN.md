@@ -6,6 +6,12 @@ Binance 现货 / U 本位合约专业交易终端，使用 **Rust + egui** 构�
 
 ![tech](https://img.shields.io/badge/Rust-1.99+-orange) ![gui](https://img.shields.io/badge/GUI-egui%2Feframe-blue) ![license](https://img.shields.io/badge/status-beta-yellow)
 
+## 界面预览
+
+主界面 —— 现货交易页（暗色主题，实盘 BTCUSDT 实时行情：盘口 / K 线图 / 下单面板）：
+
+![主界面](docs/images/main-en.png)
+
 ## 功能
 
 - **双市场**：现货（Spot）与 U 本位合约（USDT-M Futures）一键切换
@@ -89,7 +95,7 @@ UI 线程（eframe，立即模式）           后台引擎（独立 tokio 运�
 ## 测试
 
 ```powershell
-cargo test          # 21 个单元测试：签名向量、量化边界、vault 回环、WS 消息解析等
+cargo test          # 64 个单元测试：签名向量、量化边界、vault 回环、WS 消息解析等
 cargo clippy -- -D warnings
 ```
 

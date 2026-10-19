@@ -8,8 +8,12 @@ use serde_json::Value;
 
 pub fn dec<'de, D: Deserializer<'de>>(d: D) -> Result<Decimal, D::Error> {
     let v = Value::deserialize(d)?;
-    value_to_dec(&v)
-        .ok_or_else(|| D::Error::invalid_type(Unexpected::Other("非数值"), &"数字或字符串数字"))
+    value_to_dec(&v).ok_or_else(|| {
+        D::Error::invalid_type(
+            Unexpected::Other(crate::i18n::tr("非数值")),
+            &crate::i18n::tr("数字或字符串数字"),
+        )
+    })
 }
 
 pub fn opt_dec<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Decimal>, D::Error> {
@@ -17,7 +21,10 @@ pub fn opt_dec<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Decimal>, D::Er
     match v {
         None | Some(Value::Null) => Ok(None),
         Some(v) => value_to_dec(&v).map(Some).ok_or_else(|| {
-            D::Error::invalid_type(Unexpected::Other("非数值"), &"数字或字符串数字")
+            D::Error::invalid_type(
+                Unexpected::Other(crate::i18n::tr("非数值")),
+                &crate::i18n::tr("数字或字符串数字"),
+            )
         }),
     }
 }

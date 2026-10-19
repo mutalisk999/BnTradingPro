@@ -6,6 +6,12 @@ A professional trading terminal for Binance Spot / USDⓈ-M Futures — a native
 
 ![tech](https://img.shields.io/badge/Rust-1.99+-orange) ![gui](https://img.shields.io/badge/GUI-egui%2Feframe-blue) ![license](https://img.shields.io/badge/status-beta-yellow)
 
+## Screenshots
+
+Main interface — Spot trading page, dark theme, live BTCUSDT market data (order book / candlestick chart / order entry panel):
+
+![Main interface](docs/images/main-en.png)
+
 ## Features
 
 - **Dual markets**: one-click switching between Spot and USDⓈ-M Futures
@@ -89,7 +95,7 @@ UI thread (eframe, immediate mode)           Background engine (dedicated tokio 
 ## Testing
 
 ```powershell
-cargo test          # 21 unit tests: signature vectors, quantization boundaries, vault round-trip, WS message parsing, etc.
+cargo test          # 64 unit tests: signature vectors, quantization boundaries, vault round-trip, WS message parsing, etc.
 cargo clippy -- -D warnings
 ```
 

@@ -17,7 +17,7 @@ pub fn derive_key(
     version: u8,
 ) -> Result<Zeroizing<[u8; KEY_LEN]>, String> {
     if salt.len() != SALT_LEN {
-        return Err("salt 长度非法".into());
+        return Err(crate::i18n::tr("salt 长度非法").into());
     }
     // (m_KiB, t, p)：V2 显著提高离线爆破成本，解锁耗时约 200ms 可接受
     let (m_kib, t, p) = match version {
@@ -29,7 +29,7 @@ pub fn derive_key(
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
     argon
         .hash_password_into(password.as_bytes(), salt, &mut *key)
-        .map_err(|e| format!("密钥派生失败: {e}"))?;
+        .map_err(|e| format!("{}{e}", crate::i18n::tr("密钥派生失败: ")))?;
     Ok(key)
 }
 

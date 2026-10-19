@@ -224,6 +224,10 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "暂无非零资产" => "No non-zero assets",
         "个非零资产" => "non-zero assets",
         "（该 Key 无交易权限）" => " (key has no trade permission)",
+        "该 Key 无交易权限" => "Key has no trade permission",
+        "切换单向/双向持仓模式" => "Switch position mode (one-way/hedge)",
+        "只做 maker" => "Post-only",
+        "损益两平价" => "Breakeven",
         "未配置 API 密钥，无法查看资产（可在设置页配置）" => {
             "No API key configured — set one in Settings to view assets"
         }
@@ -275,6 +279,9 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "主题" => "Theme",
         "深色" => "Dark",
         "浅色" => "Light",
+        "涨跌色" => "Polarity",
+        "绿涨红跌" => "Green up / Red down",
+        "红涨绿跌" => "Red up / Green down",
         "中文" => "中文",
         "English" => "English",
         "设置已应用，正在重连…" => "Settings applied, reconnecting…",
@@ -393,9 +400,6 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "盘口上方的档位胶囊按 1/10/100/1000 倍最小变动单位聚合挂单量，便于观察大单密集区" => {
             "The step pills above the book merge orders by 1/10/100/1000 × tick size, making large-order clusters easy to spot"
         }
-        "历史订单与成交历史可一键导出 CSV（UTF-8 带 BOM，Excel 可直接打开），文件保存在数据目录 exports/ 下" => {
-            "Order and trade history export to CSV in one click (UTF-8 with BOM, opens directly in Excel); files land in the exports/ folder of the data directory"
-        }
         "交易页顶部的「预警」按钮打开当前交易对的预警面板：输入目标价即可添加，上破/下破方向按当前价自动判断，同价位不会重复添加" => {
             "Open the alert panel for the current symbol via the \"Alert\" button at the top of the trading page: type a target price to add one; direction (above/below) is inferred from the last price and duplicates are rejected"
         }
@@ -439,7 +443,63 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "网络错误: " => "Network error: ",
         "响应解析失败: " => "Failed to parse response: ",
         "代理配置无效: " => "Invalid proxy config: ",
+        "http://127.0.0.1:7890 或 socks5://127.0.0.1:7890（支持 user:pass@）" => {
+            "http://127.0.0.1:7890 or socks5://127.0.0.1:7890 (user:pass@ supported)"
+        }
+        // ---- WS 连接层错误（顶栏连接状态悬停可见）----
+        "连接超时（15s）" => "Connection timed out (15s)",
+        "WS 地址无效: " => "Invalid WS address: ",
+        "WS 地址缺少主机" => "WS address missing host",
+        "WS 地址缺少端口" => "WS address missing port",
+        "连接 " => "Connection to ",
+        " 失败: " => " failed: ",
+        "TLS 初始化失败: " => "TLS init failed: ",
+        "WS 握手请求构建失败: " => "Failed to build WS handshake request: ",
+        "WS 握手失败: " => "WS handshake failed: ",
+        "直连失败: " => "Direct connection failed: ",
+        "代理地址无效: " => "Invalid proxy address: ",
+        "暂不支持 https:// 代理，请改用 http:// 或 socks5:// 代理地址" => {
+            "https:// proxies are not supported — use http:// or socks5://"
+        }
+        "代理地址缺少主机" => "Proxy address missing host",
+        "代理地址缺少端口" => "Proxy address missing port",
+        "SOCKS5 连接失败: " => "SOCKS5 connect failed: ",
+        "连接代理失败: " => "Failed to connect to proxy: ",
+        "发送 CONNECT 失败: " => "Failed to send CONNECT: ",
+        "代理响应读取失败: " => "Failed to read proxy response: ",
+        "代理连接中断" => "Proxy connection interrupted",
+        "代理拒绝 CONNECT: " => "Proxy rejected CONNECT: ",
+        "不支持的代理协议: " => "Unsupported proxy protocol: ",
+        "（支持 http/socks5）" => " (http/socks5 supported)",
+        "连接中断" => "Connection interrupted",
+        "未知错误" => "unknown error",
+        "Binance 错误" => "Binance error",
+        "serverTime 缺失" => "serverTime missing",
+        "签名构建失败" => "Failed to build signature",
+        "WS-API 连接中断" => "WS-API connection interrupted",
+        "历史分段全部失败" => "All history segments failed",
+        "HTTP " => "HTTP ",
+        "（响应体为空，请检查 REST 端点/代理配置是否正确）" => {
+            " (empty response body — check REST endpoint/proxy settings)"
+        }
+        "盘口价格解析失败" => "Failed to parse book price",
+        "盘口数量解析失败" => "Failed to parse book quantity",
+        "非数值" => "not a number",
+        "数字或字符串数字" => "a number or numeric string",
+        // ---- vault / kdf 错误（保存/解锁失败 toast 可见）----
+        "加密失败: " => "Encryption failed: ",
+        "写入凭据文件失败" => "Failed to write credential file",
+        "收紧凭据文件权限失败" => "Failed to tighten credential file permission",
+        "替换凭据文件失败" => "Failed to replace credential file",
+        "salt 长度非法" => "invalid salt length",
+        "密钥派生失败: " => "Key derivation failed: ",
         "已撤销委托 #" => "Order canceled #",
+        "已撤销条件单 #" => "Conditional order canceled #",
+        "改订命令发送失败" => "Failed to resend subscription",
+        "Pong 发送失败" => "Failed to send Pong",
+        "切换订阅后未收到数据，重连" => "No data after resubscribing — reconnecting",
+        "listenKey 响应异常" => "listenKey response malformed",
+        "订阅确认超时" => "Subscription confirmation timed out",
         "已撤销 " => "Canceled all orders for ",
         "委托已提交 (#" => " order submitted (#",
         "杠杆已设为" => "leverage set to ",
@@ -567,8 +627,8 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "Ctrl+Shift+C" => "Ctrl+Shift+C",
         "撤销当前交易对的全部挂单" => "Cancel all open orders for the current symbol",
         "连按两次撤销当前交易对的全部挂单" => "Press twice to cancel all open orders for the current symbol",
-        "当前挂单可单笔撤销、一键撤销该交易对全部挂单或本市场全部挂单；合约持仓支持行内 TP/SL、平仓、反手（市价平仓后反向开同等数量）与全部平仓（均走确认弹窗）。" => {
-            "Open orders: cancel one by one, per symbol, or wipe the whole market; futures positions: inline TP/SL, close, reverse (market-close then reopen the same size on the other side) or close all (all with confirm dialogs)."
+        "当前挂单可单笔撤销、一键撤销该交易对全部挂单或本市场全部挂单；合约持仓支持行内 TP/SL、平仓、反手（市价平仓后反向开同等数量）与全部平仓（均走确认弹窗）。订单历史与成交历史可一键导出 CSV（UTF-8 带 BOM，Excel 可直接打开），文件保存在数据目录 exports/ 下。" => {
+            "Open orders: cancel one by one, per symbol, or wipe the whole market; futures positions: inline TP/SL, close, reverse (market-close then reopen the same size on the other side) or close all (all with confirm dialogs). Order and trade history export to CSV in one click (UTF-8 with BOM, opens directly in Excel); files land in the exports/ folder of the data directory."
         }
         // ---- Phase 2：盘口聚合 / 价格预警 / CSV 导出 ----
         "档位" => "Step",

@@ -82,7 +82,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 ui.checkbox(&mut app.settings.proxy_enabled, crate::i18n::tr("启用代理"));
             });
             theme::form_row(ui, |ui| {
-                theme::row_label(ui, crate::i18n::tr("地址"), 40.0);
+                theme::row_label(ui, crate::i18n::tr("地址"), 68.0);
                 // 明文显示：便于核对代理主机与端口（凭据泄露风险已由
                 // ProxyConfig 的 Debug 脱敏与 config.toml 权限约束兜底）
                 ui.add(
@@ -90,9 +90,9 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         .text_color(theme::cur().text)
                         .desired_width(320.0)
                         .min_size(egui::vec2(0.0, theme::CONTROL_H))
-                        .hint_text(
+                        .hint_text(crate::i18n::tr(
                             "http://127.0.0.1:7890 或 socks5://127.0.0.1:7890（支持 user:pass@）",
-                        ),
+                        )),
                 );
             });
         },
@@ -105,7 +105,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         |_| {},
         |ui| {
             theme::form_row(ui, |ui| {
-                theme::row_label(ui, crate::i18n::tr("语言"), 40.0);
+                theme::row_label(ui, crate::i18n::tr("语言"), 68.0);
                 let mut lang = app.settings.lang.clone();
                 egui::ComboBox::from_id_salt("lang_cb")
                     .selected_text(if lang == "en" {
@@ -120,7 +120,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                 app.settings.lang = lang;
                 ui.separator();
-                theme::row_label(ui, crate::i18n::tr("主题"), 40.0);
+                theme::row_label(ui, crate::i18n::tr("主题"), 68.0);
                 let mut mode = app.settings.theme_mode.clone();
                 egui::ComboBox::from_id_salt("theme_cb")
                     .selected_text(if mode == "light" {
@@ -141,7 +141,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 ui.separator();
                 // 涨跌方向：仅改全局色表（signed_color/up_color/down_color 即时翻转），
                 // 不涉及 egui Style/字体，无需重新 apply
-                theme::row_label(ui, crate::i18n::tr("涨跌色"), 40.0);
+                theme::row_label(ui, crate::i18n::tr("涨跌色"), 68.0);
                 let mut dir = theme::PriceDir::from_cfg(&app.settings.price_dir);
                 egui::ComboBox::from_id_salt("price_dir_cb")
                     .selected_text(dir.label())

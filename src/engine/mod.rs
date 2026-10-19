@@ -1963,7 +1963,9 @@ async fn fetch_history_segments(
         }
     }
     if ok.is_empty() {
-        Err(first_err.unwrap_or_else(|| BinanceError::Decode("历史分段全部失败".into())))
+        Err(first_err.unwrap_or_else(|| {
+            BinanceError::Decode(crate::i18n::tr("历史分段全部失败").to_string())
+        }))
     } else {
         Ok(ok)
     }
@@ -2827,7 +2829,10 @@ async fn user_ws_loop(
                     }
                 };
                 let Some(key) = key else {
-                    state.set_user_ws(market, ConnState::Failed("listenKey 响应异常".into()));
+                    state.set_user_ws(
+                        market,
+                        ConnState::Failed(crate::i18n::tr("listenKey 响应异常").to_string()),
+                    );
                     tokio::time::sleep(Duration::from_secs(10)).await;
                     continue;
                 };
@@ -2865,7 +2870,9 @@ async fn user_ws_loop(
                             .map_err(|e| e.to_string())?;
                         loop {
                             match read.next().await {
-                                None => return Err("连接中断".to_string()),
+                                None => {
+                                    return Err(crate::i18n::tr("连接中断").to_string())
+                                }
                                 Some(Err(e)) => return Err(e.to_string()),
                                 Some(Ok(Message::Text(t))) => {
                                     let Ok(d) = serde_json::from_str::<serde_json::Value>(&t)
@@ -2894,7 +2901,7 @@ async fn user_ws_loop(
                                     let m = err
                                         .get("msg")
                                         .and_then(|x| x.as_str())
-                                        .unwrap_or("未知错误")
+                                        .unwrap_or(crate::i18n::tr("未知错误"))
                                         .to_string();
                                     return Err(format!("({code}) {m}"));
                                 }
@@ -2913,7 +2920,10 @@ async fn user_ws_loop(
                         }
                         Err(_) => {
                             tracing::warn!("现货用户流订阅确认超时");
-                            state.set_user_ws(market, ConnState::Failed("订阅确认超时".into()));
+                            state.set_user_ws(
+                                market,
+                                ConnState::Failed(crate::i18n::tr("订阅确认超时").to_string()),
+                            );
                             repaint(&ctx);
                             tokio::time::sleep(Duration::from_secs(5)).await;
                             continue;

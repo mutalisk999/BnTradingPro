@@ -62,7 +62,14 @@ impl BinanceError {
                     tr("请求频率超限（429），请稍后重试")
                 };
                 match retry_after_secs {
-                    Some(s) => format!("{base}（{s}s 后可重试）"),
+                    // ZH 保留全角括号观感；EN 走半角 + 自然语序
+                    Some(s) => {
+                        if crate::i18n::lang() == crate::i18n::EN {
+                            format!("{base} (retry in {s}s)")
+                        } else {
+                            format!("{base}（{s}s 后可重试）")
+                        }
+                    }
                     None => base.to_string(),
                 }
             }
@@ -79,7 +86,7 @@ impl BinanceError {
                 -2021 => tr("订单会立即触发（止盈止损价过于贴近市价）").into(),
                 -2022 => tr("订单方向与持仓方向冲突（ReduceOnly）").into(),
                 -4061 => tr("持仓方向与订单冲突（检查双向/单向持仓模式）").into(),
-                _ => format!("Binance 错误[{code}]: {msg}"),
+                _ => format!("{} [{code}]: {msg}", tr("Binance 错误")),
             },
         }
     }
@@ -211,7 +218,9 @@ impl BinanceRest {
         let server = v
             .get("serverTime")
             .and_then(|x| x.as_i64())
-            .ok_or_else(|| BinanceError::Decode("serverTime 缺失".into()))?;
+            .ok_or_else(|| {
+                BinanceError::Decode(crate::i18n::tr("serverTime 缺失").to_string())
+            })?;
         let offset = server - Self::now_ms();
         self.time_offset_ms.store(offset, Ordering::Relaxed);
         tracing::info!("时间同步完成，偏移 {offset}ms");
@@ -472,7 +481,9 @@ impl BinanceRest {
         let signed = build_signed_query(&params, ts, recv_window_ms, secret.as_str());
         let (_, sig) = signed
             .split_once("&signature=")
-            .ok_or_else(|| BinanceError::Decode("签名构建失败".into()))?;
+            .ok_or_else(|| {
+                BinanceError::Decode(crate::i18n::tr("签名构建失败").to_string())
+            })?;
         // WS-API 的 params 是对象：键值取原始（未 URL 编码）字符串
         let mut obj = serde_json::Map::new();
         for (k, v) in &params {
@@ -520,7 +531,11 @@ impl BinanceRest {
                     }
                     Some(Ok(_)) => continue,
                     Some(Err(e)) => return Err(BinanceError::Network(e.to_string())),
-                    None => return Err(BinanceError::Network("WS-API 连接中断".into())),
+                    None => {
+                        return Err(BinanceError::Network(
+                            crate::i18n::tr("WS-API 连接中断").to_string(),
+                        ))
+                    }
                 }
             }
         };
@@ -672,7 +687,9 @@ async fn parse_response(resp: reqwest::Response) -> Result<Value, BinanceError> 
     let v: Value = serde_json::from_str(&text).map_err(|e| {
         if text.trim().is_empty() {
             BinanceError::Decode(format!(
-                "HTTP {status}（响应体为空，请检查 REST 端点/代理配置是否正确）"
+                "{}{status}{}",
+                crate::i18n::tr("HTTP "),
+                crate::i18n::tr("（响应体为空，请检查 REST 端点/代理配置是否正确）")
             ))
         } else {
             BinanceError::Decode(format!("HTTP {status}: {e}"))

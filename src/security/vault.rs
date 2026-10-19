@@ -66,7 +66,7 @@ pub fn save_creds(dir: &Path, password: &str, creds: &Creds) -> Result<(), Strin
     let msg: &[u8] = &plaintext;
     let ct = cipher
         .encrypt(Nonce::from_slice(&nonce), Payload { msg, aad: MAGIC_V2 })
-        .map_err(|e| format!("加密失败: {e}"))?;
+        .map_err(|e| format!("{}{e}", crate::i18n::tr("加密失败: ")))?;
 
     let mut buf = Vec::with_capacity(MAGIC_V2.len() + SALT_LEN + NONCE_LEN + ct.len());
     buf.extend_from_slice(MAGIC_V2);
@@ -91,19 +91,34 @@ pub fn save_creds(dir: &Path, password: &str, creds: &Creds) -> Result<(), Strin
             .truncate(true)
             .mode(0o600)
             .open(&tmp)
-            .map_err(|e| format!("写入凭据文件失败({}): {e}", tmp.display()))?;
+            .map_err(|e| format!("{}({}): {e}", crate::i18n::tr("写入凭据文件失败"), tmp.display()))?;
         f.write_all(&buf)
-            .map_err(|e| format!("写入凭据文件失败({}): {e}", tmp.display()))?;
+            .map_err(|e| format!("{}({}): {e}", crate::i18n::tr("写入凭据文件失败"), tmp.display()))?;
         // 兜底：文件已存在等异常路径下 mode 不生效，rename 前再校验一次
         if let Err(e) = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)) {
             let _ = std::fs::remove_file(&tmp);
-            return Err(format!("收紧凭据文件权限失败({}): {e}", tmp.display()));
+            return Err(format!(
+                "{}({}): {e}",
+                crate::i18n::tr("收紧凭据文件权限失败"),
+                tmp.display()
+            ));
         }
     }
     #[cfg(not(unix))]
-    std::fs::write(&tmp, &buf).map_err(|e| format!("写入凭据文件失败({}): {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path)
-        .map_err(|e| format!("替换凭据文件失败({}): {e}", path.display()))?;
+    std::fs::write(&tmp, &buf).map_err(|e| {
+        format!(
+            "{}({}): {e}",
+            crate::i18n::tr("写入凭据文件失败"),
+            tmp.display()
+        )
+    })?;
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        format!(
+            "{}({}): {e}",
+            crate::i18n::tr("替换凭据文件失败"),
+            path.display()
+        )
+    })?;
     Ok(())
 }
 
