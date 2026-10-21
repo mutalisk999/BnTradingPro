@@ -2870,9 +2870,7 @@ async fn user_ws_loop(
                             .map_err(|e| e.to_string())?;
                         loop {
                             match read.next().await {
-                                None => {
-                                    return Err(crate::i18n::tr("连接中断").to_string())
-                                }
+                                None => return Err(crate::i18n::tr("连接中断").to_string()),
                                 Some(Err(e)) => return Err(e.to_string()),
                                 Some(Ok(Message::Text(t))) => {
                                     let Ok(d) = serde_json::from_str::<serde_json::Value>(&t)

@@ -218,9 +218,7 @@ impl BinanceRest {
         let server = v
             .get("serverTime")
             .and_then(|x| x.as_i64())
-            .ok_or_else(|| {
-                BinanceError::Decode(crate::i18n::tr("serverTime 缺失").to_string())
-            })?;
+            .ok_or_else(|| BinanceError::Decode(crate::i18n::tr("serverTime 缺失").to_string()))?;
         let offset = server - Self::now_ms();
         self.time_offset_ms.store(offset, Ordering::Relaxed);
         tracing::info!("时间同步完成，偏移 {offset}ms");
@@ -481,9 +479,7 @@ impl BinanceRest {
         let signed = build_signed_query(&params, ts, recv_window_ms, secret.as_str());
         let (_, sig) = signed
             .split_once("&signature=")
-            .ok_or_else(|| {
-                BinanceError::Decode(crate::i18n::tr("签名构建失败").to_string())
-            })?;
+            .ok_or_else(|| BinanceError::Decode(crate::i18n::tr("签名构建失败").to_string()))?;
         // WS-API 的 params 是对象：键值取原始（未 URL 编码）字符串
         let mut obj = serde_json::Map::new();
         for (k, v) in &params {

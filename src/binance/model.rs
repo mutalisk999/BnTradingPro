@@ -40,12 +40,10 @@ impl<'de> Deserialize<'de> for Level {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let arr = <[serde_json::Value; 2]>::deserialize(d)?;
         Ok(Level {
-            price: crate::binance::de::value_to_dec(&arr[0]).ok_or_else(|| {
-                serde::de::Error::custom(crate::i18n::tr("盘口价格解析失败"))
-            })?,
-            qty: crate::binance::de::value_to_dec(&arr[1]).ok_or_else(|| {
-                serde::de::Error::custom(crate::i18n::tr("盘口数量解析失败"))
-            })?,
+            price: crate::binance::de::value_to_dec(&arr[0])
+                .ok_or_else(|| serde::de::Error::custom(crate::i18n::tr("盘口价格解析失败")))?,
+            qty: crate::binance::de::value_to_dec(&arr[1])
+                .ok_or_else(|| serde::de::Error::custom(crate::i18n::tr("盘口数量解析失败")))?,
         })
     }
 }

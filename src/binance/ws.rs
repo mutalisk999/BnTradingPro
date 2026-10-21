@@ -25,8 +25,7 @@ pub async fn connect(ws_url: &str, proxy: &ProxyConfig) -> Result<WsStream, Stri
 }
 
 async fn connect_inner(ws_url: &str, proxy: &ProxyConfig) -> Result<WsStream, String> {
-    let url = Url::parse(ws_url)
-        .map_err(|e| format!("{}{e}", crate::i18n::tr("WS 地址无效: ")))?;
+    let url = Url::parse(ws_url).map_err(|e| format!("{}{e}", crate::i18n::tr("WS 地址无效: ")))?;
     let host = url
         .host_str()
         .ok_or(crate::i18n::tr("WS 地址缺少主机"))?
@@ -38,11 +37,13 @@ async fn connect_inner(ws_url: &str, proxy: &ProxyConfig) -> Result<WsStream, St
     // 1. TCP（直连或代理隧道）
     let tcp: TcpStream = match proxy_tcp(&host, port, proxy).await {
         Ok(s) => s,
-        Err(e) => return Err(format!(
-            "{}{host}:{port}{}{e}",
-            crate::i18n::tr("连接 "),
-            crate::i18n::tr(" 失败: ")
-        )),
+        Err(e) => {
+            return Err(format!(
+                "{}{host}:{port}{}{e}",
+                crate::i18n::tr("连接 "),
+                crate::i18n::tr(" 失败: ")
+            ))
+        }
     };
 
     // 2/3. TLS + tungstenite 握手
@@ -78,10 +79,10 @@ async fn proxy_tcp(host: &str, port: u16, proxy: &ProxyConfig) -> Result<TcpStre
     // https:// 代理：WS 侧按明文 CONNECT 处理与 REST 侧 TLS 行为不一致，
     // 直接拒绝并提示改用 http/socks5，避免"REST 能通、WS 连不上"的静默差异
     if scheme == "https" {
-        return Err(
-            crate::i18n::tr("暂不支持 https:// 代理，请改用 http:// 或 socks5:// 代理地址")
-                .to_string(),
-        );
+        return Err(crate::i18n::tr(
+            "暂不支持 https:// 代理，请改用 http:// 或 socks5:// 代理地址",
+        )
+        .to_string());
     }
     let phost = purl
         .host_str()

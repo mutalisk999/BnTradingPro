@@ -238,8 +238,15 @@ pub fn num_cell(ui: &mut egui::Ui, txt: String, color: Option<Color32>) {
 
 /// 大数缩写（成交额）：中文 1.2亿 / 34.5万；英文 1.2B / 34.5K
 pub fn fmt_compact(v: f64) -> String {
+    fmt_compact_lang(v, crate::i18n::lang())
+}
+
+/// 按指定语言缩写：参数化版供测试并行使用——测试不得改全局 LANG
+/// （i18n LANG 是进程级 AtomicU8，并行测试一个 set_lang 会把其它
+/// 读全局的测试带偏，实测偶发 "34.5K" != "3.5万"）
+fn fmt_compact_lang(v: f64, lang: u8) -> String {
     let a = v.abs();
-    if crate::i18n::lang() == crate::i18n::EN {
+    if lang == crate::i18n::EN {
         if a >= 1e9 {
             format!("{:.2}B", v / 1e9)
         } else if a >= 1e6 {
@@ -532,19 +539,24 @@ mod tests {
 
     #[test]
     fn compact_formatting() {
-        assert_eq!(fmt_compact(123_456_789.0), "1.23亿");
-        assert_eq!(fmt_compact(34_500.0), "3.5万");
-        assert_eq!(fmt_compact(123.0), "123");
+        // 参数化 ZH：不读全局 LANG（任何测试都不再 set_lang，并行无竞争）
+        assert_eq!(fmt_compact_lang(123_456_789.0, crate::i18n::ZH), "1.23亿");
+        assert_eq!(fmt_compact_lang(34_500.0, crate::i18n::ZH), "3.5万");
+        assert_eq!(fmt_compact_lang(123.0, crate::i18n::ZH), "123");
     }
 
     #[test]
     fn compact_formatting_english() {
-        // 保存并恢复语言：测试并行运行，compact_formatting 依赖默认 ZH
-        let saved = crate::i18n::lang();
-        crate::i18n::set_lang(crate::i18n::EN);
-        assert_eq!(fmt_compact(1_234_567_890.0), "1.23B");
-        assert_eq!(fmt_compact(34_500.0), "34.5K");
-        assert_eq!(fmt_compact(123.0), "123");
-        crate::i18n::set_lang(saved);
+        // 参数化 EN：不改全局（曾因 set_lang 与并行测试竞争导致
+        // compact_formatting 偶发读到 EN 而失败）
+        assert_eq!(fmt_compact_lang(1_234_567_890.0, crate::i18n::EN), "1.23B");
+        assert_eq!(fmt_compact_lang(34_500.0, crate::i18n::EN), "34.5K");
+        assert_eq!(fmt_compact_lang(123.0, crate::i18n::EN), "123");
+    }
+
+    #[test]
+    fn compact_formatting_reads_global_default() {
+        // 默认全局为 ZH 且无测试再改动它：fmt_compact 包装层稳走 ZH 分支
+        assert_eq!(fmt_compact(34_500.0), "3.5万");
     }
 }
