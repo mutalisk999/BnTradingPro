@@ -33,6 +33,10 @@ pub struct SubSpec {
 pub enum Command {
     /// 配置/凭据变更：校时 + 规则 + 账户全量刷新
     ReloadAll,
+    /// 网络恢复巡检专用：校时 + 仅补拉规则缺失市场的 exchangeInfo。
+    /// 不重发订阅、不刷账户历史——巡检每 5-10s 一次，若用 ReloadAll
+    /// 其"重发订阅"会反复触发行情 WS 重连与历史重拉风暴
+    ReloadRules,
     SyncTime,
     Subscribe {
         market: Market,
@@ -131,6 +135,59 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
                             loop {
                                 tokio::time::sleep(Duration::from_secs(1800)).await;
                                 let _ = sync_tx.send(Command::SyncTime);
+                            }
+                        });
+                    }
+                    // 网络恢复巡检：ReloadAll 只在启动发一次，断网启动时
+                    // exchangeInfo/校时失败后侧栏将永久停在"交易规则加载中"，
+                    // REST 指示灯也一直红（rest_ok 仅靠 30 分钟一次的 SyncTime
+                    // 才可能翻回）。行情 WS 有自愈重连，REST 侧补上恢复路径。
+                    // 巡检只发轻量的 ReloadRules（校时+缺规则市场补拉）：
+                    // 发 ReloadAll 会"重发订阅"，每轮（5-10s）触发行情 WS
+                    // 重连+历史重拉的风暴；从不健康转健康时才补发一次完整
+                    // ReloadAll 恢复账户/挂单/订阅
+                    {
+                        let h_tx = tx.clone();
+                        let h_state = state.clone();
+                        tokio::spawn(async move {
+                            fn healthy(st: &SharedState) -> bool {
+                                !st.rules.read().iter().any(|b| b.symbols.is_empty())
+                                    && st.rest_ok.load(Ordering::Relaxed)
+                            }
+                            // 启动宽限：避开启动期 ReloadAll 的在途重复
+                            tokio::time::sleep(Duration::from_secs(20)).await;
+                            let mut backoff = Duration::from_secs(5);
+                            // 是否曾观测到不健康：转回健康时据此补发一次完整 ReloadAll；
+                            // 启动即健康的正常路径不多发任何命令
+                            let mut was_unhealthy = false;
+                            let mut full_sent = false;
+                            loop {
+                                if healthy(&h_state) {
+                                    if was_unhealthy && !full_sent {
+                                        tracing::info!("恢复巡检：网络已恢复，补发 ReloadAll");
+                                        let _ = h_tx.send(Command::ReloadAll);
+                                        full_sent = true;
+                                    }
+                                    backoff = Duration::from_secs(5);
+                                    tokio::time::sleep(Duration::from_secs(15)).await;
+                                    continue;
+                                }
+                                was_unhealthy = true;
+                                tracing::info!(?backoff, "恢复巡检：重发 ReloadRules");
+                                let _ = h_tx.send(Command::ReloadRules);
+                                // 等本轮执行完或判超时再投下一轮：命令串行执行，
+                                // 慢请求（连接超时）下持续投递会让队列无界堆积
+                                let deadline =
+                                    tokio::time::Instant::now() + Duration::from_secs(45);
+                                while tokio::time::Instant::now() < deadline && !healthy(&h_state) {
+                                    tokio::time::sleep(Duration::from_secs(2)).await;
+                                }
+                                if healthy(&h_state) {
+                                    backoff = Duration::from_secs(5);
+                                } else {
+                                    tokio::time::sleep(backoff).await;
+                                    backoff = (backoff * 2).min(Duration::from_secs(60));
+                                }
                             }
                         });
                     }
@@ -575,6 +632,28 @@ async fn ensure_client(c: &mut CmdCtx) {
     }
 }
 
+/// 拉取某市场的 exchangeInfo 并写入规则簿（成功时递增规则版本号，
+/// UI 的符号列表缓存按版本失效）。ReloadAll 与恢复巡检共用
+async fn fetch_rules(
+    client: &BinanceRest,
+    state: &Arc<SharedState>,
+    cfg: &AppConfig,
+    market: Market,
+) -> Result<(), BinanceError> {
+    let rc = RestCtx {
+        market,
+        testnet: cfg.testnet,
+        recv_window_ms: cfg.recv_window_ms,
+    };
+    let path = format!("{}/exchangeInfo", market.api_prefix());
+    let v = client.get_public(rc, cfg, &path, &[]).await?;
+    let book = RuleBook::from_rules(parse_exchange_info(&v));
+    tracing::info!("{}: {} 个交易对", market.label(), book.symbols.len());
+    state.rules.write()[market as usize] = book;
+    state.rules_version.fetch_add(1, Ordering::Relaxed);
+    Ok(())
+}
+
 async fn handle_cmd(
     ctx: &egui::Context,
     c: &mut CmdCtx,
@@ -645,19 +724,8 @@ async fn handle_cmd(
             state.rest_ok.store(all_ok, Ordering::Relaxed);
             // 交易规则
             for m in Market::all() {
-                let rc = RestCtx {
-                    market: m,
-                    testnet: cfg.testnet,
-                    recv_window_ms: cfg.recv_window_ms,
-                };
-                let path = format!("{}/exchangeInfo", m.api_prefix());
-                match client.get_public(rc, &cfg, &path, &[]).await {
-                    Ok(v) => {
-                        let book = RuleBook::from_rules(parse_exchange_info(&v));
-                        tracing::info!("{}: {} 个交易对", m.label(), book.symbols.len());
-                        state.rules.write()[m as usize] = book;
-                        state.rules_version.fetch_add(1, Ordering::Relaxed);
-                    }
+                match fetch_rules(client, &state, &cfg, m).await {
+                    Ok(()) => {}
                     Err(e) => {
                         tracing::warn!("exchangeInfo 失败({m}): {e}");
                         let key = if m == Market::Spot {
@@ -683,6 +751,36 @@ async fn handle_cmd(
             // 重发当前订阅，确保行情流配置一致
             if let Some(sub) = c.current_sub.clone() {
                 let _ = sub_tx.send(Some(sub));
+            }
+            repaint(ctx);
+        }
+        Command::ReloadRules => {
+            // 巡检轻量恢复：校时（刷 rest_ok——失败也翻假；巡检每 5s+重试，
+            // 不像 30min 的 SyncTime 那样需要防瞬时抖动误报）+ 仅补拉规则
+            // 缺失的市场（已加载市场不重复拉 1300+ 个现货交易对）。
+            // 失败只记日志：启动期 ReloadAll 已向用户提示过一次，巡检重试
+            // 的 warn 噪声不必要再弹 toast
+            let cfg = state.cfg_snapshot();
+            let mut all_ok = true;
+            for m in Market::all() {
+                let rc = RestCtx {
+                    market: m,
+                    testnet: cfg.testnet,
+                    recv_window_ms: cfg.recv_window_ms,
+                };
+                if let Err(e) = client.sync_time(rc, &cfg).await {
+                    tracing::warn!("巡检校时失败({m}): {e}");
+                    all_ok = false;
+                }
+            }
+            state.rest_ok.store(all_ok, Ordering::Relaxed);
+            for m in Market::all() {
+                if !state.rules.read()[m as usize].symbols.is_empty() {
+                    continue;
+                }
+                if let Err(e) = fetch_rules(client, &state, &cfg, m).await {
+                    tracing::warn!("巡检规则加载失败({m}): {e}");
+                }
             }
             repaint(ctx);
         }
