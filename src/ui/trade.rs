@@ -120,7 +120,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.label(
             egui::RichText::new(crate::i18n::tr("未配置 API 密钥，仅可查看行情"))
                 .color(theme::cur().warn)
-                .size(theme::FONT_SM),
+                .size(theme::font_sm()),
         );
     }
     ui.add_space(1.0);
@@ -142,7 +142,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             crate::i18n::tr("买入")
         })
         .strong()
-        .size(theme::FONT_MD)
+        .size(theme::font_md())
         .color(if buy_on {
             theme::cur().on_fill
         } else {
@@ -170,7 +170,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             crate::i18n::tr("卖出")
         })
         .strong()
-        .size(theme::FONT_MD)
+        .size(theme::font_md())
         .color(if sell_on {
             theme::cur().on_fill
         } else {
@@ -221,7 +221,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.painter()
             .layout_no_wrap(
                 step_txt.clone(),
-                egui::FontId::proportional(theme::FONT_SM),
+                egui::FontId::proportional(theme::font_sm()),
                 theme::cur().text_dim,
             )
             .size()
@@ -268,17 +268,28 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             ) {
                 compact_row(ui, |ui| {
                     field_label(ui, crate::i18n::tr("有效期"));
-                    for &t in Tif::available(market) {
+                    // 胶囊等宽吃满剩余行宽：合约比现货多一枚 GTX，大字号下
+                    // 固定文字宽的 4 枚会超出面板宽，末枚被裁到无法点选；
+                    // 等分后窄行只是文字变挤，所有选项始终可见可点——
+                    // 比溢出后整枚被遮挡更可取。文字内边距收到 4：默认 8
+                    // 会让等宽胶囊在大字号下截字
+                    let tifs = Tif::available(market);
+                    let n = tifs.len();
+                    let gap = ui.spacing().item_spacing.x;
+                    let bw = ((ui.available_width() - gap * (n - 1) as f32) / n as f32).max(0.0);
+                    ui.spacing_mut().button_padding.x = 4.0;
+                    for &t in tifs {
                         let on = app.page.form.tif == t;
-                        // 按钮只留缩写（GTX 全长文案会挤占行宽，期货最小面板宽下
-                        // 第四枚胶囊被裁剪）；完整含义在悬停提示中给出
+                        // 按钮只留缩写（GTX 全长文案会挤占行宽）；完整含义在悬停提示中给出
                         let txt = t.as_str().to_string();
                         let btn = egui::Button::new(
-                            egui::RichText::new(txt).size(theme::FONT_SM).color(if on {
-                                theme::cur().accent
-                            } else {
-                                theme::cur().text_dim
-                            }),
+                            egui::RichText::new(txt)
+                                .size(theme::font_sm())
+                                .color(if on {
+                                    theme::cur().accent
+                                } else {
+                                    theme::cur().text_dim
+                                }),
                         )
                         .fill(if on {
                             theme::cur().accent.gamma_multiply(0.16)
@@ -287,17 +298,16 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         })
                         .corner_radius(f32::from(theme::R_SM))
                         .min_size(egui::vec2(0.0, 18.0));
-                        if ui
-                            .add(btn)
+                        let r = ui
+                            .add_sized([bw, 18.0], btn)
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .on_hover_text(match t {
                                 Tif::Gtc => crate::i18n::tr("成交为止"),
                                 Tif::Ioc => crate::i18n::tr("立即成交，剩余撤销"),
                                 Tif::Fok => crate::i18n::tr("全部成交或立即撤销"),
                                 Tif::Gtx => crate::i18n::tr("只做 maker，不会吃单"),
-                            })
-                            .clicked()
-                        {
+                            });
+                        if r.clicked() {
                             app.page.form.tif = t;
                         }
                     }
@@ -373,7 +383,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         .painter()
                         .layout_no_wrap(
                             crate::i18n::tr("设定").to_string(),
-                            egui::FontId::proportional(theme::FONT_SM),
+                            egui::FontId::proportional(theme::font_sm()),
                             theme::cur().text,
                         )
                         .size()
@@ -473,7 +483,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     if !step_txt.is_empty() {
                         ui.label(
                             egui::RichText::new(step_txt)
-                                .size(theme::FONT_SM)
+                                .size(theme::font_sm())
                                 .color(theme::cur().text_dim),
                         );
                     }
@@ -488,7 +498,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                         .painter()
                         .layout_no_wrap(
                             crate::i18n::tr("%（0.1-10）").to_string(),
-                            egui::FontId::proportional(theme::FONT_SM),
+                            egui::FontId::proportional(theme::font_sm()),
                             theme::cur().text_dim,
                         )
                         .size()
@@ -504,7 +514,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     );
                     ui.label(
                         egui::RichText::new(crate::i18n::tr("%（0.1-10）"))
-                            .size(theme::FONT_SM)
+                            .size(theme::font_sm())
                             .color(theme::cur().text_dim),
                     );
                 });
@@ -591,18 +601,18 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(crate::i18n::tr("预估金额"))
-                .size(theme::FONT_SM)
+                .size(theme::font_sm())
                 .color(theme::cur().text_dim),
         );
         match total {
             Some(t) => ui.label(
                 egui::RichText::new(t.normalize().round_dp(8).to_string())
                     .monospace()
-                    .size(theme::FONT_SM),
+                    .size(theme::font_sm()),
             ),
             None => ui.label(
                 egui::RichText::new("—")
-                    .size(theme::FONT_SM)
+                    .size(theme::font_sm())
                     .color(theme::cur().text_dim),
             ),
         };
@@ -657,7 +667,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         if !hints.is_empty() {
             ui.label(
                 egui::RichText::new(hints.join("；"))
-                    .size(theme::FONT_SM)
+                    .size(theme::font_sm())
                     .color(theme::cur().warn),
             );
         }
@@ -729,7 +739,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     let btn = egui::Button::new(
         egui::RichText::new(format!("{word} {base}"))
             .strong()
-            .size(theme::FONT_BODY)
+            .size(theme::font_body())
             .color(theme::cur().on_fill),
     )
     .fill(color)
@@ -752,7 +762,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             theme::spinner(ui);
             ui.label(
                 egui::RichText::new(crate::i18n::tr("提交中…"))
-                    .size(theme::FONT_SM)
+                    .size(theme::font_sm())
                     .color(theme::cur().text_dim),
             );
         });
@@ -866,7 +876,7 @@ fn best_px_w(ui: &egui::Ui, vis: (bool, bool, bool)) -> f32 {
         if show {
             let t = ui.painter().layout_no_wrap(
                 crate::i18n::tr(label).to_string(),
-                egui::FontId::proportional(theme::FONT_SM),
+                egui::FontId::proportional(theme::font_sm()),
                 theme::cur().text,
             );
             w += t.size().x + 16.0;
@@ -928,7 +938,7 @@ fn err_bar(ui: &mut egui::Ui, err: &str) {
             // 「请」比「输入数量」矮一截，提到正文字号后收敛
             ui.label(
                 egui::RichText::new(err)
-                    .size(theme::FONT_MD)
+                    .size(theme::font_md())
                     .color(theme::cur().err),
             );
         });

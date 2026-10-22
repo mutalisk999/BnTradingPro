@@ -12,7 +12,7 @@ fn section(ui: &mut egui::Ui, title: &'static str, add: impl FnOnce(&mut egui::U
     theme::card(ui, |ui| {
         ui.label(
             egui::RichText::new(tr(title))
-                .size(theme::FONT_LG)
+                .size(theme::font_lg())
                 .strong()
                 .color(theme::cur().text),
         );
@@ -24,7 +24,7 @@ fn section(ui: &mut egui::Ui, title: &'static str, add: impl FnOnce(&mut egui::U
 fn para(ui: &mut egui::Ui, text: &'static str) {
     ui.label(
         egui::RichText::new(tr(text))
-            .size(theme::FONT_BODY)
+            .size(theme::font_body())
             .color(theme::cur().text),
     );
 }
@@ -34,7 +34,7 @@ fn bullet(ui: &mut egui::Ui, text: &'static str) {
         ui.label(egui::RichText::new("•").color(theme::cur().accent));
         ui.label(
             egui::RichText::new(tr(text))
-                .size(theme::FONT_BODY)
+                .size(theme::font_body())
                 .color(theme::cur().text),
         );
     });
@@ -44,13 +44,13 @@ fn kv(ui: &mut egui::Ui, k: &'static str, v: &'static str) {
     ui.horizontal_wrapped(|ui| {
         ui.label(
             egui::RichText::new(tr(k))
-                .size(theme::FONT_MD)
+                .size(theme::font_md())
                 .strong()
                 .color(theme::cur().accent),
         );
         ui.label(
             egui::RichText::new(tr(v))
-                .size(theme::FONT_MD)
+                .size(theme::font_md())
                 .color(theme::cur().text),
         );
     });
@@ -171,7 +171,7 @@ pub fn show(_app: &mut BnApp, ui: &mut egui::Ui) {
     ui.add_space(2.0);
     ui.label(
         egui::RichText::new(format!("BnTradingPro v{}", env!("CARGO_PKG_VERSION")))
-            .size(theme::FONT_SM)
+            .size(theme::font_sm())
             .color(theme::cur().text_dim),
     );
 }

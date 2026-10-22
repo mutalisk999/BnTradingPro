@@ -48,7 +48,7 @@ fn status_item(ui: &mut egui::Ui, name: &str, c: Color32, glow: bool, hover: &st
         ui.spacing_mut().item_spacing.x = 3.0;
         ui.label(
             egui::RichText::new(name)
-                .size(theme::FONT_SM)
+                .size(theme::font_sm())
                 .color(theme::cur().text_dim),
         );
         let (rect, resp) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
@@ -106,6 +106,41 @@ pub fn glyph_button(
     // 自绘控件默认对辅助技术不可见，补上可访问名字
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text));
     resp
+}
+
+/// 钳制容器：内容限定在当前可用矩形内布局，横向超出部分按遮挡裁剪——
+/// 绘制与点击热区都裁（egui 对 interact_rect 取 clip_rect 交集，挡住绘制
+/// 即同时挡住点击），父级只按「可用宽 × 内容自然高」推进，溢出宽度
+/// 不回流进父级 min_rect。
+///
+/// 为何需要：egui 的 allocate_ui / scope / with_layout 把子级 min_rect
+/// （含溢出）回报给父级，而 ScrollArea 会沿非滚动轴"跟随内容"扩展。
+/// 大字号下某表单行超出下单面板宽时，溢出经 ScrollArea → Frame 层层
+/// 放大进面板外框，egui 右面板又按外框右缘锚定 300pt 宽——整块面板被
+/// 顶出窗口右缘，表现为面板左缘整体右移、右缘被裁（现货切期货时
+/// 有效期多一枚 GTX 胶囊，溢出 46pt 尤为明显）。遮挡是可接受的降级，
+/// 面板错位不是。顶栏右侧簇同理：超宽时裁掉状态指示，不压到页签文字。
+pub fn clip_zone<R>(
+    ui: &mut egui::Ui,
+    layout: egui::Layout,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let avail = ui.available_rect_before_wrap();
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(avail).layout(layout));
+    child.set_clip_rect(child.clip_rect().intersect(avail));
+    let ret = add_contents(&mut child);
+    // 父级按钳制后的矩形推进；child 自身 min_rect 含溢出，只取其高度
+    let rect = egui::Rect::from_min_size(
+        avail.min,
+        egui::vec2(avail.width().max(0.0), child.min_rect().height().max(0.0)),
+    );
+    let response = ui.interact(
+        rect,
+        ui.next_auto_id().with("clip_zone"),
+        egui::Sense::hover(),
+    );
+    ui.advance_cursor_after_rect(rect);
+    egui::InnerResponse::new(ret, response)
 }
 
 /// 弹性填宽数字输入框：desired_width 取本行剩余可用宽减去 tail（行尾
@@ -228,7 +263,7 @@ fn group_thousands(s: &str) -> String {
 /// 表格数值单元格：右对齐 + 等宽字体（价格/数量/金额/盈亏列通用）
 pub fn num_cell(ui: &mut egui::Ui, txt: String, color: Option<Color32>) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let mut rt = egui::RichText::new(txt).monospace().size(theme::FONT_MD);
+        let mut rt = egui::RichText::new(txt).monospace().size(theme::font_md());
         if let Some(c) = color {
             rt = rt.color(c);
         }
@@ -358,7 +393,7 @@ fn draw_toast(ui: &mut egui::Ui, ctx: &egui::Context, state: &SharedState, i: us
             pr.circle_filled(rect.center(), 4.0, fg);
             ui.label(
                 egui::RichText::new(t.msg.as_str())
-                    .size(theme::FONT_MD)
+                    .size(theme::font_md())
                     .color(txt),
             );
         });
@@ -422,7 +457,7 @@ pub fn placeholder(ui: &mut egui::Ui, rect: egui::Rect, text: &str) {
         rect.center(),
         Align2::CENTER_CENTER,
         text,
-        FontId::proportional(theme::FONT_LG),
+        FontId::proportional(theme::font_lg()),
         theme::cur().text_dim,
     );
 }
@@ -439,21 +474,21 @@ pub fn empty_state(ui: &mut egui::Ui, icon: &str, title: &str, subtitle: &str) {
             rect.center(),
             Align2::CENTER_CENTER,
             icon,
-            FontId::proportional(theme::FONT_HERO),
+            FontId::proportional(theme::font_hero()),
             theme::cur().text_dim,
         );
         ui.add_space(2.0);
         // 标题用正文色加粗压过副标题：空态也要有信息层级
         ui.label(
             egui::RichText::new(title)
-                .size(theme::FONT_BODY)
+                .size(theme::font_body())
                 .strong()
                 .color(theme::cur().text),
         );
         if !subtitle.is_empty() {
             ui.label(
                 egui::RichText::new(subtitle)
-                    .size(theme::FONT_MD)
+                    .size(theme::font_md())
                     .color(theme::cur().text_dim.gamma_multiply(0.85)),
             );
         }
@@ -471,7 +506,7 @@ pub fn loading_state(ui: &mut egui::Ui, msg: &str) {
             ui.add_space(8.0);
             ui.label(
                 egui::RichText::new(msg)
-                    .size(theme::FONT_MD)
+                    .size(theme::font_md())
                     .color(theme::cur().text_dim),
             );
         });

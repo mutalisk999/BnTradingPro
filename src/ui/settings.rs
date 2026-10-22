@@ -20,7 +20,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.heading(
         egui::RichText::new(crate::i18n::tr("设置"))
             .strong()
-            .size(theme::FONT_LG),
+            .size(theme::font_lg()),
     );
     ui.separator();
 
@@ -49,7 +49,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     egui::RichText::new(crate::i18n::tr(
                         "测试网密钥在 testnet.binance.vision / testnet.binancefuture.com 申请",
                     ))
-                    .size(theme::FONT_SM)
+                    .size(theme::font_sm())
                     .color(theme::cur().text_dim),
                 );
             }
@@ -57,7 +57,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 egui::RichText::new(crate::i18n::tr(
                     "测试网与实盘的 API 密钥不通用，切换环境后需重新配置密钥",
                 ))
-                .size(theme::FONT_SM)
+                .size(theme::font_sm())
                 .color(theme::cur().text_dim),
             );
             if !app.settings.testnet {
@@ -65,7 +65,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     egui::RichText::new(crate::i18n::tr(
                         "⚠ 实盘模式下下单将使用真实资金，请确认密钥与环境正确！",
                     ))
-                    .size(theme::FONT_MD)
+                    .size(theme::font_md())
                     .color(theme::cur().err),
                 );
             }
@@ -120,6 +120,37 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     });
                 app.settings.lang = lang;
                 ui.separator();
+                theme::row_label(ui, crate::i18n::tr("字体大小"), 68.0);
+                let mut fsize = app.settings.font_size.clone();
+                egui::ComboBox::from_id_salt("font_size_cb")
+                    .selected_text(
+                        match fsize.as_str() {
+                            "medium" => crate::i18n::tr("中"),
+                            "large" => crate::i18n::tr("大"),
+                            _ => crate::i18n::tr("小"),
+                        }
+                        .to_string(),
+                    )
+                    .width(110.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut fsize, "small".to_string(), crate::i18n::tr("小"));
+                        ui.selectable_value(
+                            &mut fsize,
+                            "medium".to_string(),
+                            crate::i18n::tr("中"),
+                        );
+                        ui.selectable_value(&mut fsize, "large".to_string(), crate::i18n::tr("大"));
+                    });
+                if fsize != app.settings.font_size {
+                    app.settings.font_size = fsize;
+                    // 与涨跌色同路径：直写运行时配置并落盘，ui() 的字体跟随块
+                    // 下一帧应用新档位（字号逐帧现算，无需重装字体）
+                    let mut cfg = app.state.cfg.read().clone();
+                    cfg.font_size = app.settings.font_size.clone();
+                    *app.state.cfg.write() = cfg;
+                    app.state.send_cmd(crate::engine::Command::PersistConfig);
+                }
+                ui.separator();
                 theme::row_label(ui, crate::i18n::tr("主题"), 68.0);
                 let mut mode = app.settings.theme_mode.clone();
                 egui::ComboBox::from_id_salt("theme_cb")
@@ -172,7 +203,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 egui::RichText::new(crate::i18n::tr(
                     "保存后生效；顶栏右侧 深色/浅色 与 中/EN 按钮可即时切换",
                 ))
-                .size(theme::FONT_SM)
+                .size(theme::font_sm())
                 .color(theme::cur().text_dim),
             );
         },
@@ -190,7 +221,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 if crate::i18n::lang() == crate::i18n::ZH {
                     ui.label(
                         egui::RichText::new("recvWindow")
-                            .size(theme::FONT_SM)
+                            .size(theme::font_sm())
                             .color(theme::cur().text_dim),
                     );
                 }
@@ -408,14 +439,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                     crate::i18n::tr("数据目录"),
                     dir.display()
                 ))
-                .size(theme::FONT_SM)
+                .size(theme::font_sm())
                 .color(theme::cur().text_dim),
             );
             ui.label(
             egui::RichText::new(crate::i18n::tr(
                 "本工具仅供个人交易辅助与研究，不构成任何投资建议；使用实盘交易产生的一切后果由使用者自行承担。",
             ))
-            .size(theme::FONT_SM)
+            .size(theme::font_sm())
             .color(theme::cur().text_dim),
         );
         },
@@ -470,5 +501,87 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
             ToastKind::Ok,
             crate::i18n::tr("设置已应用，正在重连…").to_string(),
         );
+    }
+}
+
+#[cfg(test)]
+mod form_center_probe {
+    use super::*;
+    use crate::ui::theme;
+
+    /// 复刻设置页「row_label + ComboBox」结构并量两者中心高度差（0 = 对齐）。
+    /// 生产代码里 语言/字体大小/主题/涨跌色 四组共用同一结构：探针覆盖一组即覆盖全部
+    fn label_combo_rects(step: &str) -> (f32, egui::Rect, egui::Rect) {
+        // 档位是进程级全局：持锁设档位，drop 时自动复位，避免与并行用例互踩
+        let _font = theme::font_lock();
+        theme::set_font_size_str(step);
+        let ctx = egui::Context::default();
+        let mut captured: Option<(egui::Rect, egui::Rect)> = None;
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            theme::form_row(ui, |ui| {
+                // 复刻 theme::row_label（它不返回 Response，这里展开取 label rect）
+                let label = ui
+                    .allocate_ui(egui::vec2(68.0, theme::ROW_H), |ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(crate::i18n::tr("字体大小"))
+                                    .size(theme::font_body()),
+                            )
+                        })
+                        .inner
+                    })
+                    .inner;
+                let combo = egui::ComboBox::from_id_salt("probe_cb")
+                    .selected_text(crate::i18n::tr("中").to_string())
+                    .width(110.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut String::new(),
+                            "small".into(),
+                            crate::i18n::tr("小"),
+                        );
+                    });
+                captured = Some((label.rect, combo.response.rect));
+            });
+        });
+        out.textures_delta.clear();
+        let (lr, cr) = captured.expect("form_row 闭包内必须捕获到矩形");
+        (cr.center().y - lr.center().y, lr, cr)
+    }
+
+    #[test]
+    fn label_and_combobox_share_center_height() {
+        // 基准字号
+        let (d0, lr0, cr0) = label_combo_rects("small");
+        assert!(
+            d0.abs() < 0.75,
+            "标签与下拉框中心高度不一致（小）: {d0:+.2}px"
+        );
+        // 中 / 大字号：下拉框随字号长高，行高不变，中心仍须对齐
+        let (d1, lr1, cr1) = label_combo_rects("medium");
+        assert!(
+            d1.abs() < 0.75,
+            "标签与下拉框中心高度不一致（中）: {d1:+.2}px"
+        );
+        let (d2, lr2, cr2) = label_combo_rects("large");
+        assert!(
+            d2.abs() < 0.75,
+            "标签与下拉框中心高度不一致（大）: {d2:+.2}px"
+        );
+        // 档位复位由 label_combo_rects 内的 font_lock guard 负责
+        // 结构性不变量：行高由 form_row 预分配（ROW_H=30），标签与下拉框各自在
+        // 该行内做 cross-axis 居中，故两者中心都应落在行中线（行起点 0，探针中即
+        // ROW_H/2）。任何一边改用 top 对齐、或把控件高度抬过 ROW_H，都会破坏这
+        // 一等式——语言/字体大小/主题/涨跌色四组共用同一结构，此探针即回归护栏
+        let row_center = theme::ROW_H / 2.0;
+        for (step, d, lr, cr) in [
+            ("small", d0, lr0, cr0),
+            ("medium", d1, lr1, cr1),
+            ("large", d2, lr2, cr2),
+        ] {
+            assert_eq!(d, 0.0, "{step}: 标签与下拉框中心高度差应为 0");
+            assert_eq!(lr.center().y, row_center, "{step}: 标签未在行内垂直居中");
+            assert_eq!(cr.center().y, row_center, "{step}: 下拉框未在行内垂直居中");
+        }
     }
 }

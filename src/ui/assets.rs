@@ -23,7 +23,7 @@ fn load_failed_row(
         Some(e) => {
             ui.label(
                 egui::RichText::new(format!("{}{e}", crate::i18n::tr("加载失败: ")))
-                    .size(theme::FONT_SM)
+                    .size(theme::font_sm())
                     .color(theme::cur().err),
             );
             if theme::btn_default(ui, crate::i18n::tr("刷新账户"), true).clicked() {
@@ -39,7 +39,7 @@ fn load_failed_row(
 /// 卡头：市场名（正文字号加粗，层级压过页面标题）+ 右侧槽位
 fn card_header(ui: &mut egui::Ui, title: &str, add_right: impl FnOnce(&mut egui::Ui)) {
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(title).strong().size(theme::FONT_BODY));
+        ui.label(egui::RichText::new(title).strong().size(theme::font_body()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add_right);
     });
     ui.add_space(2.0);
@@ -63,7 +63,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         ui.label(
             egui::RichText::new(crate::i18n::tr("资产总览"))
                 .strong()
-                .size(theme::FONT_LG),
+                .size(theme::font_lg()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if theme::btn_default(ui, crate::i18n::tr("刷新账户"), true).clicked() {
@@ -164,7 +164,7 @@ fn spot_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::U
                 for b in &nonzero {
                     body.row(22.0, |mut row| {
                         row.col(|ui| {
-                            ui.label(theme::code(&b.asset).size(theme::FONT_MD));
+                            ui.label(theme::code(&b.asset).size(theme::font_md()));
                         });
                         row.col(|ui| {
                             widgets::num_cell(
@@ -222,7 +222,7 @@ fn fut_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui
                 ui.add(ext(theme::card_label(label)));
                 ui.add(ext(egui::RichText::new(v)
                     .monospace()
-                    .size(theme::FONT_MD)
+                    .size(theme::font_md())
                     .color(color)));
                 ui.add_space(10.0);
             };
@@ -305,7 +305,7 @@ fn fut_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui
                 for b in &assets {
                     body.row(22.0, |mut row| {
                         row.col(|ui| {
-                            ui.label(theme::code(&b.asset).size(theme::FONT_MD));
+                            ui.label(theme::code(&b.asset).size(theme::font_md()));
                         });
                         row.col(|ui| {
                             widgets::num_cell(ui, widgets::fmt_dec_grouped(&b.wallet), None);

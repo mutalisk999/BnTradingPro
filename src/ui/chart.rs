@@ -91,7 +91,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui, right_limit: f32) {
             // 填充透明度随 animate_bool 淡入淡出
             let galley = ui.painter().layout_no_wrap(
                 label.clone(),
-                egui::FontId::proportional(theme::FONT_SM),
+                egui::FontId::proportional(theme::font_sm()),
                 if on {
                     ma_colors[i]
                 } else {
@@ -374,7 +374,7 @@ fn draw(
         plot.center() - Vec2::new(0.0, plot.height() * 0.10),
         Align2::CENTER_CENTER,
         &app.page.symbol,
-        FontId::proportional(theme::FONT_WATERMARK),
+        FontId::proportional(theme::font_watermark()),
         Color32::from_rgba_unmultiplied(txt.r(), txt.g(), txt.b(), wm_alpha),
     );
 
@@ -507,7 +507,7 @@ fn draw(
 
     // ---------- 网格与价格轴 ----------
     let step = nice_step(span as f64, 6);
-    let grid_font = FontId::monospace(theme::FONT_SM);
+    let grid_font = FontId::monospace(theme::font_sm());
     // 网格点用整数索引计算（gp = idx * step）：f32 累加在 step 极小（横盘品种
     // span 收缩到 ULP 量级）时会低于 ULP 不再前进，循环永不终止冻结 UI
     let mut idx = (lo as f64 / step).floor() as i64;
@@ -549,7 +549,7 @@ fn draw(
             Pos2::new(x, plot.bottom() - 2.0),
             Align2::CENTER_BOTTOM,
             label,
-            FontId::proportional(theme::FONT_SM),
+            FontId::proportional(theme::font_sm()),
             theme::cur().text_dim,
         );
         painter.line_segment(
@@ -671,7 +671,7 @@ fn draw(
         Pos2::new(plot.left() + chart_w + 4.0 + tag_size.x / 2.0, yl),
         Align2::CENTER_CENTER,
         tag,
-        FontId::monospace(theme::FONT_SM),
+        FontId::monospace(theme::font_sm()),
         theme::cur().on_fill,
     );
 
@@ -697,7 +697,7 @@ fn draw(
             Pos2::new(plot.left() + 6.0, y - 8.0),
             Align2::LEFT_CENTER,
             &ov.label,
-            FontId::proportional(theme::FONT_SM),
+            FontId::proportional(theme::font_sm()),
             ov.color,
         );
     }
@@ -758,7 +758,7 @@ fn draw(
                 if chg >= 0.0 { "+" } else { "" },
                 chg
             );
-            let font = FontId::monospace(theme::FONT_MD);
+            let font = FontId::monospace(theme::font_md());
             let galley = painter.layout_no_wrap(lines.clone(), font.clone(), theme::cur().text);
             let mut pos = hp + Vec2::new(14.0, 14.0);
             let sz = galley.size() + Vec2::new(16.0, 12.0);
@@ -790,7 +790,7 @@ fn draw(
             let t_txt = time_label_full(c.t);
             let t_galley = painter.layout_no_wrap(
                 t_txt.clone(),
-                FontId::monospace(theme::FONT_SM),
+                FontId::monospace(theme::font_sm()),
                 theme::cur().text,
             );
             let tsz = t_galley.size() + Vec2::new(10.0, 4.0);
@@ -806,7 +806,7 @@ fn draw(
                 Pos2::new(tx + tsz.x / 2.0, plot.bottom() - tsz.y / 2.0),
                 Align2::CENTER_CENTER,
                 t_txt,
-                FontId::monospace(theme::FONT_SM),
+                FontId::monospace(theme::font_sm()),
                 theme::cur().text,
             );
         }
@@ -817,7 +817,7 @@ fn draw(
         Pos2::new(plot.left() + chart_w - 8.0, plot.top() + 8.0),
         Align2::RIGHT_TOP,
         crate::i18n::tr("滚轮缩放 · 拖动平移 · 双击回最新"),
-        FontId::proportional(theme::FONT_SM),
+        FontId::proportional(theme::font_sm()),
         theme::cur().text_dim.gamma_multiply(0.8),
     );
 
@@ -827,7 +827,7 @@ fn draw(
     let mut legend_y = plot.top() + 8.0;
     let mut legend_rows: Vec<(String, FontId, Color32)> = vec![(
         format!("{} · {}", app.page.symbol, interval.label()),
-        FontId::proportional(theme::FONT_SM),
+        FontId::proportional(theme::font_sm()),
         theme::cur().text_dim,
     )];
     for (k, &period) in MA_PERIODS.iter().enumerate() {
@@ -839,7 +839,7 @@ fn draw(
             .unwrap_or_else(|| "—".into());
         legend_rows.push((
             format!("MA{period} {val}"),
-            FontId::monospace(theme::FONT_SM),
+            FontId::monospace(theme::font_sm()),
             ma_colors[k],
         ));
     }
@@ -993,7 +993,7 @@ fn draw_sub_panel(
             Pos2::new(rect.right() + 4.0, y),
             Align2::LEFT_CENTER,
             format!("{g:.0}"),
-            FontId::monospace(theme::FONT_SM),
+            FontId::monospace(theme::font_sm()),
             t.text_dim,
         );
     }
@@ -1063,8 +1063,11 @@ fn draw_sub_panel(
     let mut lx = rect.left() + 8.0;
     for (name, role, _) in &sub.lines {
         let col = role_color(*role);
-        let gal =
-            painter.layout_no_wrap((*name).to_string(), FontId::monospace(theme::FONT_SM), col);
+        let gal = painter.layout_no_wrap(
+            (*name).to_string(),
+            FontId::monospace(theme::font_sm()),
+            col,
+        );
         painter.galley(Pos2::new(lx, rect.top() + 2.0), gal.clone(), col);
         lx += gal.size().x + 10.0;
     }

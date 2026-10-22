@@ -98,6 +98,10 @@ pub struct AppConfig {
     pub lang: String,
     /// 主题（dark/light）
     pub theme_mode: String,
+    /// 字体大小档位（small=基准大小，medium/large 放大；见 theme::FONT_STEP）。
+    /// 任一历史配置都缺此字段——无 default 整体解析失败会把用户配置备份弃用
+    #[serde(default)]
+    pub font_size: String,
     /// 涨跌颜色方向：green_up=绿涨红跌（默认），red_up=红涨绿跌
     pub price_dir: String,
     /// 现货自选交易对（置顶显示）
@@ -127,6 +131,7 @@ impl Default for AppConfig {
             log_level: "info".to_string(),
             lang: "zh".to_string(),
             theme_mode: "dark".to_string(),
+            font_size: "small".to_string(),
             price_dir: "green_up".to_string(),
             favorites_spot: Vec::new(),
             favorites_futures: Vec::new(),
@@ -241,6 +246,25 @@ mod tests {
         assert_eq!(back.alerts.len(), 1);
         assert_eq!(back.alerts[0].symbol, "BTCUSDT");
         assert_eq!(back.alerts[0].price.to_string(), "86997.7");
+    }
+
+    /// 新增字段（font_size）对历史配置的前向兼容：旧版 config.toml 没有该键，
+    /// 无 #[serde(default)] 会整体解析失败——load 会把用户配置备份弃用并回退
+    /// 默认（自选/端点等全部丢失）。历史配置缺键必须仍解析
+    #[test]
+    fn old_config_without_font_size_still_loads() {
+        let dir = tmp_dir("legacy_font");
+        AppConfig::default().save(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let s = std::fs::read_to_string(&path).unwrap();
+        let stripped: String = s
+            .lines()
+            .filter(|l| !l.starts_with("font_size"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, stripped).unwrap();
+        let back = AppConfig::load(&dir);
+        assert!(back.font_size.is_empty(), "缺键应走 serde 默认而非解析失败");
     }
 
     /// save 的失败路径必须返回 Err 而非 panic 或静默吞错：

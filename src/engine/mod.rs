@@ -154,8 +154,15 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
                                 !st.rules.read().iter().any(|b| b.symbols.is_empty())
                                     && st.rest_ok.load(Ordering::Relaxed)
                             }
-                            // 启动宽限：避开启动期 ReloadAll 的在途重复
-                            tokio::time::sleep(Duration::from_secs(20)).await;
+                            // 启动宽限：避开启动期 ReloadAll 的在途重复。不睡固定
+                            // 时长而是盯首个就绪信号——健康/部分健康时启动 ReloadAll
+                            // 已见效，无重复投递风险即退出宽限；全程断网（fail-fast）
+                            // 时没有任何信号，最长等 60s（≥ 启动 ReloadAll 在慢网下
+                            // 的最坏耗时 4×http_timeout），届时必然已不在途
+                            let grace = tokio::time::Instant::now() + Duration::from_secs(60);
+                            while tokio::time::Instant::now() < grace && !healthy(&h_state) {
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                            }
                             let mut backoff = Duration::from_secs(5);
                             // 是否曾观测到不健康：转回健康时据此补发一次完整 ReloadAll；
                             // 启动即健康的正常路径不多发任何命令
@@ -173,12 +180,20 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
                                     continue;
                                 }
                                 was_unhealthy = true;
+                                // 每轮不健康都以"恢复后一次完整 reload"收尾：
+                                // 若在断网期间改过配置，那次 ReloadAll 也会失败并
+                                // 置 rest_ok=false，恢复后必须重补一次才能刷新账户
+                                full_sent = false;
                                 tracing::info!(?backoff, "恢复巡检：重发 ReloadRules");
                                 let _ = h_tx.send(Command::ReloadRules);
                                 // 等本轮执行完或判超时再投下一轮：命令串行执行，
-                                // 慢请求（连接超时）下持续投递会让队列无界堆积
+                                // 慢请求（连接超时）下持续投递会让队列无界堆积。
+                                // 等待上限按 HTTP 超时推导（一条 ReloadRules 最坏
+                                // 2 校时 + 2 exchangeInfo ≈ 4×超时），保证发送速率
+                                // 不超过执行速率
+                                let to = h_state.cfg_snapshot().http_timeout_secs.max(3);
                                 let deadline =
-                                    tokio::time::Instant::now() + Duration::from_secs(45);
+                                    tokio::time::Instant::now() + Duration::from_secs(to * 4 + 15);
                                 while tokio::time::Instant::now() < deadline && !healthy(&h_state) {
                                     tokio::time::sleep(Duration::from_secs(2)).await;
                                 }

@@ -4,23 +4,95 @@
 
 use eframe::egui;
 use egui::{Color32, FontData, FontDefinitions, Stroke, Style, Visuals};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 // ---------- 字号 / 控件高度 token ----------
 /// 全应用仅 5 档字号：小字（辅助小字）→ 次要（表格/说明）→ 正文 → 页面标题 → 大数字。
 /// 小两档从 11/12.5 上调至 12/13.5：雅黑在小字号下各字墨迹盒高低差被放大
-/// （「请」明显矮于「输入」），字号上去后比例收敛、辨识度也更好
-pub const FONT_SM: f32 = 12.0;
-pub const FONT_MD: f32 = 13.5;
-pub const FONT_BODY: f32 = 14.0;
+/// （「请」明显矮于「输入」），字号上去后比例收敛、辨识度也更好。
+/// 字号按"字体大小"设置整体缩放：全部取值为函数而非 const，读取时
+/// 乘当前档位系数，设置变更后下一帧即生效（无需重装字体）
+///
+/// **缩放取舍**：行高/按钮高/面板宽等布局常量（BTN_H/ROW_H 等）不随字号
+/// 档位变化，故档位幅度刻意保守（中 ×1.15、大 ×1.3），避免大字号顶死
+/// 固定行高的纵向留白
+static FONT_STEP: AtomicU8 = AtomicU8::new(0); // 0=小 1=中 2=大
+
+/// 按配置字符串设档位（"small"/"medium"/"large"，其余按小处理——
+/// 老配置反序列化的空串也落入"小"）
+pub fn set_font_size_str(s: &str) {
+    let step = match s {
+        "medium" => 1,
+        "large" => 2,
+        _ => 0,
+    };
+    FONT_STEP.store(step, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod test_util {
+    use super::set_font_size_str;
+    use std::sync::Mutex;
+
+    /// 仅测试用：FONT_STEP 是进程级全局量，cargo test 的并行线程会互相
+    /// 踩——一个用例设 large 量几何的同时，另一个正按 small 断言
+    /// （group_center_probe 曾因此在并行运行下误报"居中异常"）。
+    /// 改读档位或按 font_*() 量几何的用例统一先拿这把锁；
+    /// guard 释放时把档位恢复 small，下个持锁者看到的是干净基线
+    pub struct FontGuard(std::sync::MutexGuard<'static, ()>);
+
+    impl Drop for FontGuard {
+        fn drop(&mut self) {
+            set_font_size_str("small");
+        }
+    }
+
+    pub fn font_lock() -> FontGuard {
+        static LOCK: Mutex<()> = Mutex::new(());
+        FontGuard(LOCK.lock().unwrap())
+    }
+}
+
+#[cfg(test)]
+pub use test_util::{font_lock, FontGuard};
+
+/// 档位系数：小 ×1.0（当前基准）、中 ×1.15、大 ×1.3
+fn font_scale() -> f32 {
+    match FONT_STEP.load(Ordering::Relaxed) {
+        1 => 1.15,
+        2 => 1.3,
+        _ => 1.0,
+    }
+}
+
+pub fn font_sm() -> f32 {
+    12.0 * font_scale()
+}
+pub fn font_md() -> f32 {
+    13.5 * font_scale()
+}
+pub fn font_body() -> f32 {
+    14.0 * font_scale()
+}
 /// 品牌名等需要强调的展示型文字
-pub const FONT_XL: f32 = 20.0;
-pub const FONT_LG: f32 = 16.5;
-pub const FONT_HERO: f32 = 20.0;
+pub fn font_xl() -> f32 {
+    20.0 * font_scale()
+}
+pub fn font_lg() -> f32 {
+    16.5 * font_scale()
+}
+pub fn font_hero() -> f32 {
+    20.0 * font_scale()
+}
 /// 解锁/配钥页的品牌标题（页面级展示字，不属于常规字号阶梯）
-pub const FONT_BRAND: f32 = 34.0;
+pub fn font_brand() -> f32 {
+    34.0 * font_scale()
+}
 /// 图表水位印（装饰性大字，同样不属于常规字号阶梯，但纳入 token 体系
 /// 统一管理，避免裸字面量散落在绘制代码里）
-pub const FONT_WATERMARK: f32 = 58.0;
+pub fn font_watermark() -> f32 {
+    58.0 * font_scale()
+}
 /// 常规按钮/页签高度
 pub const BTN_H: f32 = 28.0;
 /// 主操作按钮高度（买卖切换、下单提交）
@@ -63,50 +135,9 @@ pub const REPAINT_QUOTE: u64 = 100;
 /// 空闲档：无行情变动的页面（资产/设置/帮助）保持低频重绘
 pub const REPAINT_IDLE: u64 = 400;
 
-// ---------- 响应式等比缩放 ----------
-/// 设计基准逻辑尺寸：全部布局常量（面板宽/行高/字号）按此基准标定
-pub const BASE_W: f32 = 1280.0;
-pub const BASE_H: f32 = 720.0;
-/// 窗口初始逻辑尺寸（main.rs 的 ViewportBuilder 与启动预置缩放共用：
-/// 预置时还没有第一帧的 screen_rect，只能按已知初始尺寸算）
+/// 窗口初始逻辑尺寸（main.rs 的 ViewportBuilder 用）
 pub const START_W: f32 = 960.0;
 pub const START_H: f32 = 600.0;
-/// 等比缩放上下限：小于基准最多缩到 ×0.85，大于基准最多放大到 ×1.5
-pub const SCALE_MIN: f32 = 0.85;
-pub const SCALE_MAX: f32 = 1.5;
-
-/// 按物理尺寸推算目标 ppi（auto_ppi 与启动预置共用纯计算）
-fn target_ppp(native: f32, phys: egui::Vec2) -> f32 {
-    let s = (phys.x / (BASE_W * native)).min(phys.y / (BASE_H * native));
-    // 向下取整而非四舍五入：zoom 变更帧 egui 会用 ratio×content_rect 重写 screen_rect，
-    // 物理尺寸带亚像素回抖（1440 → 1439.9）；1.125 这类边界值用 round 会在相邻档位
-    // 间漂移（1.15↔1.1），floor 对亚像素噪声稳定——恢复后回到与启动一致的档位
-    let s = ((s * 20.0 + 0.001).floor() / 20.0).clamp(SCALE_MIN, SCALE_MAX);
-    native * s
-}
-
-/// 按窗口物理尺寸推算全局 pixels_per_point，锁定逻辑工作区 ≈ 基准尺寸，
-/// 实现"窗口变大 → 全站字号/行高/面板/图表等比变大"。返回 None 表示无需调整。
-///
-/// 无反馈回路：物理尺寸 = 逻辑 rect × 当前 ppi，与目标 ppi 无关；
-/// 系数按 5% 量化，拖拽窗口时减少字体重排/重新光栅化次数。
-pub fn auto_ppi(ctx: &egui::Context) -> Option<f32> {
-    let native = ctx.native_pixels_per_point().unwrap_or(1.0);
-    // 0.36 起 screen_rect 在 RawInput 里（Option<Rect>）：逻辑 rect × 当前 ppi = 物理尺寸
-    let rect = ctx.input(|i| i.raw.screen_rect).unwrap_or(egui::Rect::ZERO);
-    let target = target_ppp(native, rect.size() * ctx.pixels_per_point());
-    ((ctx.pixels_per_point() - target).abs() > 0.01).then_some(target)
-}
-
-/// 启动预置：在 App::new（首帧绘制前）按已知初始逻辑尺寸算目标 ppi。
-/// 否则首帧以原生 DPI 绘制，而 ui() 里的 auto_ppi 有 0.25s 防抖（为错开
-/// 最大化/恢复的 resize 过渡帧），启动时从零计时——窗口必先以偏大的
-/// 原生比例渲染约 0.25s 再骤缩（每开必现的"先大后小"）
-pub fn auto_ppp_initial(ctx: &egui::Context) -> Option<f32> {
-    let native = ctx.native_pixels_per_point().unwrap_or(1.0);
-    let target = target_ppp(native, egui::vec2(START_W, START_H) * native);
-    ((ctx.pixels_per_point() - target).abs() > 0.01).then_some(target)
-}
 
 // ---------- 主题定义 ----------
 
@@ -173,26 +204,30 @@ pub const DARK: Theme = Theme {
 pub const LIGHT: Theme = Theme {
     up: Color32::from_rgb(6, 158, 98),
     down: Color32::from_rgb(214, 58, 80),
-    bg: Color32::from_rgb(244, 246, 249),
-    panel: Color32::from_rgb(255, 255, 255),
-    panel2: Color32::from_rgb(248, 250, 252),
-    // 卡片近纯白：与灰底 bg 拉开层次，卡片"浮"在页面上
-    card: Color32::from_rgb(252, 253, 255),
-    border: Color32::from_rgb(216, 222, 231),
-    text: Color32::from_rgb(27, 32, 38),
-    // 加深一档：在近白卡片底 (252,253,255) 上对比度 ≥4.5:1
-    text_dim: Color32::from_rgb(96, 106, 120),
+    // 纸面暖底：冷蓝灰换成米黄"报纸"色——大面积纯白/冷灰的眩光降一档（护眼），
+    // 层次仍是 bg 最暗 → panel/card 最亮，卡片浮在纸面上
+    bg: Color32::from_rgb(240, 237, 229),
+    panel: Color32::from_rgb(252, 250, 243),
+    panel2: Color32::from_rgb(245, 242, 233),
+    // 卡片近白（暖）：与纸面 bg 拉开层次，卡片"浮"在页面上
+    card: Color32::from_rgb(250, 248, 240),
+    // 边框暖化并加深：原冷灰边框在浅底上对比偏弱，面板/卡片轮廓更实
+    border: Color32::from_rgb(207, 200, 184),
+    // 暖墨色：报纸式深墨偏黄，在暖纸底上更融洽
+    text: Color32::from_rgb(28, 27, 23),
+    // 暖灰并加深：在 (250,248,240) 卡片底上对比度从 5.3:1 提到 6.1:1
+    text_dim: Color32::from_rgb(97, 93, 82),
     // accent/warn 加深：原色在白底上对比度 2.7:1 / 3.5:1，不满足 4.5:1
     accent: Color32::from_rgb(140, 102, 0),
     warn: Color32::from_rgb(146, 96, 8),
     err: Color32::from_rgb(214, 58, 80),
-    grid: Color32::from_rgb(223, 228, 236),
-    grid_time: Color32::from_rgb(228, 233, 239),
-    crosshair: Color32::from_rgb(110, 122, 140),
-    tooltip_bg: Color32::from_rgb(255, 255, 255),
-    tag_bg: Color32::from_rgb(219, 225, 234),
-    row_hover: Color32::from_rgb(235, 239, 245),
-    btn_idle: Color32::from_rgb(226, 232, 240),
+    grid: Color32::from_rgb(221, 216, 203),
+    grid_time: Color32::from_rgb(226, 221, 209),
+    crosshair: Color32::from_rgb(116, 112, 98),
+    tooltip_bg: Color32::from_rgb(253, 250, 243),
+    tag_bg: Color32::from_rgb(220, 214, 199),
+    row_hover: Color32::from_rgb(238, 233, 221),
+    btn_idle: Color32::from_rgb(229, 223, 208),
     // 彩色填充（up/down）上的文字用黑色：白色对浅色 up 仅 3.5:1；
     // 黑色对 up 6.1:1、对 down 4.6:1
     on_fill: Color32::from_rgb(0, 0, 0),
@@ -337,7 +372,7 @@ pub fn ma_colors() -> [Color32; 4] {
 /// 彩色小徽标
 pub fn badge(ui: &mut egui::Ui, text: &str, fg: Color32) {
     let txt = egui::RichText::new(format!(" {text} "))
-        .size(FONT_SM)
+        .size(font_sm())
         .strong()
         // 徽标字距 0.05em：大写短标加开后接近专业终端的状态标排版
         .extra_letter_spacing(BADGE_TRACKING);
@@ -371,7 +406,7 @@ pub fn btn_primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respon
     let btn = egui::Button::new(
         egui::RichText::new(text)
             .strong()
-            .size(FONT_BODY)
+            .size(font_body())
             .color(cur().on_accent),
     )
     .fill(cur().accent)
@@ -384,7 +419,7 @@ pub fn btn_primary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respon
 /// 普通按钮：card 底 + 中性文字。不显式设 stroke——交给 egui 按交互状态
 /// 取 theme::apply 预置的 widgets.<state>.bg_stroke，hover 时边框自动提亮
 pub fn btn_default(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
-    let btn = egui::Button::new(egui::RichText::new(text).size(FONT_BODY))
+    let btn = egui::Button::new(egui::RichText::new(text).size(font_body()))
         .fill(cur().card)
         .corner_radius(R_MD)
         .min_size(egui::vec2(0.0, BTN_H));
@@ -395,7 +430,7 @@ pub fn btn_default(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respon
 /// 普通按钮（指定最小宽度）：表格行内按钮需要比文字更宽的点击区时用
 /// （如持仓行的止盈止损按钮，双语长度不一且点击频率高）
 pub fn btn_default_w(ui: &mut egui::Ui, text: &str, min_w: f32, enabled: bool) -> egui::Response {
-    let btn = egui::Button::new(egui::RichText::new(text).size(FONT_BODY))
+    let btn = egui::Button::new(egui::RichText::new(text).size(font_body()))
         .fill(cur().card)
         .corner_radius(R_MD)
         .min_size(egui::vec2(min_w, BTN_H));
@@ -405,13 +440,17 @@ pub fn btn_default_w(ui: &mut egui::Ui, text: &str, min_w: f32, enabled: bool) -
 
 /// 次按钮：全宽、金色描边 —— 认证页的替代路径（跳过 / 仅看行情）。
 /// small_button 的默认底色与卡片底色几乎相同，辨识度太差。
-/// 字号与 btn_primary 同为 FONT_BODY：两者同为 BTN_LG 高的主/次一对
+/// 字号与 btn_primary 同为 font_body()：两者同为 BTN_LG 高的主/次一对
 pub fn btn_secondary(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
-    let btn = egui::Button::new(egui::RichText::new(text).size(FONT_BODY).color(cur().text))
-        .fill(cur().panel2)
-        .stroke(Stroke::new(1.0_f32, cur().accent.gamma_multiply(0.55)))
-        .corner_radius(R_MD)
-        .min_size(egui::vec2(ui.available_width(), BTN_LG));
+    let btn = egui::Button::new(
+        egui::RichText::new(text)
+            .size(font_body())
+            .color(cur().text),
+    )
+    .fill(cur().panel2)
+    .stroke(Stroke::new(1.0_f32, cur().accent.gamma_multiply(0.55)))
+    .corner_radius(R_MD)
+    .min_size(egui::vec2(ui.available_width(), BTN_LG));
     ui.add_enabled(enabled, btn)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -421,7 +460,7 @@ pub fn btn_danger(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respons
     // 用半透明红叠加：gamma_multiply 在浅色主题下会变成近黑色块
     // （egui 0.36 移除了 ecolor::lerp_color；自透明向 c 以 t 渐显 ≈ 全通道乘 t）
     let fill = cur().err.gamma_multiply(0.16);
-    let btn = egui::Button::new(egui::RichText::new(text).size(FONT_BODY).color(cur().err))
+    let btn = egui::Button::new(egui::RichText::new(text).size(font_body()).color(cur().err))
         .fill(fill)
         .stroke(Stroke::new(1.0_f32, cur().err.gamma_multiply(0.55)))
         .corner_radius(R_MD)
@@ -436,7 +475,7 @@ pub fn btn_solid(ui: &mut egui::Ui, text: &str, fill: Color32, enabled: bool) ->
     let btn = egui::Button::new(
         egui::RichText::new(text)
             .strong()
-            .size(FONT_BODY)
+            .size(font_body())
             .color(cur().on_fill),
     )
     .fill(fill)
@@ -454,9 +493,11 @@ pub fn btn_solid(ui: &mut egui::Ui, text: &str, fill: Color32, enabled: bool) ->
 pub fn btn_ghost(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
     let t = cur();
     let txt_c = if enabled { t.text } else { t.text_dim };
-    let galley =
-        ui.painter()
-            .layout_no_wrap(text.to_owned(), egui::FontId::proportional(FONT_SM), txt_c);
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::proportional(font_sm()),
+        txt_c,
+    );
     let pad_x = 8.0;
     let size = egui::vec2(galley.size().x + pad_x * 2.0, 22.0);
     let (rect, resp) = ui.allocate_exact_size(
@@ -488,7 +529,7 @@ pub fn btn_ghost(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response
 
 /// 固定字号的小加载圈（统一 13px，避免调用点出现裸 .size()）
 pub fn spinner(ui: &mut egui::Ui) {
-    ui.add(egui::Spinner::new().size(FONT_BODY));
+    ui.add(egui::Spinner::new().size(font_body()));
 }
 
 /// 胶囊页签：激活态 accent 淡填充 + accent 文字，未激活透明 + 暗文字，
@@ -497,7 +538,7 @@ pub fn pill_tab(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response 
     let t = cur();
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        egui::FontId::proportional(FONT_BODY),
+        egui::FontId::proportional(font_body()),
         if active { t.accent } else { t.text_dim },
     );
     let pad_x = 12.0;
@@ -517,7 +558,7 @@ pub fn pill_tab_rect(
     let t = cur();
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        egui::FontId::proportional(FONT_BODY),
+        egui::FontId::proportional(font_body()),
         if active { t.accent } else { t.text_dim },
     );
     let resp = ui.interact(
@@ -543,12 +584,12 @@ pub fn pill_tab_rect(
 }
 
 /// 紧凑胶囊页签：周期直选等需要在一行内放下大量档位的场景。
-/// FONT_SM + 5pt 横向内边距 + 22pt 行高，宽度约为 pill_tab 的 55%
+/// font_sm() + 5pt 横向内边距 + 22pt 行高，宽度约为 pill_tab 的 55%
 pub fn pill_tab_sm(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
     let t = cur();
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        egui::FontId::proportional(FONT_SM),
+        egui::FontId::proportional(font_sm()),
         if active { t.accent } else { t.text_dim },
     );
     let pad_x = 5.0;
@@ -648,7 +689,7 @@ pub fn apply(ctx: &egui::Context) {
     v.window_fill = t.panel2;
     v.extreme_bg_color = t.bg;
     v.faint_bg_color = if is_light() {
-        Color32::from_rgb(236, 240, 246)
+        Color32::from_rgb(233, 229, 217)
     } else {
         Color32::from_rgb(24, 30, 40)
     };
@@ -659,22 +700,22 @@ pub fn apply(ctx: &egui::Context) {
     v.popup_shadow = egui::Shadow::NONE;
 
     let hover_bg = if is_light() {
-        Color32::from_rgb(226, 232, 241)
+        Color32::from_rgb(227, 221, 207)
     } else {
         Color32::from_rgb(38, 46, 60)
     };
     let active_bg = if is_light() {
-        Color32::from_rgb(214, 222, 234)
+        Color32::from_rgb(215, 208, 191)
     } else {
         Color32::from_rgb(46, 56, 72)
     };
     let widget_bg = if is_light() {
-        Color32::from_rgb(255, 255, 255)
+        Color32::from_rgb(253, 250, 243)
     } else {
         Color32::from_rgb(30, 37, 48)
     };
     let hover_border = if is_light() {
-        Color32::from_rgb(176, 187, 202)
+        Color32::from_rgb(171, 164, 147)
     } else {
         Color32::from_rgb(70, 82, 100)
     };
@@ -701,12 +742,16 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.active.fg_stroke = Stroke::new(1.0_f32, t.text);
     v.widgets.active.corner_radius = 4.into();
 
+    // 选中色（下拉框当前项/文本选区/单选圆点）：纸面上用金色"荧光笔"，
+    // 比原浅蓝（191,214,241）深一档、对比更高；前景取正文墨色：
+    // egui 用 selection.stroke.color 画选中项/选区文字本身，
+    // 之前设为 Stroke::NONE 会把选中项文字画成全透明（选中项只剩色块）
     v.selection.bg_fill = if is_light() {
-        Color32::from_rgb(191, 214, 241)
+        Color32::from_rgb(226, 193, 95)
     } else {
         Color32::from_rgb(42, 75, 117)
     };
-    v.selection.stroke = Stroke::NONE;
+    v.selection.stroke = Stroke::new(1.0_f32, t.text);
     v.hyperlink_color = t.accent;
 
     style.spacing.item_spacing = egui::vec2(8.0, 7.0);
@@ -719,17 +764,23 @@ pub fn apply(ctx: &egui::Context) {
     style.text_styles = [
         (
             egui::TextStyle::Heading,
-            egui::FontId::proportional(FONT_HERO),
+            egui::FontId::proportional(font_hero()),
         ),
-        (egui::TextStyle::Body, egui::FontId::proportional(FONT_BODY)),
+        (
+            egui::TextStyle::Body,
+            egui::FontId::proportional(font_body()),
+        ),
         (
             egui::TextStyle::Button,
-            egui::FontId::proportional(FONT_BODY),
+            egui::FontId::proportional(font_body()),
         ),
-        (egui::TextStyle::Small, egui::FontId::proportional(FONT_SM)),
+        (
+            egui::TextStyle::Small,
+            egui::FontId::proportional(font_sm()),
+        ),
         (
             egui::TextStyle::Monospace,
-            egui::FontId::monospace(FONT_BODY),
+            egui::FontId::monospace(font_body()),
         ),
     ]
     .into();
@@ -737,8 +788,8 @@ pub fn apply(ctx: &egui::Context) {
     let (dark, light) = (style.clone(), style);
     ctx.set_style_of(egui::Theme::Dark, dark);
     ctx.set_style_of(egui::Theme::Light, light);
-    // 缩放职责已由 auto_ppi（响应式等比）接管：关闭 egui 内置 Ctrl+加减号缩放，
-    // 否则用户手动缩放会在下一帧被 auto_ppi 静默回退
+    // 关闭 egui 内置 Ctrl+加减号缩放：本应用的字号只由"字体大小"设置控制，
+    // 内置 zoom 会等比放大全部组件与字体，与"拖拽/缩放都不改字号"的设计相悖
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
 }
 
@@ -770,7 +821,7 @@ pub fn card_with_header<R>(
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(title)
-                    .size(FONT_LG)
+                    .size(font_lg())
                     .strong()
                     .color(cur().text),
             );
@@ -829,7 +880,7 @@ pub fn nav_tab(ui: &mut egui::Ui, label: &str, active: bool) -> bool {
 pub fn section(ui: &mut egui::Ui, label: &str) {
     ui.label(
         egui::RichText::new(label)
-            .size(FONT_SM)
+            .size(font_sm())
             .strong()
             .color(cur().text_dim),
     );
@@ -838,11 +889,45 @@ pub fn section(ui: &mut egui::Ui, label: &str) {
 /// 表格/卡片内的小标签文字
 pub fn card_label(label: &str) -> egui::RichText {
     egui::RichText::new(label.to_string())
-        .size(FONT_SM)
+        .size(font_sm())
         .color(cur().text_dim)
 }
 
 /// 由配置字符串设置主题模式
 pub fn set_mode_str(s: &str) {
     set_mode(if s == "light" { LIGHT_MODE } else { DARK_MODE });
+}
+
+#[cfg(test)]
+mod selection_probe {
+    use super::*;
+
+    /// 选中项回归：egui 用 selection.stroke.color 画选中项/选区文字本身，
+    /// 曾设为 Stroke::NONE → 下拉框当前项只剩金色块、文字全透明；
+    /// stroke 必须是不透明正文色（金色底上墨色文字 ≈10:1）
+    #[test]
+    fn selected_item_text_color_is_opaque() {
+        let _font_lock = font_lock();
+        set_mode_str("light");
+        let ctx = egui::Context::default();
+        apply(&ctx); // 样式须在 ui 创建前落位（ui 创建时快照 style）
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.selectable_label(true, "限价");
+        });
+        let mut found = None;
+        for shape in &out.shapes {
+            if let egui::Shape::Text(t) = &shape.shape {
+                let row_txt: String = t.galley.rows.iter().map(|r| r.text().to_string()).collect();
+                if row_txt.contains("限价") {
+                    found = Some(t.override_text_color.unwrap_or(t.fallback_color));
+                }
+            }
+        }
+        out.textures_delta.clear();
+        let color = found.expect("必须画出选中项文字");
+        assert_eq!(
+            color, LIGHT.text,
+            "选中项文字必须为不透明正文色，实际 {color:?}"
+        );
+    }
 }

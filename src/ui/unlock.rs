@@ -50,14 +50,14 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
                 Pos2::new(avail.center().x, title_y),
                 Align2::CENTER_CENTER,
                 "BnTradingPro",
-                FontId::proportional(theme::FONT_BRAND),
+                FontId::proportional(theme::font_brand()),
                 theme::cur().accent,
             );
             p.text(
                 Pos2::new(avail.center().x, title_y + 36.0),
                 Align2::CENTER_CENTER,
                 crate::i18n::tr("Binance 现货 / U本位合约 交易终端"),
-                FontId::proportional(theme::FONT_BODY),
+                FontId::proportional(theme::font_body()),
                 theme::cur().text_dim,
             );
 
@@ -99,7 +99,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
 
 fn card_header(ui: &mut egui::Ui, title: &str) {
     // 页面标题统一 FONT_LG（egui heading 默认字号与其他页不一致）
-    ui.label(egui::RichText::new(title).strong().size(theme::FONT_LG));
+    ui.label(egui::RichText::new(title).strong().size(theme::font_lg()));
     ui.separator();
 }
 
@@ -155,7 +155,7 @@ fn error_text(ui: &mut egui::Ui, msg: &str) {
         ui.label(
             egui::RichText::new(msg)
                 .color(theme::cur().err)
-                .size(theme::FONT_MD),
+                .size(theme::font_md()),
         );
     });
 }
@@ -170,7 +170,7 @@ fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
     ui.add(
         egui::Label::new(
             egui::RichText::new(crate::i18n::tr("输入主密码以解密本机保存的 API 密钥"))
-                .size(theme::FONT_MD)
+                .size(theme::font_md())
                 .color(theme::cur().text_dim),
         )
         .wrap_mode(egui::TextWrapMode::Wrap),
@@ -282,7 +282,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             } else {
                 crate::i18n::tr("当前环境：实盘（binance.com → API 管理，建议绑定 IP 白名单并只开启现货/合约交易权限）")
             })
-            .size(theme::FONT_MD)
+            .size(theme::font_md())
             .color(if testnet { theme::cur().accent } else { theme::cur().err }),
         )
         .wrap_mode(egui::TextWrapMode::Wrap),
@@ -312,7 +312,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.add(
                 egui::Label::new(
                     egui::RichText::new(crate::i18n::tr("主密码用于加密本机保存的 API Key/Secret（Argon2id + AES-256-GCM）。忘记将无法恢复。"))
-                        .size(theme::FONT_MD)
+                        .size(theme::font_md())
                         .color(theme::cur().text_dim),
                 )
                 .wrap_mode(egui::TextWrapMode::Wrap),
@@ -402,7 +402,7 @@ fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
             egui::RichText::new(crate::i18n::tr(
                 "跳过后仍可查看实时行情与 K 线，随时可在设置页配置密钥",
             ))
-            .size(theme::FONT_SM)
+            .size(theme::font_sm())
             .color(theme::cur().text_dim),
         )
         .wrap_mode(egui::TextWrapMode::Wrap),

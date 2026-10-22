@@ -50,10 +50,10 @@ fn row_metrics(ui: &egui::Ui) -> RowMetrics {
         .ctx()
         // 名称走代码 token（等宽）：行高按其实际字体度量推算，
         // pitch 才与 show_rows 的行高假设一致
-        .fonts_mut(|f| f.row_height(&egui::FontId::monospace(theme::FONT_MD)));
+        .fonts_mut(|f| f.row_height(&egui::FontId::monospace(theme::font_md())));
     let l2 = ui
         .ctx()
-        .fonts_mut(|f| f.row_height(&egui::FontId::monospace(theme::FONT_SM)));
+        .fonts_mut(|f| f.row_height(&egui::FontId::monospace(theme::font_sm())));
     let l1 = l1.max(slot_h);
     let l2 = l2.max(slot_h);
     let band = l1 + LINE_GAP + l2 + 2.0 * CARD_PAD;
@@ -164,7 +164,7 @@ pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
         }
         ui.label(
             egui::RichText::new(crate::i18n::tr("交易规则加载中，请检查网络与代理"))
-                .size(theme::FONT_MD)
+                .size(theme::font_md())
                 .color(theme::cur().text_dim),
         );
         apply_actions(app, switched, toggled);
@@ -377,7 +377,7 @@ fn symbol_row(
                 star_rect.center(),
                 egui::Align2::CENTER_CENTER,
                 if is_fav { "★" } else { "☆" },
-                egui::FontId::proportional(theme::FONT_MD),
+                egui::FontId::proportional(theme::font_md()),
                 if is_fav {
                     theme::cur().accent
                 } else {
@@ -411,7 +411,7 @@ fn symbol_row(
             // 名称：纯展示（截断防长名溢出），点击切换由整卡热区负责
             // 名称用代码 token（等宽 + 0.02em 字距）：与下一行等宽价格同体系
             let name_txt = {
-                let t = theme::code(sym).size(theme::FONT_MD).color(if selected {
+                let t = theme::code(sym).size(theme::font_md()).color(if selected {
                     theme::cur().accent
                 } else {
                     theme::cur().text
@@ -447,7 +447,7 @@ fn symbol_row(
                 egui::Label::new(
                     egui::RichText::new(widgets::fmt_dec_plain(&t.close, act.dp))
                         .monospace()
-                        .size(theme::FONT_SM)
+                        .size(theme::font_sm())
                         .color(c),
                 )
                 .selectable(false),
@@ -460,7 +460,7 @@ fn symbol_row(
                         egui::RichText::new(format!("{chg:+.2}%"))
                             .monospace()
                             // 与同行价格统一 FONT_SM（此前硬编码 9.5 脱离字号阶梯）
-                            .size(theme::FONT_SM)
+                            .size(theme::font_sm())
                             .color(c),
                     )
                     .selectable(false),
@@ -476,7 +476,7 @@ fn symbol_row(
                 egui::Label::new(
                     egui::RichText::new("—")
                         .monospace()
-                        .size(theme::FONT_SM)
+                        .size(theme::font_sm())
                         .color(theme::cur().text_dim),
                 )
                 .selectable(false),

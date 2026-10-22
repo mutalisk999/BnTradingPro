@@ -143,7 +143,7 @@ pub fn show_book_group(app: &mut BnApp, ui: &mut egui::Ui) {
                 .iter()
                 .map(|s| widgets::fmt_dec_fixed(s, s.normalize().scale() as usize))
                 .collect();
-            let head = egui::FontId::proportional(theme::FONT_SM);
+            let head = egui::FontId::proportional(theme::font_sm());
             let widest = labels
                 .iter()
                 .map(|t| {
@@ -181,14 +181,14 @@ pub fn show_book_group(app: &mut BnApp, ui: &mut egui::Ui) {
                     ui.spacing_mut().item_spacing.x = 3.0;
                     ui.label(
                         egui::RichText::new(crate::i18n::tr("档位"))
-                            .size(theme::FONT_SM)
+                            .size(theme::font_sm())
                             .color(theme::cur().text_dim),
                     );
                     for (i, label) in labels.iter().enumerate() {
                         let selected = i == group_idx;
                         let txt =
                             egui::RichText::new(label)
-                                .size(theme::FONT_SM)
+                                .size(theme::font_sm())
                                 .color(if selected {
                                     theme::cur().accent
                                 } else {
@@ -383,7 +383,7 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.label(
                 egui::RichText::new(format!("{:.*}", dp, mid_f))
                     .monospace()
-                    .size(theme::FONT_BODY)
+                    .size(theme::font_body())
                     .color(theme::cur().text)
                     // 价差行中间价：与页头最新价同一「大数字」语义，700 字重
                     .variation(theme::WGHT, 700.0),
@@ -394,13 +394,13 @@ pub fn show_book(app: &mut BnApp, ui: &mut egui::Ui) {
                     ui.label(
                         egui::RichText::new(&spread_txt)
                             .monospace()
-                            .size(theme::FONT_SM)
+                            .size(theme::font_sm())
                             .color(theme::cur().text),
                     );
                 }
                 ui.label(
                     egui::RichText::new(crate::i18n::tr("价差"))
-                        .size(theme::FONT_SM)
+                        .size(theme::font_sm())
                         .color(theme::cur().text_dim),
                 );
             });
@@ -610,7 +610,7 @@ fn book_row(
         egui::Pos2::new(rect.left() + 2.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         format!("{price_f:.*}", dp),
-        egui::FontId::monospace(theme::FONT_MD),
+        egui::FontId::monospace(theme::font_md()),
         price_color,
     );
     // 数量（右）
@@ -618,7 +618,7 @@ fn book_row(
         egui::Pos2::new(rect.right() - 2.0, rect.center().y),
         egui::Align2::RIGHT_CENTER,
         format!("{qty_f:.*}", qdp),
-        egui::FontId::monospace(theme::FONT_MD),
+        egui::FontId::monospace(theme::font_md()),
         theme::cur().text,
     );
     if resp.clicked() {
@@ -673,8 +673,8 @@ pub fn show_trades(app: &mut BnApp, ui: &mut egui::Ui) {
             .x
     };
     // 表头/数据两套字体：表头小号正体，数据等宽正文
-    let head_font = egui::FontId::proportional(theme::FONT_SM);
-    let data_font = egui::FontId::monospace(theme::FONT_MD);
+    let head_font = egui::FontId::proportional(theme::font_sm());
+    let data_font = egui::FontId::monospace(theme::font_md());
     let (mut w_price, mut w_qty, mut w_time) = (
         measure(crate::i18n::tr("价格"), &head_font),
         measure(crate::i18n::tr("数量"), &head_font),
@@ -847,18 +847,18 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
         // 记录标题文字竖直中线，作为行尾星标/预警 glyph 的对齐锚点
         let mut anchor_y: Option<f32>;
         if !base.is_empty() && app.page.symbol.starts_with(&base) {
-            let r = ui.label(egui::RichText::new(&base).strong().size(theme::FONT_LG));
+            let r = ui.label(egui::RichText::new(&base).strong().size(theme::font_lg()));
             anchor_y = Some(r.rect.center().y);
             ui.label(
                 egui::RichText::new(&app.page.symbol[base.len()..])
-                    .size(theme::FONT_LG)
+                    .size(theme::font_lg())
                     .color(theme::cur().text_dim),
             );
         } else {
             let r = ui.label(
                 egui::RichText::new(app.page.symbol.clone())
                     .strong()
-                    .size(theme::FONT_LG),
+                    .size(theme::font_lg()),
             );
             anchor_y = Some(r.rect.center().y);
         }
@@ -875,7 +875,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             let r = ui.label(
                 egui::RichText::new(widgets::fmt_thousands(px, dp))
                     .monospace()
-                    .size(theme::FONT_LG)
+                    .size(theme::font_lg())
                     .color(c)
                     // 大价格走真字重：Cascadia 的 wght 变量轴 700（egui 0.36 的
                     // .strong() 仅改颜色；数字在等宽字体里有 700 字重才压得住
@@ -887,7 +887,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.label(
                 egui::RichText::new(format!("{chg:+.2}%"))
                     .monospace()
-                    .size(theme::FONT_BODY)
+                    .size(theme::font_body())
                     .color(c),
             );
         }
@@ -910,7 +910,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             if widgets::glyph_button(
                 ui,
                 if is_fav { "★" } else { "☆" },
-                theme::FONT_BODY,
+                theme::font_body(),
                 if is_fav {
                     theme::cur().accent
                 } else {
@@ -935,7 +935,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             if widgets::glyph_button(
                 ui,
                 &bell_txt,
-                theme::FONT_SM,
+                theme::font_sm(),
                 if alert_n > 0 || app.alerts_open {
                     theme::cur().accent
                 } else {
@@ -962,7 +962,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             ui.label(
                 egui::RichText::new(value)
                     .monospace()
-                    .size(theme::FONT_MD)
+                    .size(theme::font_md())
                     .color(color),
             );
         })
@@ -1049,7 +1049,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 ui.label(
                     egui::RichText::new(format!("{rf:+.4}%"))
                         .monospace()
-                        .size(theme::FONT_MD)
+                        .size(theme::font_md())
                         .strong()
                         .color(color),
                 );
@@ -1057,7 +1057,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                     ui.label(
                         egui::RichText::new(cd)
                             .monospace()
-                            .size(theme::FONT_MD)
+                            .size(theme::font_md())
                             .color(theme::cur().text_dim),
                     );
                 }
@@ -1074,7 +1074,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
         egui::Window::new(
             egui::RichText::new(crate::i18n::tr("价格预警"))
                 .strong()
-                .size(theme::FONT_LG),
+                .size(theme::font_lg()),
         )
         .id(egui::Id::new("alerts_win"))
         .anchor(egui::Align2::RIGHT_TOP, [-16.0, 92.0])
@@ -1088,13 +1088,13 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 ui.label(
                     egui::RichText::new(&app.page.symbol)
                         .strong()
-                        .size(theme::FONT_MD),
+                        .size(theme::font_md()),
                 );
                 if let Some(t) = &tick {
                     ui.label(
                         egui::RichText::new(widgets::fmt_dec_fixed(&t.last_price, dp))
                             .monospace()
-                            .size(theme::FONT_SM)
+                            .size(theme::font_sm())
                             .color(theme::cur().text_dim),
                     );
                 }
@@ -1111,7 +1111,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                 if ui
                     .add(
                         egui::Button::new(
-                            egui::RichText::new(crate::i18n::tr("添加")).size(theme::FONT_SM),
+                            egui::RichText::new(crate::i18n::tr("添加")).size(theme::font_sm()),
                         )
                         .min_size(egui::vec2(0.0, theme::CONTROL_H)),
                     )
@@ -1127,7 +1127,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
             if alerts.is_empty() {
                 ui.label(
                     egui::RichText::new(crate::i18n::tr("暂无预警，输入目标价添加"))
-                        .size(theme::FONT_SM)
+                        .size(theme::font_sm())
                         .color(theme::cur().text_dim),
                 );
             } else {
@@ -1144,7 +1144,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                     .show(ui, |ui| {
                         for (i, a) in alerts.iter().enumerate() {
                             ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(&a.symbol).size(theme::FONT_MD));
+                                ui.label(egui::RichText::new(&a.symbol).size(theme::font_md()));
                                 let mkt_label = if a.market == 0 {
                                     ""
                                 } else {
@@ -1153,7 +1153,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                                 if !mkt_label.is_empty() {
                                     ui.label(
                                         egui::RichText::new(mkt_label)
-                                            .size(theme::FONT_SM)
+                                            .size(theme::font_sm())
                                             .color(theme::cur().text_dim),
                                     );
                                 }
@@ -1164,7 +1164,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                                             .add(
                                                 egui::Button::new(
                                                     egui::RichText::new("×")
-                                                        .size(theme::FONT_SM)
+                                                        .size(theme::font_sm())
                                                         .color(theme::cur().text_dim),
                                                 )
                                                 .fill(egui::Color32::TRANSPARENT)
@@ -1185,7 +1185,7 @@ pub fn show_header(app: &mut BnApp, ui: &mut egui::Ui) {
                                                 )
                                             ))
                                             .monospace()
-                                            .size(theme::FONT_MD)
+                                            .size(theme::font_md())
                                             .color(
                                                 if a.above {
                                                     theme::cur().up
@@ -1218,6 +1218,10 @@ mod group_center_probe {
     /// 复刻 show_book_group 的布局并量出组的水平位置：
     /// offset = 左留白 - 右留白，0 = 整组在面板内横向居中
     fn measure(build: fn(&mut egui::Ui) -> egui::Rect, panel_w: f32) -> f32 {
+        // FONT_STEP 是全局量：并行测试里其它用例（topbar_probe / 字号
+        // 用例）改档位时会改掉本探针按 font_sm() 现量的文本宽，"窄面板
+        // 居中"断言随之误报。持锁期间档位保证为 small
+        let _font = theme::font_lock();
         let ctx = egui::Context::default();
         let mut captured: Option<(egui::Rect, egui::Rect)> = None;
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -1236,7 +1240,7 @@ mod group_center_probe {
     /// allocate_ui_with_layout —— top_down(Center) 只居中自然宽子控件
     fn sized_group(ui: &mut egui::Ui) -> egui::Rect {
         // 量文本宽（代替真实 tick/标签，几何结构等价）
-        let head = egui::FontId::proportional(theme::FONT_SM);
+        let head = egui::FontId::proportional(theme::font_sm());
         let w = |t: &str| {
             ui.painter()
                 .layout_no_wrap(t.to_string(), head.clone(), theme::cur().text)
@@ -1258,10 +1262,10 @@ mod group_center_probe {
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = 3.0;
-                    ui.label(egui::RichText::new("档位").size(theme::FONT_SM));
+                    ui.label(egui::RichText::new("档位").size(theme::font_sm()));
                     for s in ["0.01", "0.1", "1", "10"] {
                         let _ = ui.add(
-                            egui::Button::new(egui::RichText::new(s).size(theme::FONT_SM))
+                            egui::Button::new(egui::RichText::new(s).size(theme::font_sm()))
                                 .min_size(egui::vec2(btn_w, 20.0)),
                         );
                     }

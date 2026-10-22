@@ -277,6 +277,11 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "关于" => "About",
         "语言" => "Language",
         "主题" => "Theme",
+        // 字体大小档位：小=当前基准大小，中/大逐级放大
+        "字体大小" => "Font size",
+        "小" => "Small",
+        "中" => "Medium",
+        "大" => "Large",
         "深色" => "Dark",
         "浅色" => "Light",
         "涨跌色" => "Polarity",

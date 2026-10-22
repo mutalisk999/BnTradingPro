@@ -120,6 +120,8 @@ pub struct SettingsDraft {
     pub proxy_url: String,
     pub lang: String,
     pub theme_mode: String,
+    /// 字体大小档位：small / medium / large
+    pub font_size: String,
     /// 涨跌颜色方向：green_up / red_up
     pub price_dir: String,
     pub favorites_spot: Vec<String>,
@@ -145,6 +147,7 @@ impl SettingsDraft {
             proxy_url: cfg.proxy.url.clone(),
             lang: cfg.lang.clone(),
             theme_mode: cfg.theme_mode.clone(),
+            font_size: cfg.font_size.clone(),
             price_dir: cfg.price_dir.clone(),
             favorites_spot: cfg.favorites_spot.clone(),
             favorites_futures: cfg.favorites_futures.clone(),
@@ -170,6 +173,7 @@ impl SettingsDraft {
             log_level: self.log_level,
             lang: self.lang,
             theme_mode: self.theme_mode,
+            font_size: self.font_size,
             price_dir: self.price_dir,
             favorites_spot: self.favorites_spot,
             favorites_futures: self.favorites_futures,
@@ -207,6 +211,9 @@ pub struct BnApp {
     /// 已应用的主题/语言（用于配置变更时重新应用）
     pub applied_theme: String,
     pub applied_lang: String,
+    /// 字体大小档位（"small"/"medium"/"large"）：与主题/语言一样在 ui() 里
+    /// 跟随配置即时生效
+    pub applied_font_size: String,
     /// 当前交易市场（随交易页签切换）
     pub market: Market,
     /// 活动交易页状态：交易页签内唯一活跃副本，切页时与 spot/fut 整体 swap。
@@ -272,22 +279,12 @@ pub struct BnApp {
     /// 订单历史筛选：全部 / 仅基础单 / 仅条件单（引擎合并了 Algo 条件单
     /// 历史，默认两类都展示）
     pub hist_kind: crate::ui::orders::HistKind,
-    /// 缩放防抖：上一帧窗口物理尺寸（zoom 切换不改变物理尺寸，仅 resize 改变）
-    ppp_last_phys: Option<(f32, f32)>,
-    /// 缩放防抖：物理尺寸自该时刻起未变（egui time 域，秒）
-    ppp_stable_since: Option<f64>,
 }
 
 impl BnApp {
     pub fn new(cc: &eframe::CreationContext, cfg: AppConfig) -> Self {
         theme::apply_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
-        // 启动预置缩放（详见 theme::auto_ppp_initial 注释）：在首帧绘制前落位
-        // 目标 ppi，否则窗口先以偏大的原生 DPI 渲染再骤缩
-        if let Some(p) = theme::auto_ppp_initial(&cc.egui_ctx) {
-            tracing::info!("启动预置 ppi: {p}");
-            cc.egui_ctx.set_pixels_per_point(p);
-        }
 
         let dir = config::data_dir();
         let state = Arc::new(SharedState::default());
@@ -320,9 +317,14 @@ impl BnApp {
             api_key: Zeroizing::default(),
             api_secret: Zeroizing::default(),
             keys_err: String::new(),
-            tab: Tab::Spot,
+            tab: match std::env::var("BTP_TAB").as_deref() {
+                Ok("futures") => Tab::Futures,
+                _ => Tab::Spot,
+            },
             applied_theme: cfg.theme_mode.clone(),
             applied_lang: cfg.lang.clone(),
+            // 留空让首帧应用块设一次档位（空串与任何值都不相等）
+            applied_font_size: String::new(),
             market: Market::Spot,
             page: TradingPage::new(default_symbol.clone(), interval),
             confirm: None,
@@ -357,8 +359,6 @@ impl BnApp {
             book_tab: crate::ui::market::BookTab::Book,
             flow_auto_done: false,
             hist_kind: crate::ui::orders::HistKind::All,
-            ppp_last_phys: None,
-            ppp_stable_since: None,
         }
     }
 
@@ -705,7 +705,7 @@ impl BnApp {
                 egui::RichText::new("BnTradingPro")
                     .strong()
                     .color(theme::cur().accent)
-                    .size(theme::FONT_XL),
+                    .size(theme::font_xl()),
             );
             ui.add_space(12.0);
 
@@ -721,7 +721,10 @@ impl BnApp {
                 }
             }
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // 右侧簇：钳制在页签之后的剩余宽度内，超出部分遮挡裁剪——
+            // 大字号 + 窄窗口下宁可裁掉右侧指示，也不让它们压到左侧页签
+            // 文字（字体重叠不可读；状态详情本来就在悬停提示里）
+            widgets::clip_zone(ui, egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // 主题 / 语言快捷切换
                 // 语言按钮显示"目标语言"，只随语言状态变，与主题无关
                 // （此前两个文字捆在同一个主题分支里，切主题时中/EN 会跟着翻转）
@@ -810,12 +813,12 @@ impl BnApp {
                             ui.spacing_mut().item_spacing.x = 3.0;
                             ui.label(
                                 egui::RichText::new(crate::i18n::tr("账户"))
-                                    .size(theme::FONT_SM)
+                                    .size(theme::font_sm())
                                     .color(theme::cur().text_dim),
                             );
                             ui.label(
                                 egui::RichText::new(crate::i18n::tr("未配置密钥"))
-                                    .size(theme::FONT_SM)
+                                    .size(theme::font_sm())
                                     .color(theme::cur().warn),
                             );
                         });
@@ -1056,7 +1059,7 @@ impl BnApp {
                                                         crate::i18n::tr("下单 · ")
                                                     ))
                                                     .strong()
-                                                    .size(theme::FONT_BODY),
+                                                    .size(theme::font_body()),
                                                 );
                                             },
                                         );
@@ -1064,7 +1067,15 @@ impl BnApp {
                                 );
                             },
                         );
-                        egui::ScrollArea::vertical().show(ui, |ui| trade::show(self, ui));
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            // 横向钳制：表单行在大字号下可能超出面板宽，超出部分
+                            // 遮挡裁剪，不得经 ScrollArea/Frame 回流把面板顶出窗口右缘
+                            crate::ui::widgets::clip_zone(
+                                ui,
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| trade::show(self, ui),
+                            );
+                        });
                     });
                 // 图表右缘钳位用（见中央区 chart::show）
                 trade_left = trade.response.rect.left();
@@ -1150,7 +1161,7 @@ impl BnApp {
                 let open_n = self.state.orders.lock().open(self.market).len();
                 ui.label(
                     egui::RichText::new(format!("{}{}", open_n, crate::i18n::tr("笔挂单")))
-                        .size(theme::FONT_SM)
+                        .size(theme::font_sm())
                         .color(theme::cur().text_dim),
                 );
             });
@@ -1257,7 +1268,7 @@ impl BnApp {
                     ui.label(
                         egui::RichText::new(header)
                             .strong()
-                            .size(theme::FONT_LG)
+                            .size(theme::font_lg())
                             .color(if testnet {
                                 theme::cur().accent
                             } else {
@@ -1345,31 +1356,6 @@ impl eframe::App for BnApp {
         let ctx = ui.ctx().clone(); // Context 内部是 Arc，克隆廉价；避免与 ui 的可变借用冲突
                                     // 本地价格预警逐帧评估（内部空表时即刻返回，无锁开销）
         self.check_alerts();
-        // 响应式等比缩放（防抖）：最大化/恢复会产生一串 resize 事件，在过渡帧
-        // （窗口高度骤减）应用 zoom 曾引发 chart 绘制的 clamp panic（已单独修复）；
-        // 仍保留防抖：仅当窗口物理尺寸稳定 ≥0.25s 后才应用 zoom，使缩放切换
-        // 与 resize 事件流错开，避免过渡帧下二次布局抖动
-        {
-            let rect = ctx.input(|i| i.raw.screen_rect).unwrap_or(egui::Rect::ZERO);
-            let size = rect.size() * ctx.pixels_per_point();
-            let now = ctx.input(|i| i.time);
-            // 半像素内视为未变（逻辑 rect × ppi 换算存在舍入抖动）
-            let moved = match self.ppp_last_phys {
-                Some((lx, ly)) => (size.x - lx).abs() > 0.5 || (size.y - ly).abs() > 0.5,
-                None => true,
-            };
-            if moved {
-                self.ppp_last_phys = Some((size.x, size.y));
-                self.ppp_stable_since = Some(now);
-            }
-            let stable = now - self.ppp_stable_since.unwrap_or(now) >= 0.25;
-            if stable {
-                if let Some(p) = theme::auto_ppi(&ctx) {
-                    ctx.set_pixels_per_point(p);
-                    ctx.request_repaint();
-                }
-            }
-        }
         // 主题/语言跟随配置（设置页或顶栏修改后即时生效）
         {
             let cfg = self.state.cfg.read();
@@ -1385,6 +1371,14 @@ impl eframe::App for BnApp {
                     crate::i18n::ZH
                 });
                 self.applied_lang = cfg.lang.clone();
+            }
+            // 字体大小：档位系数改变全部字号取值（font_*() 每帧现算），
+            // 同时重设 Style 的 TextStyle 默认尺寸；无需重装字体文件
+            if self.applied_font_size != cfg.font_size {
+                theme::set_font_size_str(&cfg.font_size);
+                theme::apply(&ctx);
+                ctx.request_repaint();
+                self.applied_font_size = cfg.font_size.clone();
             }
         }
         // 开发辅助：BTP_DEMO=1 跳过解锁直接进主界面，便于无凭据调试/截图（仅 debug 构建编译）；
@@ -1405,6 +1399,16 @@ impl eframe::App for BnApp {
                 })
                 .unwrap_or(Tab::Spot);
             self.tab = tab;
+            // 市场页签必须与 set_tab 走同一套换出逻辑（page swap + market），
+            // 否则 BTP_DEMO_TAB=futures 仍渲染现货页，无法复现期货布局
+            match tab {
+                Tab::Spot => std::mem::swap(&mut self.spot, &mut self.page),
+                Tab::Futures => std::mem::swap(&mut self.fut, &mut self.page),
+                _ => {}
+            }
+            if let Some(m) = tab.market() {
+                self.market = m;
+            }
             Self::seed_demo_accounts(&self.state);
         }
         if !matches!(self.phase, Phase::Main) {
@@ -1540,5 +1544,67 @@ impl BnApp {
                 stop_loss: d("3350.00"),
             },
         ];
+    }
+}
+
+#[cfg(test)]
+mod topbar_probe {
+    use super::*;
+    use crate::ui::theme;
+
+    /// 复刻 topbar 结构（品牌 + 5 页签 + RTL 右侧簇），在指定窗口宽度下
+    /// 记录各控件矩形，用于定位"大字号 + 窄窗口"时的重叠来源
+    fn topbar_rects(width: f32, step: &str) -> Vec<(String, egui::Rect)> {
+        // 档位是进程级全局：持锁设档位，drop 时自动复位，避免与并行用例互踩
+        let _font = theme::font_lock();
+        theme::set_font_size_str(step);
+        let ctx = egui::Context::default();
+        let mut rects: Vec<(String, egui::Rect)> = Vec::new();
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(width, 40.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                ui.horizontal(|ui| {
+                    let r = ui.label(
+                        egui::RichText::new("BnTradingPro")
+                            .strong()
+                            .color(theme::cur().accent)
+                            .size(theme::font_xl()),
+                    );
+                    rects.push(("brand".into(), r.rect));
+                    ui.add_space(12.0);
+                    for t in ["现货", "合约", "资产", "设置", "帮助"] {
+                        let r = theme::pill_tab(ui, t, false);
+                        rects.push((format!("tab_{t}"), r.rect));
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        for name in ["REST", "行情", "账户"] {
+                            let r = ui.label(egui::RichText::new(name).size(theme::font_sm()));
+                            rects.push((format!("st_{name}"), r.rect));
+                            ui.add_space(8.0);
+                        }
+                        theme::badge(ui, "TESTNET", theme::cur().accent);
+                    });
+                });
+            },
+        );
+        out.textures_delta.clear();
+        rects
+    }
+
+    #[test]
+    fn probe_prints_overlaps() {
+        for w in [1200.0, 900.0, 700.0] {
+            let rects = topbar_rects(w, "large");
+            println!("=== width={w} ===");
+            for (n, r) in &rects {
+                println!("{n:12} {:?}", r);
+            }
+        }
     }
 }

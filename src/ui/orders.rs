@@ -203,7 +203,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                 list.len() + algo.len(),
                 crate::i18n::tr("笔挂单")
             ))
-            .size(theme::FONT_MD),
+            .size(theme::font_md()),
         );
         if theme::btn_default(ui, crate::i18n::tr("刷新"), true).clicked() {
             state.send_cmd(Command::RefreshOpenOrders { market });
@@ -344,7 +344,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    ui.label(theme::code(&o.symbol).size(theme::FONT_MD));
+                                    ui.label(theme::code(&o.symbol).size(theme::font_md()));
                                 },
                             );
                         });
@@ -361,7 +361,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                             };
                             ui.label(
                                 egui::RichText::new(txt)
-                                    .size(theme::FONT_MD)
+                                    .size(theme::font_md())
                                     .color(c)
                                     .strong(),
                             );
@@ -374,7 +374,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                             };
                             ui.label(
                                 egui::RichText::new(format!("{}{extra}", type_cn(&o.order_type)))
-                                    .size(theme::FONT_MD),
+                                    .size(theme::font_md()),
                             );
                         });
                         row.col(|ui| {
@@ -409,7 +409,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         row.col(|ui| {
                             ui.label(
                                 egui::RichText::new(status_cn(&o.status))
-                                    .size(theme::FONT_MD)
+                                    .size(theme::font_md())
                                     .color(theme::cur().accent),
                             );
                         });
@@ -459,7 +459,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    ui.label(theme::code(&a.symbol).size(theme::FONT_MD));
+                                    ui.label(theme::code(&a.symbol).size(theme::font_md()));
                                 },
                             );
                         });
@@ -476,7 +476,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                             };
                             ui.label(
                                 egui::RichText::new(txt)
-                                    .size(theme::FONT_MD)
+                                    .size(theme::font_md())
                                     .color(c)
                                     .strong(),
                             );
@@ -489,7 +489,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                             };
                             ui.label(
                                 egui::RichText::new(format!("{}{extra}", type_cn(&a.order_type)))
-                                    .size(theme::FONT_MD),
+                                    .size(theme::font_md()),
                             );
                         });
                         row.col(|ui| {
@@ -508,7 +508,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                             if a.close_position {
                                 ui.label(
                                     egui::RichText::new(crate::i18n::tr("整仓"))
-                                        .size(theme::FONT_MD),
+                                        .size(theme::font_md()),
                                 );
                             } else {
                                 widgets::num_cell(
@@ -529,7 +529,7 @@ pub fn show_open(app: &mut BnApp, ui: &mut egui::Ui) {
                         row.col(|ui| {
                             ui.label(
                                 egui::RichText::new(status_cn(&a.algo_status))
-                                    .size(theme::FONT_MD)
+                                    .size(theme::font_md())
                                     .color(theme::cur().accent),
                             );
                         });
@@ -673,7 +673,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                 positions.len(),
                 crate::i18n::tr("个持仓")
             ))
-            .size(theme::FONT_MD),
+            .size(theme::font_md()),
         );
         if theme::btn_default(ui, crate::i18n::tr("刷新"), true).clicked() {
             state.send_cmd(Command::RefreshAccount);
@@ -779,7 +779,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                             // 交易对列右对齐（与表头一致）
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.label(
-                                    theme::code(&p.symbol).size(theme::FONT_MD),
+                                    theme::code(&p.symbol).size(theme::font_md()),
                                 );
                             });
                         });
@@ -793,7 +793,7 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                                 egui::RichText::new(txt)
                                     .color(c)
                                     .strong()
-                                    .size(theme::FONT_MD),
+                                    .size(theme::font_md()),
                             );
                         });
                         row.col(|ui| {
@@ -886,19 +886,19 @@ pub fn show_positions(app: &mut BnApp, ui: &mut egui::Ui) {
                                         ui.label(
                                             egui::RichText::new(sl)
                                                 .monospace()
-                                                .size(theme::FONT_SM)
+                                                .size(theme::font_sm())
                                                 .color(theme::cur().down),
                                         );
                                         ui.label(
                                             egui::RichText::new("/")
                                                 .monospace()
-                                                .size(theme::FONT_SM)
+                                                .size(theme::font_sm())
                                                 .color(theme::cur().text_dim),
                                         );
                                         ui.label(
                                             egui::RichText::new(tp)
                                                 .monospace()
-                                                .size(theme::FONT_SM)
+                                                .size(theme::font_sm())
                                                 .color(theme::cur().up),
                                         );
                                     },
@@ -989,7 +989,7 @@ fn show_tpsl_window(app: &mut BnApp, ui: &mut egui::Ui) {
             }
         ))
         .strong()
-        .size(theme::FONT_LG),
+        .size(theme::font_lg()),
     )
     // 标题由 i18n 文案 + 交易对 + 方向拼成，Window 的 Id 默认派生自标题：
     // 换仓位开窗或中/EN 切换都会改标题，窗口位置/焦点状态随之丢失。
@@ -1003,7 +1003,7 @@ fn show_tpsl_window(app: &mut BnApp, ui: &mut egui::Ui) {
     .show(ui.ctx(), |ui| {
         ui.label(
             egui::RichText::new(crate::i18n::tr("触发后市价全平该持仓，提交前需确认"))
-                .size(theme::FONT_SM)
+                .size(theme::font_sm())
                 .color(theme::cur().text_dim),
         );
         ui.add_space(4.0);
@@ -1015,7 +1015,7 @@ fn show_tpsl_window(app: &mut BnApp, ui: &mut egui::Ui) {
                     (crate::i18n::tr("止损触发"), &mut edit.3),
                     (crate::i18n::tr("止盈触发"), &mut edit.4),
                 ] {
-                    ui.label(egui::RichText::new(label).size(theme::FONT_MD));
+                    ui.label(egui::RichText::new(label).size(theme::font_md()));
                     ui.add(
                         egui::TextEdit::singleline(buf)
                             .font(egui::TextStyle::Monospace)
@@ -1102,11 +1102,11 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         crate::i18n::tr("最近 100 笔")
                     }
                 ))
-                .size(theme::FONT_MD),
+                .size(theme::font_md()),
             ),
             None => ui.label(
                 egui::RichText::new(crate::i18n::tr("切换交易对后自动加载"))
-                    .size(theme::FONT_MD)
+                    .size(theme::font_md())
                     .color(theme::cur().text_dim),
             ),
         };
@@ -1226,7 +1226,7 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                             widgets::num_cell(ui, widgets::fmt_time(o.time), None);
                         });
                         row.col(|ui| {
-                            ui.label(theme::code(&o.symbol).size(theme::FONT_MD));
+                            ui.label(theme::code(&o.symbol).size(theme::font_md()));
                         });
                         row.col(|ui| {
                             let c = if o.side == "BUY" {
@@ -1239,11 +1239,11 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                             } else {
                                 crate::i18n::tr("卖出")
                             };
-                            ui.label(egui::RichText::new(word).color(c).size(theme::FONT_MD));
+                            ui.label(egui::RichText::new(word).color(c).size(theme::font_md()));
                         });
                         row.col(|ui| {
                             ui.label(
-                                egui::RichText::new(type_cn(&o.order_type)).size(theme::FONT_MD),
+                                egui::RichText::new(type_cn(&o.order_type)).size(theme::font_md()),
                             );
                         });
                         row.col(|ui| {
@@ -1284,7 +1284,7 @@ pub fn show_history(app: &mut BnApp, ui: &mut egui::Ui) {
                             ui.label(
                                 egui::RichText::new(status_cn(&o.status))
                                     .color(c)
-                                    .size(theme::FONT_MD),
+                                    .size(theme::font_md()),
                             );
                         });
                     });
@@ -1328,7 +1328,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                 trades.len(),
                 crate::i18n::tr("笔成交")
             ))
-            .size(theme::FONT_MD),
+            .size(theme::font_md()),
         );
         // 尚未选定交易对时按钮置灰而非消失：工具条高度不跳变，禁用原因悬停可见
         // 同 show_history：key 为空时用当前页市场+交易对兜底，保证可手动重试
@@ -1436,7 +1436,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                             widgets::num_cell(ui, widgets::fmt_time(t.time), None);
                         });
                         row.col(|ui| {
-                            ui.label(theme::code(&t.symbol).size(theme::FONT_MD));
+                            ui.label(theme::code(&t.symbol).size(theme::font_md()));
                         });
                         row.col(|ui| {
                             let (txt, c) = if t.is_buyer {
@@ -1444,7 +1444,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                             } else {
                                 (crate::i18n::tr("卖出"), theme::cur().down)
                             };
-                            ui.label(egui::RichText::new(txt).color(c).size(theme::FONT_MD));
+                            ui.label(egui::RichText::new(txt).color(c).size(theme::font_md()));
                         });
                         row.col(|ui| {
                             widgets::num_cell(
@@ -1482,7 +1482,7 @@ pub fn show_trades_history(app: &mut BnApp, ui: &mut egui::Ui) {
                         row.col(|ui| {
                             ui.label(
                                 egui::RichText::new(if t.is_maker { "maker" } else { "taker" })
-                                    .size(theme::FONT_MD)
+                                    .size(theme::font_md())
                                     .color(theme::cur().text_dim),
                             );
                         });
@@ -1519,11 +1519,11 @@ pub fn show_flow(app: &mut BnApp, ui: &mut egui::Ui) {
                     m.label(),
                     crate::i18n::tr("最近 100 条")
                 ))
-                .size(theme::FONT_MD),
+                .size(theme::font_md()),
             ),
             None => ui.label(
                 egui::RichText::new(crate::i18n::tr("进入页签后自动加载"))
-                    .size(theme::FONT_MD)
+                    .size(theme::font_md())
                     .color(theme::cur().text_dim),
             ),
         };
@@ -1595,7 +1595,7 @@ pub fn show_flow(app: &mut BnApp, ui: &mut egui::Ui) {
                         });
                         row.col(|ui| {
                             ui.label(
-                                egui::RichText::new(crate::i18n::tr(f.kind)).size(theme::FONT_MD),
+                                egui::RichText::new(crate::i18n::tr(f.kind)).size(theme::font_md()),
                             );
                         });
                         row.col(|ui| {
@@ -1603,15 +1603,15 @@ pub fn show_flow(app: &mut BnApp, ui: &mut egui::Ui) {
                             if f.symbol.is_empty() {
                                 ui.label(
                                     egui::RichText::new("—")
-                                        .size(theme::FONT_MD)
+                                        .size(theme::font_md())
                                         .color(theme::cur().text_dim),
                                 );
                             } else {
-                                ui.label(theme::code(&f.symbol).size(theme::FONT_MD));
+                                ui.label(theme::code(&f.symbol).size(theme::font_md()));
                             }
                         });
                         row.col(|ui| {
-                            ui.label(theme::code(&f.asset).size(theme::FONT_MD));
+                            ui.label(theme::code(&f.asset).size(theme::font_md()));
                         });
                         row.col(|ui| {
                             // 流入正色/流出负色，与买卖方向配色一致
@@ -1640,7 +1640,7 @@ pub fn show_flow(app: &mut BnApp, ui: &mut egui::Ui) {
                         row.col(|ui| {
                             ui.label(
                                 egui::RichText::new(&f.note)
-                                    .size(theme::FONT_MD)
+                                    .size(theme::font_md())
                                     .color(theme::cur().text_dim),
                             );
                         });
