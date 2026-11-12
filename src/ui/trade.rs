@@ -1867,6 +1867,8 @@ pub fn confirm_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         .bg(t.panel2)
         .border_1()
         .border_color(faded(side_color, 0.55))
+        // 悬浮层 elevation：模态卡从页面背景上抬起来
+        .shadow_lg()
         .p(px(14.0))
         .flex()
         .flex_col()

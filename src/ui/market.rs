@@ -1306,6 +1306,8 @@ pub fn alerts_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
 
     let card = widgets::card()
         .w(px(272.0))
+        // 悬浮层 elevation：无遮罩悬挂面板靠阴影与页面分层
+        .shadow_lg()
         .flex()
         .flex_col()
         .gap(px(6.0))

@@ -81,6 +81,8 @@ fn tr_row(idx: usize, cells: Vec<Div>) -> Div {
         .flex_row()
         .items_center()
         .when(idx % 2 == 1, |d| d.bg(faded(t.text, 0.035)))
+        // 与 orders.rs 表格同语义：指针所在行整行点亮
+        .hover(|s| s.bg(t.row_hover))
         .children(cells)
 }
 

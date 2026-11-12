@@ -286,6 +286,8 @@ fn tr_row(idx: usize, h: f32, cells: Vec<Div>) -> Div {
         .flex_row()
         .items_center()
         .when(idx % 2 == 1, |d| d.bg(faded(t.text, 0.035)))
+        // 指针所在行整行点亮：扫读宽表时的定位反馈（斑马纹静态、悬停动态）
+        .hover(|s| s.bg(t.row_hover))
         .children(cells)
 }
 
@@ -1628,6 +1630,8 @@ pub fn tpsl_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         .bg(t.panel2)
         .border_1()
         .border_color(faded(t.border, 0.7))
+        // 悬浮层 elevation：无遮罩悬挂卡片靠阴影与页面分层
+        .shadow_lg()
         .p(px(12.0))
         .flex()
         .flex_col()
