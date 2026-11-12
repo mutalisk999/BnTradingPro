@@ -741,7 +741,30 @@ impl BnApp {
                             .font_weight(FontWeight::BOLD)
                             .text_color(t.accent)
                             .child("BnTradingPro"),
-                    ),
+                    )
+                    // 状态灯簇（里程碑 2 组件验证：完整顶栏在里程碑 4 移植）
+                    .child(div().flex_1())
+                    .child({
+                        let md = self.state.md.lock();
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .gap(px(14.0))
+                            .child(widgets::status_light(
+                                "WS",
+                                md.market_ws(self.market),
+                            ))
+                            .child(widgets::status_light(
+                                "U",
+                                md.user_ws(self.market),
+                            ))
+                            .child(widgets::status_light_ok(
+                                "REST",
+                                self.state.rest_ok.load(std::sync::atomic::Ordering::Relaxed),
+                                &crate::i18n::tr("正常").to_string(),
+                                &crate::i18n::tr("异常").to_string(),
+                            ))
+                    }),
             )
             .child(
                 div().flex_1().flex().items_center().justify_center().child(
