@@ -14,8 +14,8 @@ use crate::ui::widgets::DragGhost;
 use crate::ui::{chart, flash, market, symbols, textfield::TextField, theme, trade, unlock, widgets};
 use gpui::{
     div, prelude::FluentBuilder, px, App, AppContext, Context, Div, Entity, FontWeight,
-    DragMoveEvent, InteractiveElement, IntoElement, KeyBinding, ParentElement, Render,
-    SharedString, Stateful, StatefulInteractiveElement, Styled, Window,
+    DragMoveEvent, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, ParentElement,
+    Render, SharedString, Stateful, StatefulInteractiveElement, Styled, Window,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -346,6 +346,11 @@ pub struct BnApp {
     pub api_secret_field: Entity<TextField>,
     /// 侧栏交易对搜索框（过滤词同步进 page.symbol_filter 供缓存键使用）
     pub search_field: Entity<TextField>,
+    /// 下单表单输入框集合（现货/期货页共用一套 TextField Entity；文本仍是
+    /// page.form 的 String 字段为数据源，渲染帧回灌外部变更）
+    pub trade_fields: trade::TradeFields,
+    /// 订单类型下拉菜单展开态
+    pub kind_menu_open: bool,
     /// 左侧交易对列表展开（false 时收起为窄条，» / « 按钮切换）
     pub sidebar_expanded: bool,
     /// 左侧交易对列表宽度（pt），右缘把手拖动调节，范围 190~240
@@ -445,6 +450,8 @@ impl BnApp {
                     .set_font_size(theme::font_body());
                 f
             });
+            // 下单表单输入框：数字过滤 + 占位（8 个框统一在 TradeFields 里构建）
+            let trade_fields = trade::TradeFields::new(cx);
 
             // 唤醒任务：tokio 通道的 waker 唤醒 GPUI 主线程上的 async 任务，
             // 延迟与旧版 request_repaint 相当
@@ -484,6 +491,8 @@ impl BnApp {
                 api_key_field,
                 api_secret_field,
                 search_field,
+                trade_fields,
+                kind_menu_open: false,
                 tab: match std::env::var("BTP_TAB").as_deref() {
                     Ok("futures") => Tab::Futures,
                     _ => Tab::Spot,
@@ -588,6 +597,12 @@ impl BnApp {
                     });
                 }));
             });
+        });
+        // 下单表单输入框写回：框内文本变更写回 page.form.*（回调需要视图句柄，
+        // 实体在闭包里创建后才能拿到 WeakEntity，所以挂接放在 new 末尾）
+        entity.update(cx, |app, cx| {
+            let weak = cx.entity().downgrade();
+            app.trade_fields.attach(&weak, cx);
         });
         entity
     }
@@ -1320,10 +1335,14 @@ impl BnApp {
                                 .child(format!("{}{symbol}", crate::i18n::tr("下单 · "))),
                         ),
                 )
+                // 下单表单：窄窗时纵向滚动（表单整体高度随类型/止盈止损行数变化）
                 .child(
-                    div().flex_1().flex().items_center().justify_center().child(
-                        centered_placeholder(crate::i18n::tr("下单表单（里程碑 7 移植中）")),
-                    ),
+                    div()
+                        .id("trade_scroll")
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .overflow_y_scroll()
+                        .child(trade::panel(self, cx)),
                 )
                 // 左缘拖宽把手：范围 300~360（指针左移 = 变宽）
                 .child(h_resize_strip::<DragTrade>("trade_resize", false))
@@ -1514,6 +1533,29 @@ impl Render for BnApp {
             .on_action(cx.listener(|app: &mut BnApp, _: &CancelAllShortcut, _, cx| {
                 app.cancel_all_shortcut(cx);
             }))
+            // Esc：确认下单弹窗 > 订单类型下拉 > 副图指标下拉，逐层关闭。
+            // 输入框聚焦时 TextField 对 Escape 放行（不 stop_propagation），
+            // 事件仍会冒泡到这里
+            .on_key_down(cx.listener(|app: &mut BnApp, e: &KeyDownEvent, _, cx| {
+                if e.keystroke.key != "escape" {
+                    return;
+                }
+                let mut hit = false;
+                if app.confirm.take().is_some() {
+                    hit = true;
+                }
+                if app.kind_menu_open {
+                    app.kind_menu_open = false;
+                    hit = true;
+                }
+                if app.sub_menu_open {
+                    app.sub_menu_open = false;
+                    hit = true;
+                }
+                if hit {
+                    cx.notify();
+                }
+            }))
             // 面板尺寸拖拽：把手只负责发起（8px 竖条），指针很快划出把手
             // 范围，位移事件必须由覆盖全窗的根容器持续接收；按载荷类型分发
             .on_drag_move(cx.listener(
@@ -1560,6 +1602,9 @@ impl Render for BnApp {
                 },
             ))
             .child(body)
+            // 确认下单弹窗（None 时不渲染）：遮罩 + 居中卡片，
+            // 在 Toast 之前渲染让 Toast 盖在其上（与 egui 版层级一致）
+            .children(trade::confirm_dialog(self, cx))
             // Toast 覆盖层：右下角堆叠
             .child(widgets::draw_toasts(&self.state))
     }
