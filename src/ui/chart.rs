@@ -122,11 +122,14 @@ enum Prim {
         border_w: Pixels,
         border_c: Hsla,
     },
-    /// 描边路径（折线/虚线；坐标为窗口绝对坐标）
-    Path { path: gpui::Path<Pixels>, color: Hsla },
-    /// 已排版的单行文本（origin 为行盒左上角）
+    /// 描边路径（折线/虚线；坐标为窗口绝对坐标）。
+    /// Path 装箱：paint 层按序消费，堆上转移避免 184B 的大变体拷贝
+    Path { path: Box<gpui::Path<Pixels>>, color: Hsla },
+    /// 已排版的单行文本（origin 为行盒左上角；ShapedLine 装箱：排版行
+    /// 体积大（内含 run 向量元数据），场景里文本原语数量多，按值入枚举
+    /// 拉大全体 Prim 的栈占用
     Text {
-        line: gpui::ShapedLine,
+        line: Box<gpui::ShapedLine>,
         origin: Point<Pixels>,
         line_height: Pixels,
     },
@@ -136,7 +139,6 @@ enum Prim {
 enum Anchor {
     LeftCenter,
     CenterCenter,
-    RightCenter,
     LeftTop,
     RightTop,
     CenterBottom,
@@ -179,13 +181,12 @@ fn push_text(
     let origin = match anchor {
         Anchor::LeftCenter => point(pos.x, pos.y - lh / 2.0),
         Anchor::CenterCenter => point(pos.x - w / 2.0, pos.y - lh / 2.0),
-        Anchor::RightCenter => point(pos.x - w, pos.y - lh / 2.0),
         Anchor::LeftTop => point(pos.x, pos.y),
         Anchor::RightTop => point(pos.x - w, pos.y),
         Anchor::CenterBottom => point(pos.x - w / 2.0, pos.y - lh),
     };
     out.push(Prim::Text {
-        line,
+        line: Box::new(line),
         origin,
         line_height: lh,
     });
@@ -233,7 +234,7 @@ fn push_line(out: &mut Vec<Prim>, pts: &[Point<Pixels>], width: f32, color: impl
     }
     if let Ok(path) = b.build() {
         out.push(Prim::Path {
-            path,
+            path: Box::new(path),
             color: color.into(),
         });
     }
@@ -254,7 +255,7 @@ fn push_dashed(
     b.line_to(b_);
     if let Ok(path) = b.build() {
         out.push(Prim::Path {
-            path,
+            path: Box::new(path),
             color: color.into(),
         });
     }
@@ -279,7 +280,6 @@ struct SubPanel {
     dots_up: Option<Vec<Option<f64>>>,
     dots_down: Option<Vec<Option<f64>>>,
     guides: Vec<f64>,
-    zero_based: bool,
     lo: f64,
     hi: f64,
 }
@@ -652,7 +652,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                 app.pan_last = None;
             }),
         )
-        .on_drag(DragChart::default(), |_, _, _, cx| cx.new(|_| widgets::DragGhost))
+        .on_drag(DragChart, |_, _, _, cx| cx.new(|_| widgets::DragGhost))
         .on_drag_move(cx.listener(|app: &mut BnApp, e: &DragMoveEvent<DragChart>, _, cx| {
             let x = f32::from(e.event.position.x);
             let last = app.pan_last.replace(x);
@@ -911,7 +911,6 @@ fn build_sub_panel(sub: &SubSeries, start: usize, end: usize, _ma: &[bool; 4]) -
         dots_up,
         dots_down,
         guides: sub.guides.clone(),
-        zero_based: sub.zero_based,
         lo,
         hi,
     }
@@ -1594,7 +1593,7 @@ fn paint_prim(p: Prim, window: &mut Window, _cx: &mut gpui::App) {
                 gpui::BorderStyle::Solid,
             ));
         }
-        Prim::Path { path, color } => window.paint_path(path, color),
+        Prim::Path { path, color } => window.paint_path(*path, color),
         Prim::Text {
             line,
             origin,

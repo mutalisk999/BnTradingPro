@@ -111,10 +111,6 @@ pub const CONTROL_H: f32 = 26.0;
 /// 表单行标准高度（≥ 控件高，留少量呼吸空间）
 pub const ROW_H: f32 = 30.0;
 
-/// 徽标的字母字距（px）：大写短标拉开后排版更专业。
-/// （GPUI 无 letter-spacing 样式，此 token 暂保留语义、渲染时忽略）
-pub const BADGE_TRACKING: f32 = 0.55;
-
 // ---------- 圆角半径 token ----------
 /// 小徽标 / 行内幽灵按钮
 pub const R_SM: f32 = 4.0;
@@ -280,10 +276,6 @@ impl UiTheme {
 pub fn c(cx: &App) -> &Theme {
     // 全局在启动时 install，未安装属于编程错误
     &cx.global::<UiTheme>().t
-}
-
-pub fn is_light_theme(cx: &App) -> bool {
-    cx.global::<UiTheme>().light
 }
 
 // ---------- 静态模式/方向存储（配置写档用，渲染走 UiTheme 全局） ----------

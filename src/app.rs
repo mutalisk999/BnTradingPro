@@ -661,13 +661,6 @@ impl BnApp {
             && (!need_master || !self.pw1_field.read(cx).text().trim().is_empty())
     }
 
-    /// 下单面板的最小宽度：两市场统一 300（= 默认面板宽）。字号上调后
-    /// 272 下合约表单的 TIF 胶囊/杠杆行/价格辅助钮过挤，300 保证完整
-    /// 显示；分割线位置在现货/期货间保持一致
-    fn min_trade_width(&self) -> f32 {
-        300.0
-    }
-
     /// 心跳间隔（毫秒）：按当前可见区域各自需要多快取最小值，而非全局一刀切
     fn heartbeat_ms(&self) -> u64 {
         let mut next = theme::REPAINT_IDLE;

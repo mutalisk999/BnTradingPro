@@ -41,11 +41,16 @@ pub struct TextField {
     line_height: Pixels,
     /// 渲染期写入的文本颜色（shape/paint 用）
     paint_color: Hsla,
-    on_change: Option<Box<dyn Fn(&str, &mut Window, &mut App)>>,
-    on_submit: Option<Box<dyn Fn(&mut Window, &mut App)>>,
+    on_change: Option<Box<TextChangeFn>>,
+    on_submit: Option<Box<SubmitFn>>,
     /// 绘制期实测 bounds（点击→光标定位用，滞后一帧可接受）
     bounds: Bounds<Pixels>,
 }
+
+/// 文本变更回调（on_change）：文本、窗口、App
+type TextChangeFn = dyn Fn(&str, &mut Window, &mut App);
+/// 提交回调（on_submit）：回车触发
+type SubmitFn = dyn Fn(&mut Window, &mut App);
 
 // ---------- 字节/字符/UTF-16 换算 ----------
 
@@ -150,15 +155,11 @@ impl TextField {
         self.font_size = s;
         self
     }
-    pub fn set_line_height(&mut self, h: Pixels) -> &mut Self {
-        self.line_height = h;
-        self
-    }
-    pub fn set_on_change(&mut self, f: Box<dyn Fn(&str, &mut Window, &mut App)>) -> &mut Self {
+    pub fn set_on_change(&mut self, f: Box<TextChangeFn>) -> &mut Self {
         self.on_change = Some(f);
         self
     }
-    pub fn set_on_submit(&mut self, f: Box<dyn Fn(&mut Window, &mut App)>) -> &mut Self {
+    pub fn set_on_submit(&mut self, f: Box<SubmitFn>) -> &mut Self {
         self.on_submit = Some(f);
         self
     }
@@ -173,19 +174,8 @@ impl TextField {
         self.cursor = self.text.len();
         self.sel_anchor = None;
     }
-    pub fn take_text(&mut self) -> String {
-        self.cursor = 0;
-        self.sel_anchor = None;
-        std::mem::take(&mut self.text)
-    }
     pub fn clear(&mut self) {
         self.set_text("");
-    }
-    pub fn focus_handle(&self) -> &FocusHandle {
-        &self.focus
-    }
-    pub fn is_focused(&self, window: &Window) -> bool {
-        self.focus.is_focused(window)
     }
     pub fn focus(&self, window: &mut Window) {
         self.focus.focus(window);
@@ -263,7 +253,7 @@ impl TextField {
 
     fn display_text(&self) -> String {
         if self.masked {
-            std::iter::repeat(MASK_CHAR).take(self.text.chars().count()).collect()
+            std::iter::repeat_n(MASK_CHAR, self.text.chars().count()).collect()
         } else {
             self.text.clone()
         }

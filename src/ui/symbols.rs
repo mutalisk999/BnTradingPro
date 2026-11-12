@@ -184,7 +184,7 @@ pub fn list(app: &mut BnApp, cx: &mut Context<BnApp>) -> AnyElement {
                     None => continue,
                 };
                 out.push(match row {
-                    Row::Section(title) => section_row(*title, m).into_any_element(),
+                    Row::Section(title) => section_row(title, m).into_any_element(),
                     Row::Fav(sym) => {
                         // 精度取该交易对 tick 的小数位（= quote 侧报价精度）；
                         // 只对可见行逐个查规则书，全量符号每帧查会无谓地抢锁

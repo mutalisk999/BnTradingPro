@@ -276,7 +276,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         cx,
         "env_pills",
         vec![
-            ("testnet", format!("{}", tr("测试网 (Testnet)"))),
+            ("testnet", tr("测试网 (Testnet)").to_string()),
             ("mainnet", tr("实盘").to_string()),
         ],
         if testnet { "testnet" } else { "mainnet" },
