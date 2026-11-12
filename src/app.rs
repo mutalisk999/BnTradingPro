@@ -11,11 +11,11 @@ use crate::engine::state::SharedState;
 use crate::engine::Command;
 use crate::security::vault;
 use crate::ui::widgets::DragGhost;
-use crate::ui::{chart, flash, market, symbols, textfield::TextField, theme, trade, unlock, widgets};
+use crate::ui::{chart, flash, market, orders, symbols, textfield::TextField, theme, trade, unlock, widgets};
 use gpui::{
     div, prelude::FluentBuilder, px, App, AppContext, Context, Div, Entity, FontWeight,
-    DragMoveEvent, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, ParentElement,
-    Render, SharedString, Stateful, StatefulInteractiveElement, Styled, Window,
+    DragMoveEvent, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, MouseButton,
+    ParentElement, Render, SharedString, Stateful, StatefulInteractiveElement, Styled, Window,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -332,8 +332,9 @@ pub struct BnApp {
     pub row_cancel_armed: Option<i64>,
     /// Ctrl+Shift+C 连按确认：(交易对, 武装时刻)，4 秒窗口内第二次按下才执行
     pub shortcut_cancel_armed: Option<(String, std::time::Instant)>,
-    /// 持仓行内 TP/SL 弹窗：(symbol, 多头?, 持仓方向, 止损触发价, 止盈触发价)
-    pub tpsl_edit: Option<(String, bool, FutPosSide, String, String)>,
+    /// 持仓行内 TP/SL 弹窗：(交易对, 多头?, 持仓方向)；触发价文本在
+    /// tpsl_sl_field/tpsl_tp_field 输入框内，提交时读出
+    pub tpsl_edit: Option<(String, bool, FutPosSide)>,
     /// 价格预警弹窗开关（页头铃铛）
     pub alerts_open: bool,
     /// 新预警目标价输入缓冲
@@ -351,6 +352,9 @@ pub struct BnApp {
     pub trade_fields: trade::TradeFields,
     /// 订单类型下拉菜单展开态
     pub kind_menu_open: bool,
+    /// 持仓 TP/SL 弹窗的止损/止盈触发价输入框
+    pub tpsl_sl_field: Entity<TextField>,
+    pub tpsl_tp_field: Entity<TextField>,
     /// 左侧交易对列表展开（false 时收起为窄条，» / « 按钮切换）
     pub sidebar_expanded: bool,
     /// 左侧交易对列表宽度（pt），右缘把手拖动调节，范围 190~240
@@ -452,6 +456,16 @@ impl BnApp {
             });
             // 下单表单输入框：数字过滤 + 占位（8 个框统一在 TradeFields 里构建）
             let trade_fields = trade::TradeFields::new(cx);
+            // 持仓 TP/SL 弹窗输入框：数字过滤（开窗时清空）
+            let mk_tpsl_field = |cx: &mut Context<Self>, id: &'static str| {
+                cx.new(|cx_tf| {
+                    let mut f = TextField::new(cx_tf);
+                    f.set_id(id).set_numeric(true).set_font_size(theme::font_md());
+                    f
+                })
+            };
+            let tpsl_sl_field = mk_tpsl_field(cx, "tpsl_sl");
+            let tpsl_tp_field = mk_tpsl_field(cx, "tpsl_tp");
 
             // 唤醒任务：tokio 通道的 waker 唤醒 GPUI 主线程上的 async 任务，
             // 延迟与旧版 request_repaint 相当
@@ -493,6 +507,8 @@ impl BnApp {
                 search_field,
                 trade_fields,
                 kind_menu_open: false,
+                tpsl_sl_field,
+                tpsl_tp_field,
                 tab: match std::env::var("BTP_TAB").as_deref() {
                     Ok("futures") => Tab::Futures,
                     _ => Tab::Spot,
@@ -1385,11 +1401,8 @@ impl BnApp {
             .bg(t.panel)
             .child(self.sub_tabs(cx))
             .child(widgets::separator())
-            .child(
-                div().flex_1().flex().items_center().justify_center().child(
-                    centered_placeholder(crate::i18n::tr("订单表格（里程碑 8 移植中）")),
-                ),
-            )
+            // 订单子页表格：当前子页签的表格或空态
+            .child(orders::show(self, cx))
             // 上缘拖高把手：范围 120~500（指针上移 = 变高）
             .child(v_resize_strip::<DragOrdersH>("orders_resize", true))
     }
@@ -1533,15 +1546,18 @@ impl Render for BnApp {
             .on_action(cx.listener(|app: &mut BnApp, _: &CancelAllShortcut, _, cx| {
                 app.cancel_all_shortcut(cx);
             }))
-            // Esc：确认下单弹窗 > 订单类型下拉 > 副图指标下拉，逐层关闭。
-            // 输入框聚焦时 TextField 对 Escape 放行（不 stop_propagation），
-            // 事件仍会冒泡到这里
+            // Esc：确认下单弹窗 / 持仓 TP/SL 弹窗 / 订单类型下拉 / 副图指标
+            // 下拉 / 两步撤销武装态，逐层关闭解除。输入框聚焦时 TextField
+            // 对 Escape 放行（不 stop_propagation），事件仍会冒泡到这里
             .on_key_down(cx.listener(|app: &mut BnApp, e: &KeyDownEvent, _, cx| {
                 if e.keystroke.key != "escape" {
                     return;
                 }
                 let mut hit = false;
                 if app.confirm.take().is_some() {
+                    hit = true;
+                }
+                if app.tpsl_edit.take().is_some() {
                     hit = true;
                 }
                 if app.kind_menu_open {
@@ -1552,7 +1568,30 @@ impl Render for BnApp {
                     app.sub_menu_open = false;
                     hit = true;
                 }
+                if app.market_cancel_armed
+                    || app.sym_cancel_armed.is_some()
+                    || app.row_cancel_armed.is_some()
+                {
+                    app.market_cancel_armed = false;
+                    app.sym_cancel_armed = None;
+                    app.row_cancel_armed = None;
+                    hit = true;
+                }
                 if hit {
+                    cx.notify();
+                }
+            }))
+            // 点击面板外任意位置解除两步撤销武装态（与 egui any_click 同义；
+            // 各武装按钮 on_mouse_down 内 stop_propagation，自身点击不会
+            // 触发这里的解除）
+            .on_mouse_down(MouseButton::Left, cx.listener(|app: &mut BnApp, _, _, cx| {
+                if app.market_cancel_armed
+                    || app.sym_cancel_armed.is_some()
+                    || app.row_cancel_armed.is_some()
+                {
+                    app.market_cancel_armed = false;
+                    app.sym_cancel_armed = None;
+                    app.row_cancel_armed = None;
                     cx.notify();
                 }
             }))
@@ -1602,6 +1641,8 @@ impl Render for BnApp {
                 },
             ))
             .child(body)
+            // 持仓 TP/SL 弹窗（None 时不渲染）：无遮罩悬挂，不挡下方 UI
+            .children(orders::tpsl_dialog(self, cx))
             // 确认下单弹窗（None 时不渲染）：遮罩 + 居中卡片，
             // 在 Toast 之前渲染让 Toast 盖在其上（与 egui 版层级一致）
             .children(trade::confirm_dialog(self, cx))
