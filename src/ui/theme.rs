@@ -138,11 +138,11 @@ pub const REPAINT_QUOTE: u64 = 100;
 pub const REPAINT_IDLE: u64 = 400;
 
 /// 窗口初始逻辑尺寸
-pub const START_W: f64 = 960.0;
+pub const START_W: f64 = 1200.0;
 pub const START_H: f64 = 600.0;
-/// 窗口最小逻辑尺寸（与 egui 版一致）
-pub const MIN_W: f64 = 733.0;
-pub const MIN_H: f64 = 453.0;
+/// 窗口最小逻辑尺寸（初始即最小：默认打开就是最大信息密度布局）
+pub const MIN_W: f64 = 1200.0;
+pub const MIN_H: f64 = 600.0;
 
 // ---------- 主题定义 ----------
 

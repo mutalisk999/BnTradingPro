@@ -71,7 +71,7 @@ fn main() {
         ui::theme::apply_fonts(cx);
         ui::theme::UiTheme::install(cx, &cfg.theme_mode, &cfg.price_dir);
 
-        // 窗口参数：初始 960×600 居中，最小 733×453（与 egui 版一致）
+        // 窗口参数：初始 1200×600（= 最小尺寸，默认即最大信息密度布局）
         let bounds = Bounds {
             origin: point(px(0.0), px(0.0)),
             size: size(
