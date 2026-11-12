@@ -1,174 +1,12 @@
-//! 通用小控件：状态灯、数字输入、Toast 提示、格式化工具
+//! 通用小控件：状态灯、Toast 提示、格式化工具
+//!
+//! 里程碑 1：格式化纯函数与状态灯/Toast 的 GPUI 数据侧先行移植（测试全绿）；
+//! 视觉组件在里程碑 2 完整重建（对应旧 egui 版 spec：状态灯 = 名称 + 10px
+//! 圆点 + 光晕、Toast = 右下角堆叠卡片 + kind 色条 + TTL 进度条 + 点击关闭）。
 
 use crate::engine::state::{ConnState, SharedState, Toast, ToastKind};
-use crate::ui::theme;
-use chrono::{Local, TimeZone};
-use eframe::egui;
-use egui::{Align2, Color32, FontId, Id, Rect, Stroke};
+use gpui::{div, px, Div, ParentElement, Styled};
 use rust_decimal::Decimal;
-
-/// 顶栏连接状态项：「名称 + 状态灯」紧邻成组，详细状态（连接中/未连接/
-/// 错误原因）收进悬停提示。旧版把「已连接」等文字平铺在名称旁，多项
-/// 连读时语义粘连成「已连接 账户 已连接 行情」，且行高被文字撑高
-pub fn status_light(ui: &mut egui::Ui, name: &str, st: &ConnState) {
-    let (c, st_txt) = match st {
-        ConnState::Connected => (theme::cur().up, crate::i18n::tr("已连接").to_string()),
-        ConnState::Connecting => (theme::cur().accent, crate::i18n::tr("连接中").to_string()),
-        ConnState::Disconnected => (theme::cur().text_dim, crate::i18n::tr("未连接").to_string()),
-        ConnState::Failed(e) => (
-            theme::cur().err,
-            if e.is_empty() {
-                crate::i18n::tr("错误").to_string()
-            } else {
-                format!("{}{e}", crate::i18n::tr("错误: "))
-            },
-        ),
-    };
-    status_item(ui, name, c, *st == ConnState::Connected, &st_txt);
-}
-
-/// 顶栏布尔状态项（REST 接口）：结构与 status_light 一致，仅状态来自布尔
-pub fn status_light_ok(ui: &mut egui::Ui, name: &str, ok: bool, ok_txt: &str, err_txt: &str) {
-    status_item(
-        ui,
-        name,
-        if ok {
-            theme::cur().up
-        } else {
-            theme::cur().err
-        },
-        ok,
-        if ok { ok_txt } else { err_txt },
-    );
-}
-
-fn status_item(ui: &mut egui::Ui, name: &str, c: Color32, glow: bool, hover: &str) {
-    // 紧凑成组：名称与灯之间 3pt，组与组之间由外层布局的 item_spacing 决定
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 3.0;
-        ui.label(
-            egui::RichText::new(name)
-                .size(theme::font_sm())
-                .color(theme::cur().text_dim),
-        );
-        let (rect, resp) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-        let p = ui.painter();
-        p.circle_filled(rect.center(), 4.5, c);
-        // 已连接时加一圈微光晕
-        if glow {
-            p.circle_stroke(
-                rect.center(),
-                6.5,
-                Stroke::new(1.0_f32, c.gamma_multiply(0.35)),
-            );
-        }
-        resp.on_hover_text(format!("{name} · {hover}"));
-    });
-}
-
-/// 紧凑文字/图标按钮：自绘 glyph 的方形热区，无 Button 的 18pt 最小高与
-/// 内边距——混排不同字号的行里与相邻文字做竖直对齐时，Button 的底部
-/// 留白会把 glyph 推得明显偏低。glyph 竖直中心显式锚定到 anchor_y
-/// （通常取同行参照文字 rect 的 center().y），None 时落在热区自身中心
-pub fn glyph_button(
-    ui: &mut egui::Ui,
-    text: &str,
-    size: f32,
-    color: Color32,
-    anchor_y: Option<f32>,
-    hover: &str,
-) -> egui::Response {
-    let font = FontId::proportional(size);
-    let galley_w = ui
-        .painter()
-        .layout_no_wrap(text.to_string(), font.clone(), color)
-        .size()
-        .x;
-    let (rect, resp) =
-        ui.allocate_exact_size(egui::vec2(galley_w + 8.0, size + 4.0), egui::Sense::click());
-    // 热区在行内的位置由布局决定，但 glyph 画在参照文字的中线上；
-    // 窄窗口下 wrapped 行会把热区换到下一行，此时锚点已失效，
-    // 落回热区自身中心（±4pt 容差吸收行高差）
-    let center_y = match anchor_y {
-        Some(y) if (rect.min.y - 4.0..=rect.max.y + 4.0).contains(&y) => y,
-        _ => rect.center().y,
-    };
-    ui.painter().text(
-        egui::pos2(rect.center().x, center_y),
-        Align2::CENTER_CENTER,
-        text,
-        font,
-        color,
-    );
-    let resp = resp
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(hover);
-    // 自绘控件默认对辅助技术不可见，补上可访问名字
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text));
-    resp
-}
-
-/// 钳制容器：内容限定在当前可用矩形内布局，横向超出部分按遮挡裁剪——
-/// 绘制与点击热区都裁（egui 对 interact_rect 取 clip_rect 交集，挡住绘制
-/// 即同时挡住点击），父级只按「可用宽 × 内容自然高」推进，溢出宽度
-/// 不回流进父级 min_rect。
-///
-/// 为何需要：egui 的 allocate_ui / scope / with_layout 把子级 min_rect
-/// （含溢出）回报给父级，而 ScrollArea 会沿非滚动轴"跟随内容"扩展。
-/// 大字号下某表单行超出下单面板宽时，溢出经 ScrollArea → Frame 层层
-/// 放大进面板外框，egui 右面板又按外框右缘锚定 300pt 宽——整块面板被
-/// 顶出窗口右缘，表现为面板左缘整体右移、右缘被裁（现货切期货时
-/// 有效期多一枚 GTX 胶囊，溢出 46pt 尤为明显）。遮挡是可接受的降级，
-/// 面板错位不是。顶栏右侧簇同理：超宽时裁掉状态指示，不压到页签文字。
-pub fn clip_zone<R>(
-    ui: &mut egui::Ui,
-    layout: egui::Layout,
-    add_contents: impl FnOnce(&mut egui::Ui) -> R,
-) -> egui::InnerResponse<R> {
-    let avail = ui.available_rect_before_wrap();
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(avail).layout(layout));
-    child.set_clip_rect(child.clip_rect().intersect(avail));
-    let ret = add_contents(&mut child);
-    // 父级按钳制后的矩形推进；child 自身 min_rect 含溢出，只取其高度
-    let rect = egui::Rect::from_min_size(
-        avail.min,
-        egui::vec2(avail.width().max(0.0), child.min_rect().height().max(0.0)),
-    );
-    let response = ui.interact(
-        rect,
-        ui.next_auto_id().with("clip_zone"),
-        egui::Sense::hover(),
-    );
-    ui.advance_cursor_after_rect(rect);
-    egui::InnerResponse::new(ret, response)
-}
-
-/// 弹性填宽数字输入框：desired_width 取本行剩余可用宽减去 tail（行尾
-/// 伴随控件的总宽），输入框总是占满行内空隙、右缘与伴随控件对齐。
-/// fixed 120 宽在任意面板宽下右缘参差不齐；flex 后面板宽变化亦成列。
-/// 返回 Response 供调用方按需响应 .changed() / .lost_focus()
-/// （现有调用方仍每帧重解析输入串，返回值是为接线的场景留的——
-/// 此前 show 返回 ()，编辑信号被结构性丢弃，接线也静默失效）
-pub fn num_field_flex(
-    ui: &mut egui::Ui,
-    id: &str,
-    text: &mut String,
-    hint: &str,
-    h: f32,
-    tail: f32,
-) -> egui::Response {
-    let w = (ui.available_width() - tail).max(56.0);
-    egui::TextEdit::singleline(text)
-        .id_salt(id)
-        .desired_width(w)
-        .min_size(egui::vec2(0.0, h))
-        .font(egui::TextStyle::Monospace)
-        .text_color(theme::cur().text)
-        .hint_text(hint)
-        .show(ui)
-        .response
-        .response
-}
 
 pub fn parse_dec(s: &str) -> Option<Decimal> {
     let t = s.trim();
@@ -260,17 +98,6 @@ fn group_thousands(s: &str) -> String {
     }
 }
 
-/// 表格数值单元格：右对齐 + 等宽字体（价格/数量/金额/盈亏列通用）
-pub fn num_cell(ui: &mut egui::Ui, txt: String, color: Option<Color32>) {
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let mut rt = egui::RichText::new(txt).monospace().size(theme::font_md());
-        if let Some(c) = color {
-            rt = rt.color(c);
-        }
-        ui.label(rt);
-    });
-}
-
 /// 大数缩写（成交额）：中文 1.2亿 / 34.5万；英文 1.2B / 34.5K
 pub fn fmt_compact(v: f64) -> String {
     fmt_compact_lang(v, crate::i18n::lang())
@@ -304,140 +131,96 @@ fn fmt_compact_lang(v: f64, lang: u8) -> String {
     }
 }
 
-/// 右下角 Toast 提示（未过期的持续显示，过期自动移除）
-pub fn draw_toasts(ctx: &egui::Context, state: &SharedState) {
-    let toasts: Vec<Toast> = {
-        let mut t = state.toasts.lock();
-        // 错误类保留更久：下单被拒/断线等提示 5 秒即消失极易错过
-        t.retain(|x| {
-            let ttl = match x.kind {
-                ToastKind::Err => 15.0,
-                _ => 5.0,
-            };
-            x.at.elapsed().as_secs_f64() < ttl
-        });
-        t.clone()
-    };
-    if toasts.is_empty() {
-        return;
+/// 单条 Toast 的样式常量（视觉组件在里程碑 2 落地时引用）
+pub const TOAST_TTL_SECS: f64 = 5.0;
+/// 错误类保留更久：下单被拒/断线等提示 5 秒即消失极易错过
+pub const TOAST_TTL_ERR_SECS: f64 = 15.0;
+/// Toast 面板最大宽度
+pub const TOAST_MAX_W: f32 = 420.0;
+
+/// Toast 的 TTL（错误 15s，其余 5s）
+pub fn toast_ttl(kind: ToastKind) -> f64 {
+    match kind {
+        ToastKind::Err => TOAST_TTL_ERR_SECS,
+        _ => TOAST_TTL_SECS,
     }
-    egui::Area::new(Id::new("toasts_area"))
-        .anchor(egui::Align2::RIGHT_BOTTOM, [-16.0, -16.0])
-        .order(egui::Order::Foreground)
-        .show(ctx, |ui| {
-            ui.set_max_width(420.0);
-            ui.with_layout(egui::Layout::top_down_justified(egui::Align::RIGHT), |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                for (i, t) in toasts.iter().enumerate() {
-                    draw_toast(ui, ctx, state, i, t);
-                }
-            });
-        });
 }
 
-/// 单条 Toast：投影 + 圆角卡片 + 左侧 kind 色条 + 圆形图标 + TTL 进度条，
-/// 入场 250ms 滑入淡入
-fn draw_toast(ui: &mut egui::Ui, ctx: &egui::Context, state: &SharedState, i: usize, t: &Toast) {
-    let kind_color = match t.kind {
-        ToastKind::Ok => theme::cur().up,
-        ToastKind::Err => theme::cur().err,
-        ToastKind::Warn => theme::cur().warn,
-        ToastKind::Info => theme::cur().accent,
-    };
-    // TTL 与 draw_toasts 的 retain 规则保持一致：错误 15s，其余 5s
-    let ttl = match t.kind {
-        ToastKind::Err => 15.0,
-        _ => 5.0,
-    };
-    // 入场动画：仅出现后的 250ms 内推进动画值，之后恒为 1（不再每帧计算）
-    let age_ms = t.at.elapsed().as_secs_f32() * 1000.0;
-    let p = if age_ms < 250.0 {
-        ctx.animate_value_with_time(
-            Id::new("toast_in").with(i as u64).with(t.msg.as_str()),
-            1.0,
-            0.25,
-        )
-        .clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
-    let fade =
-        |c: Color32| Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * p) as u8);
-    let fg = fade(kind_color);
-    let txt = fade(theme::cur().text);
-    let bg = fade(theme::cur().panel2);
-    let border = fade(theme::cur().border);
-    let shadow_color = if theme::is_light() {
-        Color32::from_black_alpha((40.0 * p) as u8)
-    } else {
-        Color32::from_black_alpha((90.0 * p) as u8)
-    };
-    let frame = egui::Frame::default()
-        .fill(bg)
-        .stroke(Stroke::new(1.0_f32, border))
-        .shadow(egui::Shadow {
-            offset: [0, 4],
-            blur: 14,
-            spread: 0,
-            color: shadow_color,
-        })
-        .corner_radius(f32::from(theme::R_LG))
-        .inner_margin(egui::Margin::symmetric(12, 9));
-    let inner = frame.show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            // 圆形图标底 + 内嵌 8px 实心圆点：不用 ✓/✗/! 字形，
-            // 规避等宽字体优先后字形缺字回退成豆腐块的风险
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
-            let pr = ui.painter();
-            pr.circle_filled(rect.center(), 9.0, fade(kind_color.gamma_multiply(0.2)));
-            pr.circle_filled(rect.center(), 4.0, fg);
-            ui.label(
-                egui::RichText::new(t.msg.as_str())
-                    .size(theme::font_md())
-                    .color(txt),
-            );
-        });
-    });
-    // 左侧 kind 色条（3px）
-    let r = inner.response.rect;
-    ui.painter().rect_filled(
-        Rect::from_min_size(
-            egui::Pos2::new(r.left(), r.top() + 4.0),
-            egui::vec2(3.0, r.height() - 8.0),
-        ),
-        2.0,
-        fg,
-    );
-    // TTL 进度条（底部 2px，kind 色，宽度 = 剩余时间占比；两端内缩避开圆角）
-    let age = t.at.elapsed().as_secs_f64();
-    let remain = ((ttl - age) / ttl).clamp(0.0, 1.0) as f32;
-    if remain > 0.0 {
-        let bar_w = (r.width() - 16.0).max(0.0) * remain;
-        ui.painter().rect_filled(
-            Rect::from_min_size(
-                egui::Pos2::new(r.left() + 8.0, r.bottom() - 2.0),
-                egui::vec2(bar_w, 2.0),
-            ),
-            1.0,
-            fg,
+/// Toast kind 对应的主题色（色条/图标底/进度条同源）
+pub fn toast_color(kind: ToastKind) -> gpui::Rgba {
+    let t = crate::ui::theme::cur();
+    match kind {
+        ToastKind::Ok => t.up,
+        ToastKind::Err => t.err,
+        ToastKind::Warn => t.warn,
+        ToastKind::Info => t.accent,
+    }
+}
+
+/// 淘汰过期 toast（心跳/渲染帧调用）：返回是否仍有存活条目
+pub fn prune_toasts(state: &SharedState) -> Vec<Toast> {
+    let mut t = state.toasts.lock();
+    t.retain(|x| x.at.elapsed().as_secs_f64() < toast_ttl(x.kind));
+    t.clone()
+}
+
+/// 右下角 Toast 覆盖层（里程碑 1 简版：文字行；完整卡片样式在里程碑 2 重建：
+/// kind 色条 + 圆形图标 + TTL 进度条 + 点击关闭 + 250ms 入场淡入）
+pub fn draw_toasts(state: &SharedState) -> Div {
+    let toasts = prune_toasts(state);
+    let mut wrap = div().absolute().bottom(px(16.0)).right(px(16.0)).flex().flex_col();
+    if toasts.is_empty() {
+        return wrap;
+    }
+    for t in toasts {
+        wrap = wrap.child(
+            div()
+                .max_w(px(TOAST_MAX_W))
+                .mt(px(6.0))
+                .px(px(12.0))
+                .py(px(9.0))
+                .bg(crate::ui::theme::cur().panel2)
+                .border_1()
+                .border_color(crate::ui::theme::cur().border)
+                .rounded(px(crate::ui::theme::R_LG))
+                .text_size(crate::ui::theme::font_md())
+                .child(t.msg),
         );
     }
-    // 点击即关闭（不等 TTL 自然过期）：按 (内容, 入队时刻) 精确匹配
-    let clicked = inner
-        .response
-        .interact(egui::Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(crate::i18n::tr("点击关闭"))
-        .clicked();
-    if clicked {
-        state
-            .toasts
-            .lock()
-            .retain(|x| !(x.msg == t.msg && x.at == t.at));
-    }
+    wrap
+}
+
+/// 顶栏连接状态项的状态色与提示文案（视觉组件在里程碑 2 重建）：
+/// 返回 (状态色, 悬停提示)
+pub fn status_light_info(name: &str, st: &ConnState) -> (gpui::Rgba, String) {
+    let (c, st_txt) = match st {
+        ConnState::Connected => (
+            crate::ui::theme::up_color(),
+            crate::i18n::tr("已连接").to_string(),
+        ),
+        ConnState::Connecting => (
+            crate::ui::theme::cur().accent,
+            crate::i18n::tr("连接中").to_string(),
+        ),
+        ConnState::Disconnected => (
+            crate::ui::theme::cur().text_dim,
+            crate::i18n::tr("未连接").to_string(),
+        ),
+        ConnState::Failed(e) => (
+            crate::ui::theme::cur().err,
+            if e.is_empty() {
+                crate::i18n::tr("错误").to_string()
+            } else {
+                format!("{}{e}", crate::i18n::tr("错误: "))
+            },
+        ),
+    };
+    let _ = name;
+    (c, st_txt)
 }
 
 pub fn fmt_time(ms: i64) -> String {
+    use chrono::{Local, TimeZone};
     match Local.timestamp_millis_opt(ms).single() {
         Some(t) => t.format("%m-%d %H:%M:%S").to_string(),
         None => "—".into(),
@@ -445,72 +228,11 @@ pub fn fmt_time(ms: i64) -> String {
 }
 
 pub fn fmt_time_short(ms: i64) -> String {
+    use chrono::{Local, TimeZone};
     match Local.timestamp_millis_opt(ms).single() {
         Some(t) => t.format("%H:%M:%S").to_string(),
         None => "—".into(),
     }
-}
-
-/// 空态/加载占位文本
-pub fn placeholder(ui: &mut egui::Ui, rect: egui::Rect, text: &str) {
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        text,
-        FontId::proportional(theme::font_lg()),
-        theme::cur().text_dim,
-    );
-}
-
-/// 空状态：居中的暗色图标 + 标题 + 副标题（subtitle 为空则不渲染）
-pub fn empty_state(ui: &mut egui::Ui, icon: &str, title: &str, subtitle: &str) {
-    ui.vertical_centered(|ui| {
-        ui.add_space(16.0);
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width().max(60.0), 26.0),
-            egui::Sense::hover(),
-        );
-        ui.painter().text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            icon,
-            FontId::proportional(theme::font_hero()),
-            theme::cur().text_dim,
-        );
-        ui.add_space(2.0);
-        // 标题用正文色加粗压过副标题：空态也要有信息层级
-        ui.label(
-            egui::RichText::new(title)
-                .size(theme::font_body())
-                .strong()
-                .color(theme::cur().text),
-        );
-        if !subtitle.is_empty() {
-            ui.label(
-                egui::RichText::new(subtitle)
-                    .size(theme::font_md())
-                    .color(theme::cur().text_dim.gamma_multiply(0.85)),
-            );
-        }
-        ui.add_space(16.0);
-    });
-}
-
-/// 加载态：spinner + 暗字说明，并预留最小高度——数据到达后不从一行字
-/// 跳成整表（盘口/成交/资产等首帧加载共用）
-pub fn loading_state(ui: &mut egui::Ui, msg: &str) {
-    ui.allocate_ui(egui::vec2(ui.available_width(), 120.0), |ui| {
-        ui.vertical_centered(|ui| {
-            ui.add_space(28.0);
-            theme::spinner(ui);
-            ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new(msg)
-                    .size(theme::font_md())
-                    .color(theme::cur().text_dim),
-            );
-        });
-    });
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 //! BnTradingPro — Binance 现货/U本位合约交易终端
 //!
-//! 入口：日志初始化、配置加载、eframe 启动
+//! 入口：日志初始化、配置加载、GPUI Application 启动
 // release 以 GUI 子系统启动（不带终端窗口）；debug 保留控制台便于看日志输出
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -13,10 +13,13 @@ mod security;
 mod ui;
 
 use config::AppConfig;
-use eframe::egui;
+use gpui::{
+    px, point, size, Application, Bounds, TitlebarOptions, WindowBounds, WindowKind,
+    WindowOptions,
+};
 use tracing_subscriber::EnvFilter;
 
-fn main() -> eframe::Result<()> {
+fn main() {
     let dir = config::data_dir();
     let _ = std::fs::create_dir_all(dir);
     let cfg = AppConfig::load(dir);
@@ -35,7 +38,7 @@ fn main() -> eframe::Result<()> {
         .init();
     // _log_guard 持有到进程结束，保证日志刷盘
     let _log_guard = guard;
-    // log→tracing 桥接：eframe/egui/winit 用 log crate 报错（如事件循环异常），
+    // log→tracing 桥接：依赖库用 log crate 报错（如平台层异常），
     // 不桥接这些错误会静默丢失
     tracing_log::LogTracer::init().ok();
 
@@ -63,32 +66,42 @@ fn main() -> eframe::Result<()> {
 
     tracing::info!("BnTradingPro 启动，数据目录: {}", dir.display());
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("BnTradingPro")
-            .with_icon(app_icon())
-            .with_inner_size([ui::theme::START_W, ui::theme::START_H])
-            .with_min_inner_size([733.0, 453.0]),
-        ..Default::default()
-    };
+    Application::new().run(move |cx: &mut gpui::App| {
+        // 字体：Windows 系统字体注入（雅黑正文 / Cascadia 等宽数字）
+        ui::theme::apply_fonts(cx);
+        ui::theme::UiTheme::install(cx, &cfg.theme_mode, &cfg.price_dir);
 
-    eframe::run_native(
-        "BnTradingPro",
-        options,
-        Box::new(move |cc| Ok(Box::new(app::BnApp::new(cc, cfg)))),
-    )
-}
+        // 窗口参数：初始 960×600 居中，最小 733×453（与 egui 版一致）
+        let bounds = Bounds {
+            origin: point(px(0.0), px(0.0)),
+            size: size(
+                px(ui::theme::START_W as f32),
+                px(ui::theme::START_H as f32),
+            ),
+        };
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("BnTradingPro".into()),
+                ..Default::default()
+            }),
+            window_min_size: Some(size(
+                px(ui::theme::MIN_W as f32),
+                px(ui::theme::MIN_H as f32),
+            )),
+            kind: WindowKind::Normal,
+            ..Default::default()
+        };
 
-/// 窗口/任务栏图标：解码内嵌 PNG（与 build.rs 嵌入 exe 资源的 ico 同一素材）
-fn app_icon() -> egui::IconData {
-    const PNG: &[u8] = include_bytes!("../assets/binance-icon.png");
-    let img = image::load_from_memory(PNG).expect("解析内置图标失败");
-    let rgba = img.to_rgba8();
-    egui::IconData {
-        width: rgba.width(),
-        height: rgba.height(),
-        rgba: rgba.into_raw(),
-    }
+        // 窗口图标：GPUI Windows 后端自动从 exe 资源 ID 1 加载
+        // （build.rs winresource 已嵌入，无需代码）
+        let result = cx.open_window(options, |window, cx| {
+            app::BnApp::new(window, cx, cfg.clone())
+        });
+        if let Err(e) = result {
+            tracing::error!("打开主窗口失败: {e:#}");
+        }
+    });
 }
 
 /// 启动时清理 7 天前的滚动日志（app.log / app.log.YYYY-MM-DD）
