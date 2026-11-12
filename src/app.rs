@@ -11,7 +11,7 @@ use crate::engine::state::SharedState;
 use crate::engine::Command;
 use crate::security::vault;
 use crate::ui::widgets::DragGhost;
-use crate::ui::{chart, flash, symbols, textfield::TextField, theme, trade, unlock, widgets};
+use crate::ui::{chart, flash, market, symbols, textfield::TextField, theme, trade, unlock, widgets};
 use gpui::{
     div, prelude::FluentBuilder, px, App, AppContext, Context, Div, Entity, FontWeight,
     DragMoveEvent, InteractiveElement, IntoElement, KeyBinding, ParentElement, Render,
@@ -916,7 +916,7 @@ impl BnApp {
     }
 
     /// 主界面：顶栏 + 按顶层页签路由（交易页 / 资产 / 设置 / 帮助）
-    fn render_main(&mut self, cx: &mut Context<Self>) -> Div {
+    fn render_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         // 进入主界面首帧（含解锁/存钥后）：ReloadAll 已覆盖挂单与账户，
         // 成交/订单历史需要指定交易对，这里补发当前页的
         if !self.initial_load_done {
@@ -930,7 +930,7 @@ impl BnApp {
         }
         let topbar = self.topbar(cx);
         let body = match self.tab {
-            Tab::Spot | Tab::Futures => self.trading_ui(cx),
+            Tab::Spot | Tab::Futures => self.trading_ui(window, cx),
             Tab::Portfolio => centered_placeholder(crate::i18n::tr("资产总览")),
             Tab::Settings => centered_placeholder(crate::i18n::tr("设置")),
             Tab::Help => centered_placeholder(crate::i18n::tr("使用说明")),
@@ -1125,18 +1125,18 @@ impl BnApp {
     //           | └ 订单区（从盘口右缘铺到窗口右缘）┘
     // 面板宽度用固定宽 + 自绘把手锁死：不用容器自适应（egui 版可调面板会把
     // 内容宽度持久化，页签来回切会越撑越宽）
-    fn trading_ui(&mut self, cx: &mut Context<Self>) -> Div {
+    fn trading_ui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = *theme::c(cx);
         let mut row = div().flex_1().flex().flex_row().overflow_hidden();
         row = row.child(self.sidebar(cx));
         // 图表最大化：盘口/下单/订单区全部隐藏，图表占满中央区
         if !self.chart_maximized {
-            row = row.child(self.book_panel(cx));
+            row = row.child(self.book_panel(window, cx));
         }
-        // 中央：页头（M5）+ 图表（M6）
+        // 中央：页头（交易对/最新价/24h 统计）+ 图表（M6）
         let central = div().flex_1().flex().flex_col().p(px(8.0)).bg(t.bg).child(
-            centered_placeholder(crate::i18n::tr("页头与图表（里程碑 5/6 移植中）")),
-        );
+            market::header(self, cx),
+        ).child(centered_placeholder(crate::i18n::tr("图表（里程碑 6 移植中）")));
         let mut chart_row = div().flex_1().flex().flex_row().overflow_hidden();
         chart_row = chart_row.child(central);
         if !self.chart_maximized {
@@ -1231,9 +1231,15 @@ impl BnApp {
     }
 
     /// 盘口面板（左，全高）：一直显示到 UI 最下面，不被底部订单区挤上去。
-    /// 内容（页签/档位行/胶囊）在里程碑 5 移植
-    fn book_panel(&mut self, cx: &mut Context<Self>) -> Div {
+    /// 内容（页签/盘口行/价差/档位胶囊、成交明细）在 market.rs 渲染
+    fn book_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = *theme::c(cx);
+        // 盘口内容高度预算：视口高 − 顶栏（36 行高 + 1 下边框）− 面板上内边距 8
+        // − 页签行 BTN_H − 页签下分隔线（1 + 上下 my 4）。档位数/行高在
+        // market.rs 内据此现算（GPUI 布局前无法询问剩余空间）
+        let vh = f32::from(window.viewport_size().height);
+        let body_h = (vh - 37.0 - 8.0 - theme::BTN_H - 9.0).max(0.0);
+        let avail_w = (self.book_width - 16.0).max(0.0);
         div()
             .relative()
             .w(px(self.book_width))
@@ -1243,16 +1249,7 @@ impl BnApp {
             .p(px(8.0))
             .pb(px(0.0))
             .bg(t.panel)
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(centered_placeholder(crate::i18n::tr(
-                        "盘口 / 成交（里程碑 5 移植中）",
-                    ))),
-            )
+            .child(market::book_panel(self, window, cx, body_h, avail_w))
             // 右缘拖宽把手：范围 180~340
             .child(h_resize_strip::<DragBook>("book_resize", true))
     }
@@ -1474,7 +1471,7 @@ impl Render for BnApp {
 
         let t = *theme::c(cx);
         let body = match self.phase {
-            Phase::Main => self.render_main(cx),
+            Phase::Main => self.render_main(window, cx),
             _ => self.render_auth(window, cx),
         };
 
