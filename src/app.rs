@@ -10,11 +10,83 @@ use crate::config::{self, AppConfig};
 use crate::engine::state::SharedState;
 use crate::engine::Command;
 use crate::security::vault;
-use crate::ui::{chart, flash, textfield::TextField, theme, trade, unlock, widgets};
-use gpui::{div, px, App, AppContext, Context, Div, Entity, FontWeight, IntoElement, ParentElement, Render, Styled, Window};
+use crate::ui::widgets::DragGhost;
+use crate::ui::{chart, flash, symbols, textfield::TextField, theme, trade, unlock, widgets};
+use gpui::{
+    div, prelude::FluentBuilder, px, App, AppContext, Context, Div, Entity, FontWeight,
+    DragMoveEvent, InteractiveElement, IntoElement, KeyBinding, ParentElement, Render,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, Window,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use zeroize::Zeroizing;
+
+// ---------- 快捷键 ----------
+// B/S 切换买卖侧并聚焦数量框（输入框聚焦时 TextField 消费按键，不触发）；
+// Ctrl+Shift+C 连按两次撤销当前交易对全部挂单：单次和弦键误按风险高，
+// 与按钮路径同一两步纪律——第一击武装（4 秒窗口内）并提示，第二击才执行
+gpui::actions!(bn, [Buy, Sell, CancelAllShortcut]);
+
+/// 面板尺寸拖拽把手的载荷标记：类型即身份，on_drag_move 按载荷类型分发到
+/// 各自的宽度/高度调整逻辑（同一根容器上注册四个互不干扰的处理器）
+#[derive(Default)]
+pub struct DragSidebar;
+#[derive(Default)]
+pub struct DragBook;
+#[derive(Default)]
+pub struct DragTrade;
+#[derive(Default)]
+pub struct DragOrdersH;
+
+/// 面板边缘的拖拽把手：8px 竖条/横条发起拖拽；宽度更新统一在根容器的
+/// on_drag_move 里做——把手窄，指针很快划出把手范围，事件必须由更大的
+/// 祖先容器持续接收（egui 版把手注册在外层 ui 上，同理）
+fn h_resize_strip<T: Default + 'static>(id: &'static str, right_edge: bool) -> Stateful<Div> {
+    let mut base = div()
+        .id(id)
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .w(px(8.0))
+        .cursor(gpui::CursorStyle::ResizeLeftRight);
+    base = if right_edge {
+        base.right_0()
+    } else {
+        base.left_0()
+    };
+    base.on_drag(
+        T::default(),
+        |_, _, _, cx| cx.new(|_| DragGhost),
+    )
+}
+
+fn v_resize_strip<T: Default + 'static>(id: &'static str, top_edge: bool) -> Stateful<Div> {
+    let mut base = div()
+        .id(id)
+        .absolute()
+        .left_0()
+        .right_0()
+        .h(px(8.0))
+        .cursor(gpui::CursorStyle::ResizeUpDown);
+    base = if top_edge {
+        base.top_0()
+    } else {
+        base.bottom_0()
+    };
+    base.on_drag(
+        T::default(),
+        |_, _, _, cx| cx.new(|_| DragGhost),
+    )
+}
+
+/// 把手拖拽的位移提取：同一会话内相邻两次 drag_move 的差值。
+/// 新会话的第一帧会拿到上一会话的残留坐标——差值会出现 40px 以上的跳变
+/// （跨会话指针位移远大于单帧拖速），此时按新会话起点处理、不应用位移
+fn drag_delta(last: Option<f32>, pos: f32) -> Option<f32> {
+    let last = last?;
+    let d = pos - last;
+    (d.abs() < 40.0).then_some(d)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -23,6 +95,21 @@ pub enum Phase {
     /// 配置 API 密钥（首次/重置/更换；与主密码一体设置）
     EnterKeys,
     Main,
+}
+
+/// 占位页：等待后续里程碑移植的顶层页（资产/设置/帮助）中央提示
+fn centered_placeholder(text: &'static str) -> Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .text_size(theme::font_lg())
+                .text_color(theme::cur().text_dim)
+                .child(text.to_string()),
+        )
 }
 
 /// 顶层功能页签
@@ -230,7 +317,7 @@ pub struct BnApp {
     pub spot: TradingPage,
     pub fut: TradingPage,
     /// 侧栏符号列表缓存（市场，过滤词大写，规则代次，结果）
-    pub symbols_cache: Option<(Market, String, u64, std::sync::Arc<Vec<String>>)>,
+    pub symbols_cache: Option<(Market, String, u64, std::sync::Arc<Vec<SharedString>>)>,
     /// 进入主界面后的首帧账户数据加载标记（历史），解锁/存钥后重新触发
     pub initial_load_done: bool,
     /// 引擎当前唯一的行情订阅（后订阅替换前订阅），用于去重
@@ -257,6 +344,8 @@ pub struct BnApp {
     pub pw2_field: Entity<TextField>,
     pub api_key_field: Entity<TextField>,
     pub api_secret_field: Entity<TextField>,
+    /// 侧栏交易对搜索框（过滤词同步进 page.symbol_filter 供缓存键使用）
+    pub search_field: Entity<TextField>,
     /// 左侧交易对列表展开（false 时收起为窄条，» / « 按钮切换）
     pub sidebar_expanded: bool,
     /// 左侧交易对列表宽度（pt），右缘把手拖动调节，范围 190~240
@@ -269,6 +358,12 @@ pub struct BnApp {
     pub trade_expanded: bool,
     /// 右侧下单面板宽度（pt），左缘把手拖动调节，范围 300~360
     pub trade_width: f32,
+    /// 底部订单区高度（pt），上缘把手拖动调节，范围 120~500
+    pub orders_h: f32,
+    /// 把手拖拽会话的上一帧指针坐标（x/y）：None = 当前没有进行中的拖拽。
+    /// 四个把手共用（同一时刻至多一个拖拽会话），40px 跳变守卫见 drag_delta
+    pub resize_drag_x: Option<f32>,
+    pub resize_drag_y: Option<f32>,
     /// 价格变动高亮位点集合（盘口/成交/页头）
     pub flash: flash::FlashState,
     /// 盘口消失档位残影（淡出动画 + 上一帧价格集合）
@@ -309,6 +404,13 @@ impl BnApp {
         } else {
             crate::i18n::ZH
         });
+        // 快捷键：B/S 买卖侧、Ctrl+Shift+C 两步全撤（输入框聚焦时由
+        // TextField 消费按键，不会误触）
+        cx.bind_keys([
+            KeyBinding::new("b", Buy, None),
+            KeyBinding::new("s", Sell, None),
+            KeyBinding::new("ctrl-shift-c", CancelAllShortcut, None),
+        ]);
 
         let default_symbol = cfg.default_symbol.to_uppercase();
         let entity = cx.new(|cx| {
@@ -325,6 +427,14 @@ impl BnApp {
             let pw2_field = mk_field(cx, "pw2");
             let api_key_field = mk_field(cx, "api_key");
             let api_secret_field = mk_field(cx, "api_secret");
+            // 侧栏搜索框：明文 + 占位文案
+            let search_field = cx.new(|cx_tf| {
+                let mut f = TextField::new(cx_tf);
+                f.set_id("symbol_search")
+                    .set_placeholder(crate::i18n::tr("搜索交易对…"))
+                    .set_font_size(theme::font_body());
+                f
+            });
 
             // 唤醒任务：tokio 通道的 waker 唤醒 GPUI 主线程上的 async 任务，
             // 延迟与旧版 request_repaint 相当
@@ -363,6 +473,7 @@ impl BnApp {
                 pw2_field,
                 api_key_field,
                 api_secret_field,
+                search_field,
                 tab: match std::env::var("BTP_TAB").as_deref() {
                     Ok("futures") => Tab::Futures,
                     _ => Tab::Spot,
@@ -395,6 +506,9 @@ impl BnApp {
                 chart_maximized: false,
                 trade_expanded: true,
                 trade_width: 300.0,
+                orders_h: 240.0,
+                resize_drag_x: None,
+                resize_drag_y: None,
                 flash: flash::FlashState::default(),
                 book_anim: Default::default(),
                 book_tab: crate::ui::market::BookTab::Book,
@@ -446,6 +560,17 @@ impl BnApp {
                     if saved {
                         window.blur();
                     }
+                }));
+            });
+        });
+        let w = weak.clone();
+        entity.update(cx, |app, cx| {
+            app.search_field.update(cx, |f, _| {
+                f.set_on_change(Box::new(move |text, _, cx| {
+                    let _ = w.update(cx, |app: &mut BnApp, cx| {
+                        app.page.symbol_filter = text.to_string();
+                        cx.notify();
+                    });
                 }));
             });
         });
@@ -790,7 +915,7 @@ impl BnApp {
         }
     }
 
-    /// 主界面骨架（里程碑 1）：顶栏 + 占位中央区；完整布局在里程碑 4-8 移植
+    /// 主界面：顶栏 + 按顶层页签路由（交易页 / 资产 / 设置 / 帮助）
     fn render_main(&mut self, cx: &mut Context<Self>) -> Div {
         // 进入主界面首帧（含解锁/存钥后）：ReloadAll 已覆盖挂单与账户，
         // 成交/订单历史需要指定交易对，这里补发当前页的
@@ -803,61 +928,524 @@ impl BnApp {
                 });
             }
         }
-        let t = *theme::c(cx);
+        let topbar = self.topbar(cx);
+        let body = match self.tab {
+            Tab::Spot | Tab::Futures => self.trading_ui(cx),
+            Tab::Portfolio => centered_placeholder(crate::i18n::tr("资产总览")),
+            Tab::Settings => centered_placeholder(crate::i18n::tr("设置")),
+            Tab::Help => centered_placeholder(crate::i18n::tr("使用说明")),
+        };
         div()
             .flex_1()
             .flex()
             .flex_col()
             .overflow_hidden()
-            // 顶栏（页签/主题语言切换/状态灯在里程碑 4 完整移植）
+            .child(topbar)
+            .child(body)
+    }
+
+    /// 顶部导航：品牌 + 五大页签 + 右侧簇（状态灯 / 环境徽标 / 语言主题切换）。
+    /// 右侧簇内容超宽时由顶栏 overflow 遮挡裁剪——大字号 + 窄窗口下宁可
+    /// 裁掉右侧指示，也不让它们压到左侧页签文字
+    fn topbar(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = *theme::c(cx);
+        let mut bar = div()
+            .flex()
+            .items_center()
+            .h(px(36.0))
+            .px(px(14.0))
+            .gap(px(12.0))
+            .bg(t.panel)
+            .border_b_1()
+            .border_color(t.border)
+            .overflow_hidden()
+            // 品牌：与页签同一行内垂直居中
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .h(px(36.0))
-                    .px(px(14.0))
-                    .bg(t.panel)
-                    .border_b_1()
-                    .border_color(t.border)
-                    .child(
-                        div()
-                            .text_size(theme::font_xl())
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(t.accent)
-                            .child("BnTradingPro"),
-                    )
-                    // 状态灯簇（里程碑 2 组件验证：完整顶栏在里程碑 4 移植）
-                    .child(div().flex_1())
-                    .child({
-                        let md = self.state.md.lock();
-                        gpui::div()
-                            .flex()
-                            .items_center()
-                            .gap(px(14.0))
-                            .child(widgets::status_light(
-                                "WS",
-                                md.market_ws(self.market),
-                            ))
-                            .child(widgets::status_light(
-                                "U",
-                                md.user_ws(self.market),
-                            ))
-                            .child(widgets::status_light_ok(
-                                "REST",
-                                self.state.rest_ok.load(std::sync::atomic::Ordering::Relaxed),
-                                &crate::i18n::tr("正常").to_string(),
-                                &crate::i18n::tr("异常").to_string(),
-                            ))
+                    .text_size(theme::font_xl())
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(t.accent)
+                    .whitespace_nowrap()
+                    .child("BnTradingPro"),
+            );
+        for (i, tab) in [
+            Tab::Spot,
+            Tab::Futures,
+            Tab::Portfolio,
+            Tab::Settings,
+            Tab::Help,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            bar = bar.child(
+                widgets::pill_tab(("navtab", i), tab.label(), self.tab == tab).on_click(
+                    cx.listener(move |app: &mut BnApp, _, _, cx| {
+                        app.set_tab(tab);
+                        cx.notify();
                     }),
+                ),
+            );
+        }
+        bar = bar.child(div().flex_1());
+
+        // 右侧簇（视觉自左向右）：账户灯 → 行情灯 → REST → 分隔 →
+        // 环境徽标 → 分隔 → 语言 → 主题（egui RTL 容器的视觉顺序）
+        let mut right = div().flex().items_center().gap(px(6.0));
+        if let Some(m) = self.tab.market() {
+            if self.state.has_creds() {
+                let uws = self.state.md.lock().user_ws(m).clone();
+                right = right.child(widgets::status_light(crate::i18n::tr("账户"), &uws));
+            } else {
+                // 未配置密钥：保持「名称 + 状态」结构，用警示文字代替状态灯
+                right = right.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(3.0))
+                        .child(
+                            div()
+                                .text_size(theme::font_sm())
+                                .text_color(t.text_dim)
+                                .child(crate::i18n::tr("账户").to_string()),
+                        )
+                        .child(
+                            div()
+                                .text_size(theme::font_sm())
+                                .text_color(t.warn)
+                                .child(crate::i18n::tr("未配置密钥").to_string()),
+                        ),
+                );
+            }
+            let mws = self.state.md.lock().market_ws(m).clone();
+            right = right.child(widgets::status_light(crate::i18n::tr("行情"), &mws));
+        }
+        let rest_ok = self
+            .state
+            .rest_ok
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let testnet = self.state.cfg.read().testnet;
+        let lang_txt: &str = if self.state.cfg.read().lang == "en" {
+            "中"
+        } else {
+            "EN"
+        };
+        let theme_txt: &str = if theme::is_light() {
+            crate::i18n::tr("深色")
+        } else {
+            crate::i18n::tr("浅色")
+        };
+        let vsep = || {
+            div()
+                .w(px(1.0))
+                .h(px(16.0))
+                .bg(theme::faded(t.border, 0.7))
+        };
+        right = right
+            .child(widgets::status_light_ok(
+                crate::i18n::tr("REST"),
+                rest_ok,
+                crate::i18n::tr("REST 接口正常"),
+                crate::i18n::tr("REST 接口异常"),
+            ))
+            .child(vsep())
+            .child(widgets::badge(
+                if testnet {
+                    "TESTNET"
+                } else {
+                    crate::i18n::tr("实盘 · 真实资金")
+                },
+                if testnet { t.accent } else { t.err },
+            ))
+            .child(vsep())
+            .child(
+                widgets::btn_default("lang_toggle", lang_txt, true)
+                    .tooltip({
+                        let tip = crate::i18n::tr("切换语言").to_string();
+                        move |_, cx| widgets::tooltip_view(tip.clone(), cx)
+                    })
+                    .on_click(cx.listener(|app: &mut BnApp, _, _, cx| {
+                        app.toggle_lang(cx);
+                    })),
             )
             .child(
-                div().flex_1().flex().items_center().justify_center().child(
+                widgets::btn_default("theme_toggle", theme_txt, true)
+                    .tooltip({
+                        let tip = crate::i18n::tr("切换主题").to_string();
+                        move |_, cx| widgets::tooltip_view(tip.clone(), cx)
+                    })
+                    .on_click(cx.listener(|app: &mut BnApp, _, _, cx| {
+                        app.toggle_theme(cx);
+                    })),
+            );
+        bar.child(right)
+    }
+
+    /// 主题快捷切换：改配置 + 刷新全局主题 + 同步设置草稿（否则设置页
+    /// 「保存并重连」会用旧草稿把切换回滚）+ 落盘走引擎命令
+    fn toggle_theme(&mut self, cx: &mut Context<Self>) {
+        let mut cfg = self.state.cfg.read().clone();
+        cfg.theme_mode = if cfg.theme_mode == "light" {
+            "dark".into()
+        } else {
+            "light".into()
+        };
+        theme::set_mode_str(&cfg.theme_mode);
+        cx.global_mut::<theme::UiTheme>().refresh();
+        self.applied_theme = cfg.theme_mode.clone();
+        self.settings.theme_mode = cfg.theme_mode.clone();
+        *self.state.cfg.write() = cfg;
+        self.state.send_cmd(Command::PersistConfig);
+        cx.notify();
+    }
+
+    /// 语言快捷切换（按钮显示目标语言）：同主题的同步纪律
+    fn toggle_lang(&mut self, cx: &mut Context<Self>) {
+        let mut cfg = self.state.cfg.read().clone();
+        cfg.lang = if cfg.lang == "en" {
+            "zh".into()
+        } else {
+            "en".into()
+        };
+        crate::i18n::set_lang(if cfg.lang == "en" {
+            crate::i18n::EN
+        } else {
+            crate::i18n::ZH
+        });
+        self.applied_lang = cfg.lang.clone();
+        self.settings.lang = cfg.lang.clone();
+        *self.state.cfg.write() = cfg;
+        self.state.send_cmd(Command::PersistConfig);
+        cx.notify();
+    }
+
+    // ---------- 交易页布局 ----------
+    //
+    // 侧栏 | 盘口 | ┌ 图表 ┬ 下单面板 ┐
+    //           | └ 订单区（从盘口右缘铺到窗口右缘）┘
+    // 面板宽度用固定宽 + 自绘把手锁死：不用容器自适应（egui 版可调面板会把
+    // 内容宽度持久化，页签来回切会越撑越宽）
+    fn trading_ui(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = *theme::c(cx);
+        let mut row = div().flex_1().flex().flex_row().overflow_hidden();
+        row = row.child(self.sidebar(cx));
+        // 图表最大化：盘口/下单/订单区全部隐藏，图表占满中央区
+        if !self.chart_maximized {
+            row = row.child(self.book_panel(cx));
+        }
+        // 中央：页头（M5）+ 图表（M6）
+        let central = div().flex_1().flex().flex_col().p(px(8.0)).bg(t.bg).child(
+            centered_placeholder(crate::i18n::tr("页头与图表（里程碑 5/6 移植中）")),
+        );
+        let mut chart_row = div().flex_1().flex().flex_row().overflow_hidden();
+        chart_row = chart_row.child(central);
+        if !self.chart_maximized {
+            chart_row = chart_row.child(self.trade_panel(cx));
+        }
+        let mut mid = div().flex_1().flex().flex_col().child(chart_row);
+        if !self.chart_maximized {
+            mid = mid.child(self.orders_panel(cx));
+        }
+        row.child(mid)
+    }
+
+    /// 左侧交易对列表：展开态（收起钮 + 搜索框 + 列表 + 右缘把手）/
+    /// 折叠态（36px 窄条只放展开钮）。过滤词在搜索框内，折叠不丢状态
+    fn sidebar(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = *theme::c(cx);
+        if self.sidebar_expanded {
+            let has_filter = !self.search_field.read(cx).text().trim().is_empty();
+            let top_row = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .h(px(theme::CONTROL_H))
+                .child(
+                    widgets::glyph_button(
+                        "sidebar_collapse",
+                        "«",
+                        12.0,
+                        t.text_dim,
+                        crate::i18n::tr("收起侧边栏"),
+                    )
+                    .on_click(cx.listener(|app: &mut BnApp, _, _, cx| {
+                        app.sidebar_expanded = false;
+                        cx.notify();
+                    })),
+                )
+                .child(div().flex_1().child(self.search_field.clone()))
+                .when(has_filter, |d| {
+                    d.child(
+                        widgets::glyph_button(
+                            "search_clear",
+                            "×",
+                            12.0,
+                            t.text_dim,
+                            crate::i18n::tr("清空搜索"),
+                        )
+                        .on_click(cx.listener(|app: &mut BnApp, _, _, cx| {
+                            app.search_field.update(cx, |f, _| f.clear());
+                            app.page.symbol_filter.clear();
+                            cx.notify();
+                        })),
+                    )
+                });
+            div()
+                .relative()
+                .w(px(self.sidebar_width))
+                .h_full()
+                .flex()
+                .flex_col()
+                .p(px(8.0))
+                .pb(px(0.0))
+                .bg(t.panel)
+                .child(top_row)
+                .child(symbols::list(self, cx))
+                // 右缘拖宽把手：范围 190~240
+                .child(h_resize_strip::<DragSidebar>("sidebar_resize", true))
+        } else {
+            div()
+                .relative()
+                .w(px(36.0))
+                .h_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .p(px(4.0))
+                .bg(t.panel)
+                .child(
+                    widgets::glyph_button(
+                        "sidebar_expand",
+                        "»",
+                        12.0,
+                        t.text_dim,
+                        crate::i18n::tr("展开侧边栏"),
+                    )
+                    .on_click(cx.listener(|app: &mut BnApp, _, _, cx| {
+                        app.sidebar_expanded = true;
+                        cx.notify();
+                    })),
+                )
+        }
+    }
+
+    /// 盘口面板（左，全高）：一直显示到 UI 最下面，不被底部订单区挤上去。
+    /// 内容（页签/档位行/胶囊）在里程碑 5 移植
+    fn book_panel(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = *theme::c(cx);
+        div()
+            .relative()
+            .w(px(self.book_width))
+            .h_full()
+            .flex()
+            .flex_col()
+            .p(px(8.0))
+            .pb(px(0.0))
+            .bg(t.panel)
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(centered_placeholder(crate::i18n::tr(
+                        "盘口 / 成交（里程碑 5 移植中）",
+                    ))),
+            )
+            // 右缘拖宽把手：范围 180~340
+            .child(h_resize_strip::<DragBook>("book_resize", true))
+    }
+
+    /// 右侧下单面板：展开态顶部「»」收起 + 左缘拖宽把手；收起态退为
+    /// 右缘 36px 窄条「«」。表单状态都在 page 上，折叠不丢输入；
+    /// 表单本体在里程碑 7 移植
+    fn trade_panel(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = *theme::c(cx);
+        if self.trade_expanded {
+            let symbol = self.page.symbol.clone();
+            div()
+                .relative()
+                .w(px(self.trade_width))
+                .h_full()
+                .flex()
+                .flex_col()
+                .p(px(8.0))
+                .bg(t.panel)
+                .child(
+                    // 顶行：收起按钮居左，标题居右——标题右缘对齐下方
+                    // 卖出按钮右缘（买卖按钮行总宽=面板内容宽）
                     div()
-                        .text_size(theme::font_lg())
-                        .text_color(t.text_dim)
-                        .child(crate::i18n::tr("主界面骨架（GPUI 迁移进行中）")),
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .h(px(theme::CONTROL_H))
+                        .child(
+                            widgets::glyph_button(
+                                "trade_collapse",
+                                "»",
+                                12.0,
+                                t.text_dim,
+                                crate::i18n::tr("收起下单面板"),
+                            )
+                            .on_click(cx.listener(|app: &mut BnApp, _, _, cx| {
+                                app.trade_expanded = false;
+                                cx.notify();
+                            })),
+                        )
+                        .child(div().flex_1())
+                        .child(
+                            div()
+                                .text_size(theme::font_body())
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(t.text)
+                                .whitespace_nowrap()
+                                .child(format!("{}{symbol}", crate::i18n::tr("下单 · "))),
+                        ),
+                )
+                .child(
+                    div().flex_1().flex().items_center().justify_center().child(
+                        centered_placeholder(crate::i18n::tr("下单表单（里程碑 7 移植中）")),
+                    ),
+                )
+                // 左缘拖宽把手：范围 300~360（指针左移 = 变宽）
+                .child(h_resize_strip::<DragTrade>("trade_resize", false))
+        } else {
+            div()
+                .relative()
+                .w(px(36.0))
+                .h_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .p(px(4.0))
+                .bg(t.panel)
+                .child(
+                    widgets::glyph_button(
+                        "trade_expand",
+                        "«",
+                        12.0,
+                        t.text_dim,
+                        crate::i18n::tr("展开下单面板"),
+                    )
+                    .on_click(cx.listener(|app: &mut BnApp, _, _, cx| {
+                        app.trade_expanded = true;
+                        cx.notify();
+                    })),
+                )
+        }
+    }
+
+    /// 底部订单区：子页签 + 表格区（M8）。从盘口右缘一直铺到窗口右缘，
+    /// 持仓/挂单表格的列才放得下
+    fn orders_panel(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = *theme::c(cx);
+        div()
+            .relative()
+            .h(px(self.orders_h))
+            .flex()
+            .flex_col()
+            .p(px(8.0))
+            .bg(t.panel)
+            .child(self.sub_tabs(cx))
+            .child(widgets::separator())
+            .child(
+                div().flex_1().flex().items_center().justify_center().child(
+                    centered_placeholder(crate::i18n::tr("订单表格（里程碑 8 移植中）")),
                 ),
             )
+            // 上缘拖高把手：范围 120~500（指针上移 = 变高）
+            .child(v_resize_strip::<DragOrdersH>("orders_resize", true))
+    }
+
+    /// 交易页底部子页签：挂单 / 持仓+资金流水(合约) / 历史 / 成交
+    fn sub_tabs(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = *theme::c(cx);
+        // 资金流水与持仓一样仅合约提供（现货无统一流水端点）：
+        // 合约 = 挂单/持仓/历史/成交/流水，现货 = 挂单/历史/成交
+        let mut tabs: Vec<(SubTab, &str)> = vec![
+            (SubTab::Open, crate::i18n::tr("当前挂单")),
+            (SubTab::History, crate::i18n::tr("订单历史")),
+            (SubTab::Trades, crate::i18n::tr("成交历史")),
+        ];
+        if self.market == Market::UmFutures {
+            tabs.insert(1, (SubTab::Positions, crate::i18n::tr("持仓")));
+            tabs.push((SubTab::Flow, crate::i18n::tr("资金流水")));
+        }
+        // 进入资金流水页签后自动拉取一次当前市场（切市场重置标记重新触发；
+        // 手动「刷新」按钮随时可重拉，失败 toast 可见）
+        if self.page.sub_tab == SubTab::Flow && !self.flow_auto_done {
+            self.flow_auto_done = true;
+            if self.state.has_creds() {
+                self.state.send_cmd(Command::RefreshFlow {
+                    market: self.market,
+                });
+            }
+        }
+        let open_n = self.state.orders.lock().open(self.market).len();
+        let mut row = div().flex().flex_row().items_center().gap(px(2.0));
+        for (i, (tab, label)) in tabs.into_iter().enumerate() {
+            row = row.child(
+                widgets::pill_tab(("subtab", i), label, self.page.sub_tab == tab).on_click(
+                    cx.listener(move |app: &mut BnApp, _, _, cx| {
+                        app.page.sub_tab = tab;
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+        row.child(div().flex_1()).child(
+            div()
+                .text_size(theme::font_sm())
+                .text_color(t.text_dim)
+                .child(format!("{}{}", open_n, crate::i18n::tr("笔挂单"))),
+        )
+    }
+
+    // ---------- 快捷键 ----------
+
+    /// B/S：切换买卖侧并聚焦数量框（数量框在 M7 落地后补 focus）
+    fn side_shortcut(&mut self, side: Side, cx: &mut Context<Self>) {
+        if self.phase == Phase::Main && self.tab.market().is_some() && self.confirm.is_none() {
+            self.page.form.side = side;
+            cx.notify();
+        }
+    }
+
+    /// Ctrl+Shift+C 两步全撤当前交易对：武装态按 (交易对, 4 秒窗口) 匹配，
+    /// 换交易对或超时即视为首次按下重新武装，杜绝「多久之前误按一次后被
+    /// 补键撤销」
+    fn cancel_all_shortcut(&mut self, _cx: &mut Context<Self>) {
+        if self.phase != Phase::Main
+            || self.tab.market().is_none()
+            || self.confirm.is_some()
+            || !self.state.has_creds()
+        {
+            return;
+        }
+        let sym = self.page.symbol.clone();
+        let now = std::time::Instant::now();
+        let primed = matches!(
+            &self.shortcut_cancel_armed,
+            Some((s, t)) if *s == sym && now.duration_since(*t) < Duration::from_secs(4)
+        );
+        if primed {
+            self.shortcut_cancel_armed = None;
+            self.state.send_cmd(Command::CancelAll {
+                market: self.market,
+                symbol: Some(sym),
+            });
+        } else {
+            self.shortcut_cancel_armed = Some((sym, now));
+            self.state.push_toast(
+                crate::engine::state::ToastKind::Warn,
+                format!(
+                    "{}{}",
+                    crate::i18n::tr("再按一次 Ctrl+Shift+C 确认撤销: "),
+                    self.page.symbol
+                ),
+            );
+        }
     }
 
     /// 解锁/配钥页（渲染实现在 unlock.rs；本方法只做进入主界面后的
@@ -898,6 +1486,62 @@ impl Render for BnApp {
             .font_family(theme::FONT_UI)
             .bg(t.bg)
             .text_color(t.text)
+            // 快捷键：B/S 切换买卖侧、Ctrl+Shift+C 两步全撤（输入框聚焦时
+            // TextField 消费按键，动作不会从这里触发）
+            .on_action(cx.listener(|app: &mut BnApp, _: &Buy, _, cx| {
+                app.side_shortcut(Side::Buy, cx);
+            }))
+            .on_action(cx.listener(|app: &mut BnApp, _: &Sell, _, cx| {
+                app.side_shortcut(Side::Sell, cx);
+            }))
+            .on_action(cx.listener(|app: &mut BnApp, _: &CancelAllShortcut, _, cx| {
+                app.cancel_all_shortcut(cx);
+            }))
+            // 面板尺寸拖拽：把手只负责发起（8px 竖条），指针很快划出把手
+            // 范围，位移事件必须由覆盖全窗的根容器持续接收；按载荷类型分发
+            .on_drag_move(cx.listener(
+                |app: &mut BnApp, e: &DragMoveEvent<DragSidebar>, _, cx| {
+                    let x = f32::from(e.event.position.x);
+                    let last = app.resize_drag_x.replace(x);
+                    if let Some(d) = drag_delta(last, x) {
+                        // 指针右移 = 面板变宽（最小宽度 190 按用户要求）
+                        app.sidebar_width = (app.sidebar_width + d).clamp(190.0, 240.0);
+                    }
+                    cx.notify();
+                },
+            ))
+            .on_drag_move(cx.listener(
+                |app: &mut BnApp, e: &DragMoveEvent<DragBook>, _, cx| {
+                    let x = f32::from(e.event.position.x);
+                    let last = app.resize_drag_x.replace(x);
+                    if let Some(d) = drag_delta(last, x) {
+                        app.book_width = (app.book_width + d).clamp(180.0, 340.0);
+                    }
+                    cx.notify();
+                },
+            ))
+            .on_drag_move(cx.listener(
+                |app: &mut BnApp, e: &DragMoveEvent<DragTrade>, _, cx| {
+                    let x = f32::from(e.event.position.x);
+                    let last = app.resize_drag_x.replace(x);
+                    if let Some(d) = drag_delta(last, x) {
+                        // 指针左移 = 面板变宽；下限两市场统一 300
+                        app.trade_width = (app.trade_width - d).clamp(300.0, 360.0);
+                    }
+                    cx.notify();
+                },
+            ))
+            .on_drag_move(cx.listener(
+                |app: &mut BnApp, e: &DragMoveEvent<DragOrdersH>, _, cx| {
+                    let y = f32::from(e.event.position.y);
+                    let last = app.resize_drag_y.replace(y);
+                    if let Some(d) = drag_delta(last, y) {
+                        // 指针上移 = 订单区变高
+                        app.orders_h = (app.orders_h - d).clamp(120.0, 500.0);
+                    }
+                    cx.notify();
+                },
+            ))
             .child(body)
             // Toast 覆盖层：右下角堆叠
             .child(widgets::draw_toasts(&self.state))

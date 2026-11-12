@@ -1029,3 +1029,17 @@ mod tests {
         assert_eq!(fmt_compact(34_500.0), "3.5万");
     }
 }
+
+
+// ---------- 拖拽把手幽灵视图 ----------
+
+/// 面板宽度把手的拖拽跟随物：gpui 的 `on_drag` 构造器必须返回一个
+/// Render 实体作为拖拽光标旁的跟随视图；宽度把手只需要拖拽手势本身，
+/// 跟随物给空 div 占位即可
+pub struct DragGhost;
+
+impl Render for DragGhost {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
