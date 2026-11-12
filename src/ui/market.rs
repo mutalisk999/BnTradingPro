@@ -1031,6 +1031,31 @@ pub fn header(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         })),
     );
 
+    // 预警入口：有预警或面板展开时点亮（本地触发，到价弹提示）
+    let alert_n = app.state.cfg.read().alerts.len();
+    let bell_txt = if alert_n > 0 {
+        format!("{}({alert_n})", crate::i18n::tr("预警"))
+    } else {
+        crate::i18n::tr("预警").to_string()
+    };
+    r1 = r1.child(
+        widgets::glyph_button(
+            "hdr_bell",
+            &bell_txt,
+            f32::from(font_sm()),
+            if alert_n > 0 || app.alerts_open {
+                t.accent
+            } else {
+                t.text_dim
+            },
+            crate::i18n::tr("价格预警（本地触发，到价弹提示）"),
+        )
+        .on_click(cx.listener(|app: &mut BnApp, _, _, cx| {
+            app.alerts_open = !app.alerts_open;
+            cx.notify();
+        })),
+    );
+
     // 第三行：24h 开/高/低/收（行情四要素独占一行，价格动得最快、最常被扫读）
     let mut r3 = div()
         .flex()
@@ -1146,4 +1171,177 @@ pub fn header(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .child(r3)
         .child(r4)
         .child(widgets::separator())
+}
+
+/// 添加行输入 → add_alert，回灌输入框：添加成功被清空、失败保留待改
+fn add_alert_from_field(app: &mut BnApp, cx: &mut Context<BnApp>) {
+    app.alert_input = app.alert_field.read(cx).text().to_string();
+    app.add_alert();
+    let cur = app.alert_input.clone();
+    app.alert_field.update(cx, |f, _| f.set_text(cur));
+    cx.notify();
+}
+
+/// 价格预警面板：顶部右侧悬挂（egui 版 RIGHT_TOP [-16, 92] 语义）。
+/// 无遮罩背景：面板外点击直达底层 UI（与 egui 窗口可交互一致），Esc 关闭
+pub fn alerts_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
+    if !app.alerts_open {
+        return None;
+    }
+    let t = cur();
+    let tr = crate::i18n::tr;
+    let state = Arc::clone(&app.state);
+    let dp = state
+        .with_rule(app.market, &app.page.symbol, |r| {
+            r.map(|x| x.price_dp() as usize)
+        })
+        .unwrap_or(2);
+    // 短锁取当前价显示（添加行的参考价）
+    let last: Option<String> = {
+        let md = state.md.lock();
+        md.get(app.market, &app.page.symbol)
+            .and_then(|m| m.ticker.clone())
+            .map(|tk| widgets::fmt_dec_fixed(&tk.last_price, dp))
+    };
+    let alerts = state.cfg.read().alerts.clone();
+
+    // 添加行：目标价（方向按相对最新价自动判定）
+    let add_row = div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.0))
+        .child(div().w(px(110.0)).child(app.alert_field.clone()))
+        .child(
+            widgets::btn_default("alert_add", tr("添加"), true).on_click(cx.listener(
+                |app: &mut BnApp, _, _, cx| add_alert_from_field(app, cx),
+            )),
+        );
+
+    // 预警列表（≤180pt 高滚动；短锁拷贝 + with_rule 逐条取显示精度）
+    let adp = |mkt: u8, sym: &str| -> usize {
+        let m = if mkt == 0 {
+            crate::binance::Market::Spot
+        } else {
+            crate::binance::Market::UmFutures
+        };
+        state.with_rule(m, sym, |r| {
+            r.map(|x| x.price_dp() as usize).unwrap_or(2)
+        })
+    };
+    let rows: Vec<Div> = alerts
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let px_txt = format!(
+                "{} {}",
+                if a.above { "≥" } else { "≤" },
+                widgets::fmt_dec_fixed(&a.price, adp(a.market, &a.symbol))
+            );
+            let color = if a.above { t.up } else { t.down };
+            let sym = a.symbol.clone();
+            div()
+                .h(px(24.0))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_size(font_md())
+                        .text_color(t.text)
+                        .whitespace_nowrap()
+                        .child(sym),
+                )
+                .when(a.market != 0, |d| {
+                    d.child(
+                        div()
+                            .text_size(font_sm())
+                            .text_color(t.text_dim)
+                            .whitespace_nowrap()
+                            .child(tr("· 合约")),
+                    )
+                })
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .font_family(FONT_MONO)
+                        .text_size(font_md())
+                        .text_color(Hsla::from(color))
+                        .whitespace_nowrap()
+                        .child(px_txt),
+                )
+                .child(
+                    div()
+                        .id(("alert_del", i))
+                        .px(px(4.0))
+                        .text_size(font_sm())
+                        .text_color(t.text_dim)
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(t.err))
+                        .child("×")
+                        .on_click(cx.listener(move |app: &mut BnApp, _, _, cx| {
+                            app.remove_alert(i);
+                            cx.notify();
+                        })),
+                )
+        })
+        .collect();
+
+    let list = if rows.is_empty() {
+        div()
+            .id("alerts_empty")
+            .text_size(font_sm())
+            .text_color(t.text_dim)
+            .child(tr("暂无预警，输入目标价添加"))
+    } else {
+        div()
+            .id("alerts_list")
+            .max_h(px(180.0))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .children(rows)
+    };
+
+    let card = widgets::card()
+        .w(px(272.0))
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .text_size(font_lg())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(t.text)
+                        .child(tr("价格预警")),
+                )
+                .when_some(last.clone(), |d, v| {
+                    d.child(
+                        div()
+                            .font_family(FONT_MONO)
+                            .text_size(font_sm())
+                            .text_color(t.text_dim)
+                            .whitespace_nowrap()
+                            .child(v),
+                    )
+                }),
+        )
+        .child(add_row)
+        .child(widgets::separator())
+        .child(list);
+
+    Some(
+        div()
+            .absolute()
+            .top(px(92.0))
+            .right(px(16.0))
+            .child(card),
+    )
 }

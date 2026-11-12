@@ -11,7 +11,7 @@ use crate::engine::state::SharedState;
 use crate::engine::Command;
 use crate::security::vault;
 use crate::ui::widgets::DragGhost;
-use crate::ui::{chart, flash, market, orders, symbols, textfield::TextField, theme, trade, unlock, widgets};
+use crate::ui::{assets, chart, flash, help, market, orders, settings, symbols, textfield::TextField, theme, trade, unlock, widgets};
 use gpui::{
     div, prelude::FluentBuilder, px, App, AppContext, Context, Div, Entity, FontWeight,
     DragMoveEvent, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, MouseButton,
@@ -95,21 +95,6 @@ pub enum Phase {
     /// 配置 API 密钥（首次/重置/更换；与主密码一体设置）
     EnterKeys,
     Main,
-}
-
-/// 占位页：等待后续里程碑移植的顶层页（资产/设置/帮助）中央提示
-fn centered_placeholder(text: &'static str) -> Div {
-    div()
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            div()
-                .text_size(theme::font_lg())
-                .text_color(theme::cur().text_dim)
-                .child(text.to_string()),
-        )
 }
 
 /// 顶层功能页签
@@ -312,6 +297,11 @@ pub struct BnApp {
     pub page: TradingPage,
     pub confirm: Option<ConfirmOrder>,
     pub settings: SettingsDraft,
+    /// 设置页文本输入框（GPUI TextField 独立 Entity，文本状态在框内；
+    /// 保存时经草稿写回配置）
+    pub settings_fields: settings::SettingsFields,
+    /// 价格预警目标价输入框（文本经 on_change 同步进 alert_input）
+    pub alert_field: Entity<TextField>,
 
     /// 现货/期货页各自的持久状态
     pub spot: TradingPage,
@@ -466,6 +456,16 @@ impl BnApp {
             };
             let tpsl_sl_field = mk_tpsl_field(cx, "tpsl_sl");
             let tpsl_tp_field = mk_tpsl_field(cx, "tpsl_tp");
+            // 设置页输入框组 + 预警目标价输入框
+            let settings_fields = settings::SettingsFields::new(cx);
+            let alert_field = cx.new(|cx_tf| {
+                let mut f = TextField::new(cx_tf);
+                f.set_id("alert_price")
+                    .set_numeric(true)
+                    .set_placeholder(crate::i18n::tr("目标价"))
+                    .set_font_size(theme::font_md());
+                f
+            });
 
             // 唤醒任务：tokio 通道的 waker 唤醒 GPUI 主线程上的 async 任务，
             // 延迟与旧版 request_repaint 相当
@@ -521,6 +521,8 @@ impl BnApp {
                 page: TradingPage::new(default_symbol.clone(), interval),
                 confirm: None,
                 settings: SettingsDraft::from_cfg(&cfg),
+                settings_fields,
+                alert_field,
                 spot: TradingPage::new(default_symbol.clone(), interval),
                 fut: TradingPage::new(default_symbol.clone(), interval),
                 symbols_cache: None,
@@ -619,6 +621,25 @@ impl BnApp {
         entity.update(cx, |app, cx| {
             let weak = cx.entity().downgrade();
             app.trade_fields.attach(&weak, cx);
+            // 设置页输入框写回 settings 草稿
+            app.settings_fields.attach(&weak, cx);
+            // 预警输入：输入即存草稿；回车 = 添加（添加成功清空、失败保留待改）
+            app.alert_field.update(cx, |f, _| {
+                let w = weak.clone();
+                f.set_on_change(Box::new(move |s, _, cx| {
+                    let s = s.to_string();
+                    let _ = w.update(cx, |app: &mut BnApp, _| app.alert_input = s);
+                }));
+                let w = weak.clone();
+                f.set_on_submit(Box::new(move |_, cx| {
+                    let _ = w.update(cx, |app: &mut BnApp, cx| {
+                        app.alert_input = app.alert_field.read(cx).text().to_string();
+                        app.add_alert();
+                        let cur = app.alert_input.clone();
+                        app.alert_field.update(cx, |f, _| f.set_text(cur));
+                    });
+                }));
+            });
         });
         entity
     }
@@ -977,9 +998,9 @@ impl BnApp {
         let topbar = self.topbar(cx);
         let body = match self.tab {
             Tab::Spot | Tab::Futures => self.trading_ui(window, cx),
-            Tab::Portfolio => centered_placeholder(crate::i18n::tr("资产总览")),
-            Tab::Settings => centered_placeholder(crate::i18n::tr("设置")),
-            Tab::Help => centered_placeholder(crate::i18n::tr("使用说明")),
+            Tab::Portfolio => assets::show(self, cx),
+            Tab::Settings => settings::show(self, cx),
+            Tab::Help => help::show(self, cx),
         };
         div()
             .flex_1()
@@ -1453,10 +1474,11 @@ impl BnApp {
 
     // ---------- 快捷键 ----------
 
-    /// B/S：切换买卖侧并聚焦数量框（数量框在 M7 落地后补 focus）
-    fn side_shortcut(&mut self, side: Side, cx: &mut Context<Self>) {
+    /// B/S：切换买卖侧并聚焦数量框（输入框聚焦时 TextField 消费按键，不会到这）
+    fn side_shortcut(&mut self, side: Side, window: &mut Window, cx: &mut Context<Self>) {
         if self.phase == Phase::Main && self.tab.market().is_some() && self.confirm.is_none() {
             self.page.form.side = side;
+            self.trade_fields.qty.update(cx, |f, _| f.focus(window));
             cx.notify();
         }
     }
@@ -1537,11 +1559,11 @@ impl Render for BnApp {
             .text_color(t.text)
             // 快捷键：B/S 切换买卖侧、Ctrl+Shift+C 两步全撤（输入框聚焦时
             // TextField 消费按键，动作不会从这里触发）
-            .on_action(cx.listener(|app: &mut BnApp, _: &Buy, _, cx| {
-                app.side_shortcut(Side::Buy, cx);
+            .on_action(cx.listener(|app: &mut BnApp, _: &Buy, window, cx| {
+                app.side_shortcut(Side::Buy, window, cx);
             }))
-            .on_action(cx.listener(|app: &mut BnApp, _: &Sell, _, cx| {
-                app.side_shortcut(Side::Sell, cx);
+            .on_action(cx.listener(|app: &mut BnApp, _: &Sell, window, cx| {
+                app.side_shortcut(Side::Sell, window, cx);
             }))
             .on_action(cx.listener(|app: &mut BnApp, _: &CancelAllShortcut, _, cx| {
                 app.cancel_all_shortcut(cx);
@@ -1558,6 +1580,10 @@ impl Render for BnApp {
                     hit = true;
                 }
                 if app.tpsl_edit.take().is_some() {
+                    hit = true;
+                }
+                if app.alerts_open {
+                    app.alerts_open = false;
                     hit = true;
                 }
                 if app.kind_menu_open {
@@ -1641,6 +1667,8 @@ impl Render for BnApp {
                 },
             ))
             .child(body)
+            // 价格预警面板（None 时不渲染）：顶部右侧无遮罩悬挂，不挡下方 UI
+            .children(market::alerts_dialog(self, cx))
             // 持仓 TP/SL 弹窗（None 时不渲染）：无遮罩悬挂，不挡下方 UI
             .children(orders::tpsl_dialog(self, cx))
             // 确认下单弹窗（None 时不渲染）：遮罩 + 居中卡片，
