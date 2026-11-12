@@ -366,6 +366,16 @@ pub struct BnApp {
     pub resize_drag_y: Option<f32>,
     /// 价格变动高亮位点集合（盘口/成交/页头）
     pub flash: flash::FlashState,
+    /// 图表鼠标位置（窗口绝对坐标）；None = 不在图表上（十字光标隐藏）
+    pub chart_mouse: Option<(f32, f32)>,
+    /// 图表悬停态（on_hover 维护；false 时清 chart_mouse）
+    pub chart_hover: bool,
+    /// 图表拖拽平移会话的上一帧指针 x（None = 会话未开始）
+    pub pan_last: Option<f32>,
+    /// 图表 K 线总数（每次渲染由 chart::show 写入，拖拽平移钳位用）
+    pub chart_n: usize,
+    /// 副图指标下拉菜单展开态
+    pub sub_menu_open: bool,
     /// 盘口消失档位残影（淡出动画 + 上一帧价格集合）
     pub book_anim: crate::ui::market::BookAnim,
     /// 右栏内容页签：盘口 / 成交明细
@@ -510,6 +520,11 @@ impl BnApp {
                 resize_drag_x: None,
                 resize_drag_y: None,
                 flash: flash::FlashState::default(),
+                chart_mouse: None,
+                chart_hover: false,
+                pan_last: None,
+                chart_n: 0,
+                sub_menu_open: false,
                 book_anim: Default::default(),
                 book_tab: crate::ui::market::BookTab::Book,
                 flow_auto_done: false,
@@ -1133,10 +1148,15 @@ impl BnApp {
         if !self.chart_maximized {
             row = row.child(self.book_panel(window, cx));
         }
-        // 中央：页头（交易对/最新价/24h 统计）+ 图表（M6）
-        let central = div().flex_1().flex().flex_col().p(px(8.0)).bg(t.bg).child(
-            market::header(self, cx),
-        ).child(centered_placeholder(crate::i18n::tr("图表（里程碑 6 移植中）")));
+        // 中央：页头（交易对/最新价/24h 统计）+ 图表
+        let central = div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .p(px(8.0))
+            .bg(t.bg)
+            .child(market::header(self, cx))
+            .child(chart::show(self, cx));
         let mut chart_row = div().flex_1().flex().flex_row().overflow_hidden();
         chart_row = chart_row.child(central);
         if !self.chart_maximized {
