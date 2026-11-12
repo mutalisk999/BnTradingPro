@@ -453,6 +453,8 @@ impl Render for TextField {
             .child(canvas(
                 move |bounds, _window, _cx| bounds,
                 move |bounds, _, window: &mut Window, cx: &mut App| {
+                    // 实测 bounds 回写：点击→光标定位与 IME 候选窗定位都靠它
+                    entity.update(cx, |tf, _| tf.bounds = bounds);
                     // IME/输入法挂载：绘制期注册 input handler（聚焦时生效）
                     window.handle_input(&focus, gpui::ElementInputHandler::new(bounds, entity.clone()), cx);
                     // 字形绘制：选区底色 → 文本 → 光标
@@ -467,7 +469,7 @@ impl Render for TextField {
                     let line = window
                         .text_system()
                         .shape_line(shaped_src.into(), font_size, &[run], None);
-                    // 选区高亮
+                    // 选区高亮（高度取实测内容盒，避免压过边框）
                     if let Some(sel) = &sel {
                         if sel.start < sel.end {
                             let x0 = line.x_for_index(sel.start);
@@ -479,30 +481,37 @@ impl Render for TextField {
                                             x: bounds.origin.x + x0,
                                             y: bounds.origin.y,
                                         },
-                                        size: size(x1 - x0, line_h),
+                                        size: size(x1 - x0, bounds.size.height),
                                     },
                                     crate::ui::theme::faded(t.accent, 0.22),
                                 ));
                             }
                         }
                     }
-                    let _ = line.paint(bounds.origin, line_h, window, cx);
-                    // 光标：聚焦时 2px 竖线
+                    // 行高取实测内容盒高度：文本在盒内精确垂直居中（paint 内部按
+                    // (line_h - ascent - descent)/2 定基线）
+                    let paint_h = if bounds.size.height > px(0.0) { bounds.size.height } else { line_h };
+                    let _ = line.paint(bounds.origin, paint_h, window, cx);
+                    // 光标：聚焦时 2px 竖线（在内容盒内垂直居中）
                     if focused {
                         let cx_pos = line.x_for_index(cursor_db);
+                        let cur_h = line_h - px(6.0);
                         window.paint_quad(gpui::fill(
                             Bounds {
                                 origin: Point {
                                     x: bounds.origin.x + cx_pos,
-                                    y: bounds.origin.y + px(3.0),
+                                    y: bounds.origin.y + (bounds.size.height - cur_h) / 2.0,
                                 },
-                                size: size(px(2.0), line_h - px(6.0)),
+                                size: size(px(2.0), cur_h),
                             },
                             Hsla::from(t.text),
                         ));
                     }
                 },
-            ))
+            )
+            // canvas 必须显式撑满内容盒：Canvas 布局默认 Style::default() 是 0×0，
+            // 在 items_center 父容器里会居中成一个点，文本从盒中点开始画掉进下半区
+            .size_full())
     }
 }
 
