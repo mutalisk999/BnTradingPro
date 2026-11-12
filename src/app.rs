@@ -10,7 +10,7 @@ use crate::config::{self, AppConfig};
 use crate::engine::state::SharedState;
 use crate::engine::Command;
 use crate::security::vault;
-use crate::ui::{chart, flash, theme, trade, widgets};
+use crate::ui::{chart, flash, textfield::TextField, theme, trade, unlock, widgets};
 use gpui::{div, px, App, AppContext, Context, Div, Entity, FontWeight, IntoElement, ParentElement, Render, Styled, Window};
 use std::sync::Arc;
 use std::time::Duration;
@@ -251,8 +251,12 @@ pub struct BnApp {
     pub alerts_open: bool,
     /// 新预警目标价输入缓冲
     pub alert_input: String,
-    /// 认证卡片上一帧实测高度（矮窗口下卡片居中/顶置的布局依据，滞后一帧收敛）
-    pub auth_card_h: f32,
+    /// 认证表单输入框（GPUI 版 TextField 是独立 Entity，文本状态在框内；
+    /// pw1/pw2/api_key/api_secret 字符串字段在提交时从框内同步）
+    pub pw1_field: Entity<TextField>,
+    pub pw2_field: Entity<TextField>,
+    pub api_key_field: Entity<TextField>,
+    pub api_secret_field: Entity<TextField>,
     /// 左侧交易对列表展开（false 时收起为窄条，» / « 按钮切换）
     pub sidebar_expanded: bool,
     /// 左侧交易对列表宽度（pt），右缘把手拖动调节，范围 190~240
@@ -307,7 +311,21 @@ impl BnApp {
         });
 
         let default_symbol = cfg.default_symbol.to_uppercase();
-        cx.new(|cx| {
+        let entity = cx.new(|cx| {
+            // 认证表单输入框：全部遮蔽显示（egui 版 password(true)——API Key
+            // 明文也足以创建 listenKey 读取推送，录屏/共享屏幕时同样不能暴露）
+            let mk_field = |cx: &mut Context<Self>, id: &'static str| {
+                cx.new(|cx_tf| {
+                    let mut f = TextField::new(cx_tf);
+                    f.set_id(id).set_masked(true).set_font_size(theme::font_body());
+                    f
+                })
+            };
+            let pw1_field = mk_field(cx, "pw1");
+            let pw2_field = mk_field(cx, "pw2");
+            let api_key_field = mk_field(cx, "api_key");
+            let api_secret_field = mk_field(cx, "api_secret");
+
             // 唤醒任务：tokio 通道的 waker 唤醒 GPUI 主线程上的 async 任务，
             // 延迟与旧版 request_repaint 相当
             cx.spawn(async move |this, cx| {
@@ -341,6 +359,10 @@ impl BnApp {
                 api_key: Zeroizing::default(),
                 api_secret: Zeroizing::default(),
                 keys_err: String::new(),
+                pw1_field,
+                pw2_field,
+                api_key_field,
+                api_secret_field,
                 tab: match std::env::var("BTP_TAB").as_deref() {
                     Ok("futures") => Tab::Futures,
                     _ => Tab::Spot,
@@ -367,9 +389,6 @@ impl BnApp {
                 tpsl_edit: None,
                 alerts_open: false,
                 alert_input: String::new(),
-                // 首帧定位用：收紧内边距后 EnterKeys 表单实测约 340，Unlock 约 240。
-                // 首帧用两页的中间值，第二帧起由实测值收敛，避免开场跳一下
-                auth_card_h: 300.0,
                 sidebar_expanded: true,
                 sidebar_width: 190.0,
                 book_width: 230.0,
@@ -382,7 +401,72 @@ impl BnApp {
                 flow_auto_done: false,
                 hist_kind: crate::ui::orders::HistKind::All,
             }
-        })
+        });
+
+        // 回车提交：TextField 的回调拿不到视图句柄，经 WeakEntity 找回。
+        // pw 框回车 = 解锁；Secret 框回车 = 保存（与 egui 版 lost_focus+Enter 一致）
+        let weak = entity.downgrade();
+        let w = weak.clone();
+        entity.update(cx, |app, cx| {
+            app.pw1_field.update(cx, |f, _| {
+                f.set_on_submit(Box::new(move |window, cx| {
+                    let unlocked = w
+                        .update(cx, |app: &mut BnApp, cx| {
+                            app.pw1 =
+                                Zeroizing::new(app.pw1_field.read(cx).text().to_string());
+                            unlock::try_unlock(app);
+                            app.phase == Phase::Main
+                        })
+                        .unwrap_or(false);
+                    // 解锁成功后失焦：字段已不渲染，残留焦点会挡住主界面快捷键
+                    if unlocked {
+                        window.blur();
+                    }
+                }));
+            });
+        });
+        let w = weak.clone();
+        entity.update(cx, |app, cx| {
+            app.api_secret_field.update(cx, |f, _| {
+                f.set_on_submit(Box::new(move |window, cx| {
+                    let saved = w
+                        .update(cx, |app: &mut BnApp, cx| {
+                            app.sync_auth_fields(cx);
+                            let can_save = app.can_save_keys(cx);
+                            if can_save {
+                                unlock::save_keys(
+                                    app,
+                                    config::data_dir(),
+                                    vault::vault_exists(config::data_dir()),
+                                );
+                            }
+                            app.phase == Phase::Main
+                        })
+                        .unwrap_or(false);
+                    if saved {
+                        window.blur();
+                    }
+                }));
+            });
+        });
+        entity
+    }
+
+    /// 提交时把 TextField 文本同步到逻辑字段（try_unlock/save_keys 读字符串字段）
+    pub(crate) fn sync_auth_fields(&mut self, cx: &Context<Self>) {
+        self.pw1 = Zeroizing::new(self.pw1_field.read(cx).text().to_string());
+        self.pw2 = Zeroizing::new(self.pw2_field.read(cx).text().to_string());
+        self.api_key = Zeroizing::new(self.api_key_field.read(cx).text().to_string());
+        self.api_secret = Zeroizing::new(self.api_secret_field.read(cx).text().to_string());
+    }
+
+    /// 保存按钮可用性（egui 版 can_save）：密钥两项非空，且需要主密码时已填
+    pub(crate) fn can_save_keys(&self, cx: &App) -> bool {
+        let vault_exists = vault::vault_exists(config::data_dir());
+        let need_master = vault_exists || self.master.is_none();
+        !self.api_key_field.read(cx).text().trim().is_empty()
+            && !self.api_secret_field.read(cx).text().trim().is_empty()
+            && (!need_master || !self.pw1_field.read(cx).text().trim().is_empty())
     }
 
     /// 下单面板的最小宽度：两市场统一 300（= 默认面板宽）。字号上调后
@@ -776,43 +860,15 @@ impl BnApp {
             )
     }
 
-    /// 解锁/配钥页骨架（里程碑 3 完整移植）
-    fn render_auth(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
-        let title = match self.phase {
-            Phase::Unlock => crate::i18n::tr("解锁"),
-            _ => crate::i18n::tr("配置 API 密钥"),
-        };
-        div().flex_1().flex().items_center().justify_center().child(
-            div()
-                .w(px(440.0))
-                .flex()
-                .flex_col()
-                .bg(t.card)
-                .border_1()
-                .border_color(t.border)
-                .rounded(px(theme::R_LG))
-                .p(px(22.0))
-                .child(
-                    div()
-                        .text_size(theme::font_lg())
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(t.text)
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .mt(px(8.0))
-                        .text_size(theme::font_md())
-                        .text_color(t.text_dim)
-                        .child(crate::i18n::tr("认证卡片将在里程碑 3 完整移植")),
-                ),
-        )
+    /// 解锁/配钥页（渲染实现在 unlock.rs；本方法只做进入主界面后的
+    /// 初始加载兜底等纯逻辑）
+    fn render_auth(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        unlock::page(self, window, cx)
     }
 }
 
 impl Render for BnApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 本地价格预警逐帧评估（内部空表时即刻返回，无锁开销）
         self.check_alerts();
         // 主题/语言/字号跟随配置（设置页或顶栏修改后即时生效）
@@ -831,7 +887,7 @@ impl Render for BnApp {
         let t = *theme::c(cx);
         let body = match self.phase {
             Phase::Main => self.render_main(cx),
-            _ => self.render_auth(cx),
+            _ => self.render_auth(window, cx),
         };
 
         div()
