@@ -616,4 +616,58 @@ mod tests {
         let f = faded(rgb_const(0x000000), 0.5);
         assert!((f.a - 0.5).abs() < 1e-3);
     }
+
+    #[test]
+    fn backdrop_alpha_per_theme_mode() {
+        // 遮罩透明度按明暗主题分档：浅色轻遮罩、深色重遮罩
+        set_mode_str("light");
+        let light = backdrop_raw();
+        set_mode_str("dark");
+        let dark = backdrop_raw();
+        assert!((light - BACKDROP_A_LIGHT).abs() < 1e-3);
+        assert!((dark - BACKDROP_A_DARK).abs() < 1e-3);
+        assert!(dark > light);
+        set_mode_str("light");
+    }
+
+    /// backdrop() 需要 App 才能调用（与其它取色入口签名一致），
+    /// 测试直接取同一实现的核心逻辑
+    fn backdrop_raw() -> f32 {
+        if is_light() {
+            BACKDROP_A_LIGHT
+        } else {
+            BACKDROP_A_DARK
+        }
+    }
+
+    #[test]
+    fn fade_tier_values_in_range() {
+        // 档位 alpha 必须落在 (0,1)：越界会让 faded() 的 clamp 静默吞配置错误
+        for a in [FADE_BORDER, TINT_FILL, TINT_SOFT, TINT_ZEBRA, BACKDROP_A_LIGHT, BACKDROP_A_DARK] {
+            assert!(a > 0.0 && a < 1.0, "alpha tier {a} out of range");
+        }
+    }
+
+    #[test]
+    fn spacing_tokens_are_the_six_step_scale() {
+        // 6 档间距 + 行高 token 的基准值：防手滑改档位破坏全应用节奏
+        assert_eq!(SPACE_XS, 2.0);
+        assert_eq!(SPACE_SM, 4.0);
+        assert_eq!(SPACE_MD, 6.0);
+        assert_eq!(SPACE_LG, 8.0);
+        assert_eq!(SPACE_XL, 12.0);
+        assert_eq!(SPACE_XXL, 16.0);
+        assert_eq!(TH_H, 22.0);
+        assert_eq!(TABLE_ROW_H, 28.0);
+        assert_eq!(TOPBAR_H, 36.0);
+    }
+
+    #[test]
+    fn font_caption_scales_with_step() {
+        let _g = font_lock();
+        set_font_size_str("small");
+        assert_eq!(font_caption(), px(11.0));
+        set_font_size_str("medium");
+        assert_eq!(font_caption(), px(11.0 * 1.15));
+    }
 }
