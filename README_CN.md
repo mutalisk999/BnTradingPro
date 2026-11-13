@@ -2,9 +2,9 @@
 
 [README.md (English)](README.md) | README_CN.md（中文）
 
-Binance 现货 / U 本位合约专业交易终端，使用 **Rust + egui** 构建的原生桌面应用（Windows）。
+Binance 现货 / U 本位合约专业交易终端，使用 **Rust + GPUI** 构建的原生桌面应用（Windows）。GPUI 为 Zed 出品的 GPU 加速 UI 框架，Windows 上走 DirectX 11 渲染器。
 
-![tech](https://img.shields.io/badge/Rust-1.99+-orange) ![gui](https://img.shields.io/badge/GUI-egui%2Feframe-blue) ![license](https://img.shields.io/badge/status-beta-yellow)
+![tech](https://img.shields.io/badge/Rust-1.99+-orange) ![gui](https://img.shields.io/badge/GUI-GPUI%200.2-blue) ![license](https://img.shields.io/badge/status-beta-yellow)
 
 ## 界面预览
 
@@ -16,11 +16,12 @@ Binance 现货 / U 本位合约专业交易终端，使用 **Rust + egui** 构�
 
 - **双市场**：现货（Spot）与 U 本位合约（USDT-M Futures）一键切换
 - **实时行情**：WebSocket 推送 24h 行情、20 档盘口（100ms）、逐笔成交、K 线；合约附标记价格与资金费率
-- **自绘 K 线图**：蜡烛 + 成交量，滚轮缩放 / 拖动平移 / 双击回最新 / 十字光标详情；叠加挂单价与合约开仓价参考线
+- **自绘 K 线图**：蜡烛 + 成交量，滚轮缩放 / 拖动平移 / 双击回最新 / 十字光标详情；叠加挂单价与合约开仓价参考线；副图指标可选（VOL / MA / BOLL / RSI / MACD / KDJ 等）
 - **手动下单**：限价 / 市价 / 止损限价 / 止盈限价（现货），止损市价 / 止盈市价（合约），双向持仓模式支持 LONG/SHORT
 - **下单保护**：按交易对过滤器自动量化价格（tickSize）与数量（stepSize），校验最小名义金额 / 最小数量；提交前二次确认弹窗（实盘红色警示）
 - **账户**：现货余额（可用/冻结）、合约账户概况（钱包余额 / 未实现盈亏 / 保证金 / 可用）、持仓表（开仓价 / 标记价 / 强平价 / 一键平仓）、杠杆调整、单向↔双向持仓切换
-- **订单管理**：实时挂单列表（用户数据流推送，可单笔撤销 / 撤销该对全部）、订单历史、成交明细
+- **订单管理**：实时挂单列表（用户数据流推送，可单笔撤销 / 撤销该对全部）、订单历史、成交明细、止盈止损（TP/SL）委托
+- **界面**：明 / 暗（暖纸色）双主题，色板经 WCAG 对比度审计（文字对底色 ≥4.5:1），切换即时生效；中 / 英双语；三档字号；绿涨红跌 ↔ 红涨绿跌切换；侧栏 / 盘口 / 下单 / 订单区可拖拽调宽
 - **安全**：主密码（Argon2id 派生）+ AES-256-GCM 加密保存 API Key/Secret，密钥退出清零，日志全脱敏
 - **网络**：HTTP / SOCKS5 代理（REST 与 WebSocket 均生效）、端点覆盖、Testnet 一键切换（带醒目角标）
 
@@ -33,7 +34,7 @@ cargo build --release
 # 产物：target\release\bn-trading-pro.exe
 ```
 
-需要 MSVC 工具链（`rustup default stable` + Visual Studio Build Tools C++ 工作负载）。
+需要 MSVC 工具链（`rustup default stable` + Visual Studio Build Tools C++ 工作负载）。Windows 10+（DirectX 11）。
 
 ### 2. 准备 API Key（强烈建议先用测试网）
 
@@ -51,6 +52,8 @@ cargo build --release
 2. 输入 API Key / Secret → 保存并连接
 3. 默认即测试网模式（顶部黄色 `TESTNET` 角标）；切换实盘前请再三确认
 
+> Debug 构建支持开发/截图用的演示模式：设置 `BTP_DEMO=1` 跳过解锁页并注入假资产快照（可用 `BTP_DEMO_TAB=futures|portfolio|settings` 指定初始页）。Release 构建不编译该逻辑。
+
 ## 配置
 
 配置文件：`%APPDATA%\BnTradingPro\config.toml`，密钥库：同目录 `vault.bin`，日志：同目录 `logs\`。
@@ -59,7 +62,10 @@ cargo build --release
 |---|---|---|
 | `testnet` | `true` | 测试网开关 |
 | `default_symbol` / `default_interval` | BTCUSDT / 15m | 启动默认交易对与 K 线周期 |
+| `theme_mode` / `font_size` / `price_dir` | dark / small / green_up | 主题（明/暗）、字号档位、涨跌配色方向——设置页可改，即时生效 |
+| `lang` | zh | 界面语言（zh 中文 / en 英文） |
 | `recv_window_ms` | 5000 | 签名请求有效期 |
+| `http_timeout_secs` / `log_level` / `ws_order` | 15 / info / false | HTTP 超时（秒）、日志级别、合约下单走 WebSocket API（失败自动回退 REST） |
 | `proxy.enabled` / `proxy.url` | 关闭 | 代理，如 `http://127.0.0.1:7890`、`socks5://user:pass@127.0.0.1:1080` |
 | `override_spot_rest` 等 4 项 | 空 | 端点覆盖（自建反代 / 调试） |
 
@@ -73,13 +79,13 @@ cargo build --release
 ## 架构
 
 ```
-UI 线程（eframe，立即模式）           后台引擎（独立 tokio 运行时）
-┌──────────────────────┐   Command    ┌───────────────────────────┐
-│  只读快照 → 渲染      │ ──────────→ │  cmd_loop    REST 命令执行  │
-│  用户操作 → 下发命令  │              │  market_ws  行情流+自动重连 │
-└──────────────────────┘              │  user_ws    用户数据流      │
-        ▲                             │             (listenKey 保活)│
-        └────── Arc<SharedState> ─────┴───────────────────────────┘
+UI（GPUI Entity，GPU 渲染）             后台引擎（独立 tokio 运行时）
+┌──────────────────────────┐   Command    ┌───────────────────────────┐
+│  只读快照 → 渲染          │ ──────────→ │  cmd_loop    REST 命令执行  │
+│  用户操作 → 下发命令      │              │  market_ws  行情流+自动重连 │
+└──────────────────────────┘              │  user_ws    用户数据流      │
+        ▲                                 │             (listenKey 保活)│
+        └────── Arc<SharedState> ─────────┴───────────────────────────┘
               (行情/账户/订单快照 + Toast + 配置版本号)
 ```
 
@@ -90,12 +96,13 @@ UI 线程（eframe，立即模式）           后台引擎（独立 tokio 运�
 | `binance/symbols.rs` | exchangeInfo 解析与 tick/step/minNotional 量化 |
 | `engine/` | 命令循环、行情 WS（指数退避重连）、用户数据流（executionReport / ORDER_TRADE_UPDATE 实时对账） |
 | `security/` | Argon2id KDF + AES-256-GCM vault |
-| `ui/` | 主题（CJK 字体）、自绘 K 线、盘口/下单/订单/资产/设置 |
+| `ui/theme.rs` | 明暗双主题色板（对比度审计）、字号缩放（微软雅黑正文 / Cascadia Code 等宽数字） |
+| `ui/` | 自绘 K 线、盘口/下单/订单/资产/设置；共享组件（模态外壳、按钮、输入框等） |
 
 ## 测试
 
 ```powershell
-cargo test          # 64 个单元测试：签名向量、量化边界、vault 回环、WS 消息解析等
+cargo test          # 77 个单元测试：签名向量、量化边界、vault 回环、WS 消息解析、主题 token 等
 cargo clippy -- -D warnings
 ```
 
