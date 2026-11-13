@@ -758,8 +758,7 @@ impl BnApp {
         if targets.is_empty() {
             return;
         }
-        {
-            let mut cfg = self.state.cfg.write();
+        self.state.patch_cfg_persist(|cfg| {
             for (market, symbol, price, above) in &targets {
                 cfg.alerts.retain(|a| {
                     !(a.market == *market
@@ -768,8 +767,7 @@ impl BnApp {
                         && a.above == *above)
                 });
             }
-        }
-        self.state.send_cmd(crate::engine::Command::PersistConfig);
+        });
         for (_market, symbol, price, above) in targets {
             let dir = if above { "≥" } else { "≤" };
             self.state.push_toast(
@@ -817,8 +815,7 @@ impl BnApp {
             return;
         };
         let above = price >= last;
-        {
-            let mut cfg = self.state.cfg.write();
+        self.state.patch_cfg_persist(|cfg| {
             cfg.alerts
                 .retain(|a| !(a.market == market as u8 && a.symbol == symbol && a.price == price));
             cfg.alerts.push(crate::config::AlertConfig {
@@ -827,8 +824,7 @@ impl BnApp {
                 price,
                 above,
             });
-        }
-        self.state.send_cmd(crate::engine::Command::PersistConfig);
+        });
         self.alert_input.clear();
         let dir = if above { "≥" } else { "≤" };
         self.state.push_toast(
@@ -845,8 +841,11 @@ impl BnApp {
 
     /// 删除一条预警（按下标）
     pub fn remove_alert(&mut self, idx: usize) {
-        let removed = self.state.cfg.write().alerts.remove(idx);
-        self.state.send_cmd(crate::engine::Command::PersistConfig);
+        let removed = self.state.cfg.read().alerts[idx].clone();
+        self.state
+            .patch_cfg_persist(|cfg| {
+                cfg.alerts.remove(idx);
+            });
         self.state.push_toast(
             crate::engine::state::ToastKind::Info,
             format!(
@@ -1175,37 +1174,39 @@ impl BnApp {
     /// 主题快捷切换：改配置 + 刷新全局主题 + 同步设置草稿（否则设置页
     /// 「保存并重连」会用旧草稿把切换回滚）+ 落盘走引擎命令
     fn toggle_theme(&mut self, cx: &mut Context<Self>) {
-        let mut cfg = self.state.cfg.read().clone();
-        cfg.theme_mode = if cfg.theme_mode == "light" {
-            "dark".into()
-        } else {
-            "light".into()
-        };
-        theme::set_mode_str(&cfg.theme_mode);
-        self.applied_theme = cfg.theme_mode.clone();
-        self.settings.theme_mode = cfg.theme_mode.clone();
-        *self.state.cfg.write() = cfg;
-        self.state.send_cmd(Command::PersistConfig);
+        let mut new_mode = String::new();
+        self.state.patch_cfg_persist(|cfg| {
+            cfg.theme_mode = if cfg.theme_mode == "light" {
+                "dark".into()
+            } else {
+                "light".into()
+            };
+            new_mode = cfg.theme_mode.clone();
+        });
+        theme::set_mode_str(&new_mode);
+        self.applied_theme = new_mode.clone();
+        self.settings.theme_mode = new_mode;
         cx.notify();
     }
 
     /// 语言快捷切换（按钮显示目标语言）：同主题的同步纪律
     fn toggle_lang(&mut self, cx: &mut Context<Self>) {
-        let mut cfg = self.state.cfg.read().clone();
-        cfg.lang = if cfg.lang == "en" {
-            "zh".into()
-        } else {
-            "en".into()
-        };
-        crate::i18n::set_lang(if cfg.lang == "en" {
+        let mut new_lang = String::new();
+        self.state.patch_cfg_persist(|cfg| {
+            cfg.lang = if cfg.lang == "en" {
+                "zh".into()
+            } else {
+                "en".into()
+            };
+            new_lang = cfg.lang.clone();
+        });
+        crate::i18n::set_lang(if new_lang == "en" {
             crate::i18n::EN
         } else {
             crate::i18n::ZH
         });
-        self.applied_lang = cfg.lang.clone();
-        self.settings.lang = cfg.lang.clone();
-        *self.state.cfg.write() = cfg;
-        self.state.send_cmd(Command::PersistConfig);
+        self.applied_lang = new_lang.clone();
+        self.settings.lang = new_lang;
         cx.notify();
     }
 

@@ -898,15 +898,10 @@ impl TradeFields {
     /// 写回目标是 app.page.form.*：字段只在其所属页为活动页时才渲染/接收输入，
     /// 回调触发时 app.page 即所有者页
     pub fn attach(&mut self, weak: &WeakEntity<BnApp>, cx: &mut Context<BnApp>) {
+        use crate::ui::textfield::bind_on_change;
         macro_rules! bind {
             ($e:expr, $set:expr) => {
-                $e.update(cx, |tf, _| {
-                    let weak = weak.clone();
-                    tf.set_on_change(Box::new(move |s, _, cx| {
-                        let s = s.to_string();
-                        let _ = weak.update(cx, |app: &mut BnApp, _| $set(app, s));
-                    }));
-                });
+                bind_on_change(&$e, weak, $set, cx);
             };
         }
         bind!(self.price, |app: &mut BnApp, v: String| app.page.form.price = v);
@@ -922,25 +917,17 @@ impl TradeFields {
         bind!(self.leverage, |app: &mut BnApp, v: String| app.page.leverage_input = v);
     }
 
-    /// 外部变更回灌：文本不同才 set（正在输入的框两侧已一致，不会重置光标）
-    fn sync(e: &Entity<TextField>, val: &str, cx: &mut Context<BnApp>) {
-        e.update(cx, |f, _| {
-            if f.text() != val {
-                f.set_text(val);
-            }
-        });
-    }
-
     pub fn sync_all(&self, app: &BnApp, cx: &mut Context<BnApp>) {
+        use crate::ui::textfield::sync_text;
         let f = &app.page.form;
-        Self::sync(&self.price, &f.price, cx);
-        Self::sync(&self.qty, &f.qty, cx);
-        Self::sync(&self.trigger, &f.trigger, cx);
-        Self::sync(&self.stop_limit, &f.stop_limit, cx);
-        Self::sync(&self.callback_rate, &f.callback_rate, cx);
-        Self::sync(&self.tp, &f.tp_price, cx);
-        Self::sync(&self.sl, &f.sl_price, cx);
-        Self::sync(&self.leverage, &app.page.leverage_input, cx);
+        sync_text(&self.price, &f.price, cx);
+        sync_text(&self.qty, &f.qty, cx);
+        sync_text(&self.trigger, &f.trigger, cx);
+        sync_text(&self.stop_limit, &f.stop_limit, cx);
+        sync_text(&self.callback_rate, &f.callback_rate, cx);
+        sync_text(&self.tp, &f.tp_price, cx);
+        sync_text(&self.sl, &f.sl_price, cx);
+        sync_text(&self.leverage, &app.page.leverage_input, cx);
     }
 }
 

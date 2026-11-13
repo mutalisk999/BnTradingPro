@@ -65,15 +65,10 @@ impl SettingsFields {
     /// 挂接写回回调（BnApp::new 里实体创建后调用：回调需要 WeakEntity 句柄）。
     /// 数字框解析失败不写草稿（草稿保持上一个合法值）
     pub fn attach(&mut self, weak: &gpui::WeakEntity<BnApp>, cx: &mut Context<BnApp>) {
+        use crate::ui::textfield::bind_on_change;
         macro_rules! bind {
             ($e:expr, $set:expr) => {
-                $e.update(cx, |tf, _| {
-                    let weak = weak.clone();
-                    tf.set_on_change(Box::new(move |s, _, cx| {
-                        let s = s.to_string();
-                        let _ = weak.update(cx, |app: &mut BnApp, _| $set(app, s));
-                    }));
-                });
+                bind_on_change(&$e, weak, $set, cx);
             };
         }
         bind!(self.proxy_url, |app: &mut BnApp, v: String| app.settings.proxy_url = v);
@@ -104,25 +99,17 @@ impl SettingsFields {
             .override_fut_ws = v);
     }
 
-    /// 外部变更回灌：文本不同才 set（正在输入的框两侧已一致，不会重置光标）
-    fn sync(e: &Entity<TextField>, val: String, cx: &mut Context<BnApp>) {
-        e.update(cx, |f, _| {
-            if f.text() != val {
-                f.set_text(val);
-            }
-        });
-    }
-
     pub fn sync_all(&self, app: &BnApp, cx: &mut Context<BnApp>) {
+        use crate::ui::textfield::sync_text;
         let d = &app.settings;
-        Self::sync(&self.proxy_url, d.proxy_url.clone(), cx);
-        Self::sync(&self.default_symbol, d.default_symbol.clone(), cx);
-        Self::sync(&self.recv_window, d.recv_window_ms.to_string(), cx);
-        Self::sync(&self.http_timeout, d.http_timeout_secs.to_string(), cx);
-        Self::sync(&self.ov_spot_rest, d.override_spot_rest.clone(), cx);
-        Self::sync(&self.ov_spot_ws, d.override_spot_ws.clone(), cx);
-        Self::sync(&self.ov_fut_rest, d.override_fut_rest.clone(), cx);
-        Self::sync(&self.ov_fut_ws, d.override_fut_ws.clone(), cx);
+        sync_text(&self.proxy_url, &d.proxy_url, cx);
+        sync_text(&self.default_symbol, &d.default_symbol, cx);
+        sync_text(&self.recv_window, &d.recv_window_ms.to_string(), cx);
+        sync_text(&self.http_timeout, &d.http_timeout_secs.to_string(), cx);
+        sync_text(&self.ov_spot_rest, &d.override_spot_rest, cx);
+        sync_text(&self.ov_spot_ws, &d.override_spot_ws, cx);
+        sync_text(&self.ov_fut_rest, &d.override_fut_rest, cx);
+        sync_text(&self.ov_fut_ws, &d.override_fut_ws, cx);
     }
 }
 
@@ -371,10 +358,8 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         &app.settings.font_size,
         |app: &mut BnApp, v: &str| {
             app.settings.font_size = v.to_string();
-            let mut cfg = app.state.cfg.read().clone();
-            cfg.font_size = v.to_string();
-            *app.state.cfg.write() = cfg;
-            app.state.send_cmd(Command::PersistConfig);
+            app.state
+                .patch_cfg_persist(|cfg| cfg.font_size = v.to_string());
         },
     );
     let theme_mode = app.settings.theme_mode.clone();
@@ -400,10 +385,8 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             app.settings.price_dir = v.to_string();
             theme::set_price_dir_str(v);
             // 同步进运行时配置：顶栏/盘口等直接读 theme::up_color 的区域立即生效
-            let mut cfg = app.state.cfg.read().clone();
-            cfg.price_dir = v.to_string();
-            *app.state.cfg.write() = cfg;
-            app.state.send_cmd(Command::PersistConfig);
+            app.state
+                .patch_cfg_persist(|cfg| cfg.price_dir = v.to_string());
         },
     );
     let look_body = div()

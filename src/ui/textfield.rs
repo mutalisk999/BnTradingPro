@@ -17,11 +17,10 @@
 //! （外部改价，如盘口点击填价）。双向一致性由"谁改谁通知"保证。
 
 use gpui::{
-    canvas, div, font, point, prelude::FluentBuilder, px, size, App, Bounds, ClipboardItem,
-    Context,
-    EntityInputHandler, FocusHandle, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString,
-    StatefulInteractiveElement, Styled, TextRun, UTF16Selection, Window,
+    canvas, div, font, point, prelude::FluentBuilder, px, size, App, AppContext, Bounds,
+    ClipboardItem, Context, Entity, EntityInputHandler, FocusHandle, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render,
+    SharedString, StatefulInteractiveElement, Styled, TextRun, UTF16Selection, Window,
 };
 use crate::ui::theme;
 use std::ops::Range;
@@ -57,6 +56,35 @@ pub struct TextField {
 type TextChangeFn = dyn Fn(&str, &mut Window, &mut App);
 /// 提交回调（on_submit）：回车触发
 type SubmitFn = dyn Fn(&mut Window, &mut App);
+
+// ---------- 父视图绑定/回灌辅助（trade.rs / settings.rs 共用） ----------
+
+/// 把 `on_change` 写回回调挂到文本框实体：文本变更经 WeakEntity 写回父视图
+/// （`set` 闭包接收 app 与最新文本）。实体创建在父视图 new 内、WeakEntity
+/// 只有 new 末尾才能拿到，故绑定总是独立一步调用
+pub fn bind_on_change<T: 'static>(
+    e: &Entity<TextField>,
+    weak: &gpui::WeakEntity<T>,
+    set: impl Fn(&mut T, String) + 'static,
+    cx: &mut Context<T>,
+) {
+    let weak = weak.clone();
+    e.update(cx, |tf, _| {
+        tf.set_on_change(Box::new(move |s, _, cx| {
+            let s = s.to_string();
+            let _ = weak.update(cx, |app: &mut T, _| set(app, s));
+        }));
+    });
+}
+
+/// 外部变更回灌：文本不同才 set——正在输入的框两侧已一致，不会重置光标
+pub fn sync_text(e: &Entity<TextField>, val: &str, cx: &mut impl AppContext) {
+    e.update(cx, |f, _| {
+        if f.text() != val {
+            f.set_text(val);
+        }
+    });
+}
 
 // ---------- 字节/字符/UTF-16 换算 ----------
 

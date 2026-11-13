@@ -256,6 +256,18 @@ impl SharedState {
         self.send_cmd(crate::engine::Command::ReloadAll);
     }
 
+    /// 单字段即时生效修改：读-改-写 + 落盘命令（顶栏快捷切换/设置页 pill 用）。
+    /// 不递增 cfg_version——这两个字段（theme/lang/font_size/price_dir）不触发
+    /// 引擎重连，UI 侧经静态原子每帧现算；引擎若感知版本变化会 ReloadAll，
+    /// 对纯展示字段纯属浪费
+    pub fn patch_cfg_persist(&self, f: impl FnOnce(&mut AppConfig)) {
+        {
+            let mut cfg = self.cfg.write();
+            f(&mut cfg);
+        }
+        self.send_cmd(crate::engine::Command::PersistConfig);
+    }
+
     /// 设置解密后的凭据并触发账户数据流重建
     pub fn set_creds(&self, creds: Option<crate::security::vault::Creds>) {
         *self.creds.write() = creds;
