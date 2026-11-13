@@ -877,7 +877,7 @@ impl TradeFields {
                 f.set_id(id)
                     .set_numeric(true)
                     .set_placeholder(ph)
-                    .set_font_size(theme::font_md());
+                    .set_font_size(theme::FONT_MD_BASE);
                 f
             })
         };

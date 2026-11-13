@@ -46,7 +46,7 @@ impl SettingsFields {
                 f.set_id(id)
                     .set_numeric(numeric)
                     .set_placeholder(ph)
-                    .set_font_size(font_md());
+                    .set_font_size(crate::ui::theme::FONT_MD_BASE);
                 f
             })
         };

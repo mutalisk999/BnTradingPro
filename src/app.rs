@@ -446,7 +446,7 @@ impl BnApp {
             let mk_field = |cx: &mut Context<Self>, id: &'static str| {
                 cx.new(|cx_tf| {
                     let mut f = TextField::new(cx_tf);
-                    f.set_id(id).set_masked(true).set_font_size(theme::font_body());
+                    f.set_id(id).set_masked(true).set_font_size(theme::FONT_BODY_BASE);
                     f
                 })
             };
@@ -459,7 +459,7 @@ impl BnApp {
                 let mut f = TextField::new(cx_tf);
                 f.set_id("symbol_search")
                     .set_placeholder(crate::i18n::tr("搜索交易对…"))
-                    .set_font_size(theme::font_body());
+                    .set_font_size(theme::FONT_BODY_BASE);
                 f
             });
             // 下单表单输入框：数字过滤 + 占位（8 个框统一在 TradeFields 里构建）
@@ -468,7 +468,7 @@ impl BnApp {
             let mk_tpsl_field = |cx: &mut Context<Self>, id: &'static str| {
                 cx.new(|cx_tf| {
                     let mut f = TextField::new(cx_tf);
-                    f.set_id(id).set_numeric(true).set_font_size(theme::font_md());
+                    f.set_id(id).set_numeric(true).set_font_size(theme::FONT_MD_BASE);
                     f
                 })
             };
@@ -481,7 +481,7 @@ impl BnApp {
                 f.set_id("alert_price")
                     .set_numeric(true)
                     .set_placeholder(crate::i18n::tr("目标价"))
-                    .set_font_size(theme::font_md());
+                    .set_font_size(theme::FONT_MD_BASE);
                 f
             });
 

@@ -35,11 +35,15 @@ pub struct TextField {
     sel_anchor: Option<usize>,
     focus: FocusHandle,
     id: SharedString,
-    placeholder: SharedString,
+    /// 占位文案的中文原文 key（渲染时经 tr() 现算——语言切换即时作用于
+    /// 已存在的输入框；空串 = 无占位）
+    placeholder_key: &'static str,
     masked: bool,
     numeric: bool,
     font_family: SharedString,
-    font_size: Pixels,
+    /// 基准字号（未乘字号档位系数）：渲染时乘 font_scale 现算，
+    /// 字号设置变更即时作用于已存在的输入框（egui 版每帧重建隐式实时）
+    font_base: f32,
     line_height: Pixels,
     /// 渲染期写入的文本颜色（shape/paint 用）
     paint_color: Hsla,
@@ -122,11 +126,11 @@ impl TextField {
             sel_anchor: None,
             focus: cx.focus_handle(),
             id: "text_field".into(),
-            placeholder: "".into(),
+            placeholder_key: "",
             masked: false,
             numeric: false,
             font_family: crate::ui::theme::FONT_MONO.into(),
-            font_size: crate::ui::theme::font_md(),
+            font_base: crate::ui::theme::FONT_MD_BASE,
             line_height: px(crate::ui::theme::CONTROL_H),
             paint_color: crate::ui::theme::cur().text.into(),
             on_change: None,
@@ -141,8 +145,9 @@ impl TextField {
         self.id = id.into();
         self
     }
-    pub fn set_placeholder(&mut self, p: impl Into<SharedString>) -> &mut Self {
-        self.placeholder = p.into();
+    /// 设置占位文案：传中文原文 key（与 i18n::tr 的源串一致），渲染时现算译文
+    pub fn set_placeholder(&mut self, zh_key: &'static str) -> &mut Self {
+        self.placeholder_key = zh_key;
         self
     }
     pub fn set_masked(&mut self, masked: bool) -> &mut Self {
@@ -153,8 +158,10 @@ impl TextField {
         self.numeric = numeric;
         self
     }
-    pub fn set_font_size(&mut self, s: Pixels) -> &mut Self {
-        self.font_size = s;
+    /// 设置基准字号（未乘档位系数，如 theme::FONT_MD_BASE）；
+    /// 实际渲染字号每帧按 font_scale 现算
+    pub fn set_font_size(&mut self, base: f32) -> &mut Self {
+        self.font_base = base;
         self
     }
     pub fn set_on_change(&mut self, f: Box<TextChangeFn>) -> &mut Self {
@@ -278,7 +285,12 @@ impl TextField {
         };
         window
             .text_system()
-            .shape_line(display.into(), self.font_size, &[run], None)
+            .shape_line(
+                display.into(),
+                px(self.font_base * crate::ui::theme::font_scale_pub()),
+                &[run],
+                None,
+            )
     }
 
     // ---- 事件处理 ----
@@ -415,9 +427,10 @@ impl Render for TextField {
         let focused = self.focus.is_focused(window);
         self.paint_color = t.text.into();
 
-        let show_placeholder = self.text.is_empty() && !self.placeholder.is_empty();
+        let placeholder_text = crate::i18n::tr(self.placeholder_key);
+        let show_placeholder = self.text.is_empty() && !placeholder_text.is_empty();
         let shaped_src: String = if show_placeholder {
-            self.placeholder.to_string()
+            placeholder_text.to_string()
         } else {
             self.display_text()
         };
@@ -442,7 +455,7 @@ impl Render for TextField {
         let entity = cx.entity();
         let focus = self.focus.clone();
         let font = font(self.font_family.clone());
-        let font_size = self.font_size;
+        let font_size = px(self.font_base * crate::ui::theme::font_scale_pub());
 
         // 聚焦态：accent 边框之外再叠一圈柔和 accent 光晕（BoxShadow 无偏移
         // 纯模糊），与边框同源同色，输入位置一眼可辨

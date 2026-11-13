@@ -798,15 +798,15 @@ fn show_trades(
     const MIN_GAP: f32 = 8.0;
     let content = w_price + w_qty + w_time;
     if content + 4.0 + 2.0 * MIN_GAP > avail_w && avail_w > 0.0 {
+        // 价格列（信息核心，被裁即叠印）保持自然宽，时间+数量两列按比例
+        // 缩到放得下——不可把某列压到 0（整列消失/边缘宽度闪烁）
         let budget = (avail_w - 4.0 - 2.0 * MIN_GAP).max(w_price);
-        let shrinkable = (budget - w_price).max(0.0);
-        // 先压时间（时间列最长、信息损失最小），仍不够再压数量
-        let time_over = (w_time - shrinkable).max(0.0);
-        if time_over > 0.0 {
-            w_time = shrinkable.min(w_time);
-            w_qty = (w_qty - time_over).max(0.0).min(w_qty);
-        } else {
-            w_time = (w_time - shrinkable).max(0.0);
+        let shrink_total = (budget - w_price).max(0.0);
+        let shrinkable = w_qty + w_time;
+        if shrinkable > 0.0 {
+            let k = (shrink_total / shrinkable).min(1.0);
+            w_qty *= k;
+            w_time *= k;
         }
     }
     let gap = ((avail_w - 4.0 - w_price - w_qty - w_time) * 0.5).max(MIN_GAP);

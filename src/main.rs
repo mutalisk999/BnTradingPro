@@ -13,10 +13,7 @@ mod security;
 mod ui;
 
 use config::AppConfig;
-use gpui::{
-    px, point, size, Application, Bounds, TitlebarOptions, WindowBounds, WindowKind,
-    WindowOptions,
-};
+use gpui::{px, size, Application, Bounds, TitlebarOptions, WindowBounds, WindowKind, WindowOptions};
 use tracing_subscriber::EnvFilter;
 
 fn main() {
@@ -73,24 +70,29 @@ fn main() {
         ui::theme::set_mode_str(&cfg.theme_mode);
         ui::theme::set_price_dir_str(&cfg.price_dir);
 
-        // 窗口参数：初始 1200×600（= 最小尺寸，默认即最大信息密度布局）
-        let bounds = Bounds {
-            origin: point(px(0.0), px(0.0)),
-            size: size(
+        // 窗口参数：初始 1200×600（= 最小尺寸，默认即最大信息密度布局）。
+        // 不写死 origin——按主显示器 bounds 居中放置，避免被钉在左上角；
+        // 初始尺寸与最小尺寸都裁剪到显示器宽高，保证小于 1200×600 的屏
+        // 上不会出现"打开即大于屏幕且缩不回去"
+        let bounds = cx.primary_display().map(|d| {
+            let db = d.bounds();
+            let win_size = size(
                 px(ui::theme::START_W as f32),
                 px(ui::theme::START_H as f32),
-            ),
-        };
+            )
+            .min(&db.size);
+            Bounds::centered_at(db.center(), win_size)
+        });
         let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_bounds: bounds.map(|b| WindowBounds::Windowed(b)),
             titlebar: Some(TitlebarOptions {
                 title: Some("BnTradingPro".into()),
                 ..Default::default()
             }),
-            window_min_size: Some(size(
+            window_min_size: bounds.map(|b| b.size.min(&size(
                 px(ui::theme::MIN_W as f32),
                 px(ui::theme::MIN_H as f32),
-            )),
+            ))),
             kind: WindowKind::Normal,
             ..Default::default()
         };

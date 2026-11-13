@@ -84,11 +84,15 @@ pub fn font_sm() -> Pixels {
     px(12.0 * font_scale())
 }
 pub fn font_md() -> Pixels {
-    px(13.5 * font_scale())
+    px(FONT_MD_BASE * font_scale())
 }
 pub fn font_body() -> Pixels {
-    px(14.0 * font_scale())
+    px(FONT_BODY_BASE * font_scale())
 }
+/// 基准字号常量（未乘档位系数）：TextField 等保留实体存基准值、
+/// 渲染时乘 font_scale_pub() 现算——字号设置变更作用于已存在的输入框
+pub const FONT_MD_BASE: f32 = 13.5;
+pub const FONT_BODY_BASE: f32 = 14.0;
 /// 品牌名等需要强调的展示型文字
 pub fn font_xl() -> Pixels {
     px(20.0 * font_scale())
