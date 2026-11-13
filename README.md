@@ -16,7 +16,7 @@ Main interface — Spot trading page, dark theme, live BTCUSDT market data (orde
 
 - **Dual markets**: one-click switching between Spot and USDⓈ-M Futures
 - **Real-time market data**: WebSocket push of 24h ticker, 20-level order book (100ms), trades, and candlesticks; futures additionally include mark price and funding rate
-- **Custom-rendered candlestick chart**: candles + volume, scroll to zoom / drag to pan / double-click to return to the latest / crosshair details; with overlays for open-order prices and futures entry-price reference lines; selectable sub-indicator panes (VOL / MA / BOLL / RSI / MACD / KDJ etc.)
+- **Custom-rendered candlestick chart**: candles + volume, scroll to zoom / drag to pan / double-click to return to the latest / crosshair details; main-chart MA overlay toggles (multiple periods), plus open-order price and futures entry-price reference lines; selectable sub-indicator panes (13 options: VOL / MACD / RSI / KDJ / BOLL / CCI / WR / ATR / ADX / SAR / OBV / MFI / StochRSI)
 - **Manual order entry**: Limit / Market / Stop-Limit / Take-Profit Limit (Spot); Stop-Market / Take-Profit Market (Futures); Hedge Mode supported with LONG/SHORT
 - **Order protection**: prices and quantities are automatically quantized per symbol filters (tickSize / stepSize), with validation of minimum notional value / minimum quantity; a second confirmation dialog before submission (red warning in live-trading mode)
 - **Account**: Spot balances (available / locked), futures account overview (wallet balance / unrealized PnL / margin / available), positions table (entry price / mark price / liquidation price / one-click close), leverage adjustment, one-way ↔ hedge mode switching
@@ -52,7 +52,7 @@ Requires the MSVC toolchain (`rustup default stable` + Visual Studio Build Tools
 2. Enter the API Key / Secret → Save and connect
 3. Defaults to Testnet mode (yellow `TESTNET` badge at the top); double-check before switching to live trading
 
-> Debug builds support a demo mode for development/screenshots: set `BTP_DEMO=1` to skip the unlock screen and inject fake assets (optionally `BTP_DEMO_TAB=futures|portfolio|settings` to pick the initial page). Compiled out of release builds.
+> Debug builds support a demo mode for development/screenshots: set `BTP_DEMO=1` to skip the unlock screen and inject fake assets (optionally `BTP_DEMO_TAB=spot|futures|portfolio|settings|help` to pick the initial page). Compiled out of release builds.
 
 ## Configuration
 
@@ -102,8 +102,8 @@ UI (GPUI entity, GPU-rendered)               Background engine (dedicated tokio 
 ## Testing
 
 ```powershell
-cargo test          # 77 unit tests: signature vectors, quantization boundaries, vault round-trip, WS message parsing, theme tokens, etc.
-cargo clippy -- -D warnings
+cargo test          # 93 unit tests: signature vectors, quantization boundaries, vault round-trip, WS message parsing, theme tokens, text-field editing, flash highlighting, etc.
+cargo clippy --all-targets -- -D warnings
 ```
 
 ## Disclaimer
