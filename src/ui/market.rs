@@ -1359,12 +1359,13 @@ pub fn alerts_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         .child(widgets::separator())
         .child(list);
 
-    // 锚定：顶栏 + 右栏页头高度（面板 p(8) + 页头内容 39）→ 页头正下方
+    // 锚定：顶栏 + 右栏页头高度（面板 p(8) + 页头内容 39）→ 页头正下方。
+    // 卡片 occlude：面板悬浮在图表/盘口上方，不遮挡则点击穿透到底层元素
     Some(
         div()
             .absolute()
             .top(px(theme::TOPBAR_H + theme::SPACE_LG + MARKET_HEADER_H))
             .right(px(theme::SPACE_XXL))
-            .child(card),
+            .child(card.occlude()),
     )
 }

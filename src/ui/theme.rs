@@ -1,8 +1,10 @@
 //! 主题与字体：明暗双主题 + Windows 系统字体（微软雅黑正文 / Cascadia 等宽数字）
 //!
-//! 颜色通过 `UiTheme` 全局（gpui::Global）运行时取值，主题切换即时生效。
-//! 色板经两轮 WCAG 审计精修：所有文字/语义色对各表面底色 ≥4.5:1，
-//! 每个非常规取值在字段注释里写明对比度依据，改动前先跑审计脚本核对。
+//! 颜色状态承载在静态原子（MODE / PRICE_DIR / FONT_STEP），`theme::c()` /
+//! `cur()` 每次调用现算返回 Copy 值——单一事实源，主题/字号/涨跌方向变更
+//! 下一帧自动生效，无需快照或刷新机制。
+//! 色板经 WCAG 审计精修：正文/表格文字对底色 ≥4.5:1；图表注释类（均线/
+//! 图例）按图形阈值 ≥3:1。每个非常规取值在字段注释里写明对比度依据。
 
 use gpui::{px, App, Hsla, Pixels, Rgba};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -72,6 +74,10 @@ fn font_scale() -> f32 {
         2 => 1.3,
         _ => 1.0,
     }
+}
+/// 字号档位系数的公开入口：个别随字号缩放的布局量（如标签列宽）取值用
+pub fn font_scale_pub() -> f32 {
+    font_scale()
 }
 
 pub fn font_sm() -> Pixels {
@@ -336,45 +342,16 @@ pub const LIGHT: Theme = Theme {
     on_accent: rgb_const(0xffffff),
 };
 
-// ---------- 全局主题（gpui::Global） ----------
+// ---------- 主题状态与取色入口 ----------
 
-/// UI 全局主题：渲染时经 `cx.global::<UiTheme>()` 取当前色板。
-/// 字段含 price_dir 翻转后的 cur() 语义（up/down 已按涨跌方向互换），
-/// 组件侧无需再关心方向配置
-pub struct UiTheme {
-    /// 当前色板（up/down 已按红涨绿跌配置翻转）
-    pub t: Theme,
-    /// 浅色主题标记（MA 配色等按主题取变体的场合用）
-    pub light: bool,
+/// 组件取色入口：当前主题色板（up/down 已按方向翻转）。
+/// Theme 是 Copy 值，直接由静态 MODE/PRICE_DIR 现算——单一事实源，
+/// 任何配置变更下一帧自动生效，无需快照/刷新机制
+pub fn c(_cx: &App) -> Theme {
+    cur()
 }
 
-impl gpui::Global for UiTheme {}
-
-impl UiTheme {
-    /// 由配置字符串初始化全局主题（mode: "light"/"dark"；price_dir: "red_up"/...）
-    pub fn install(cx: &mut App, mode_str: &str, price_dir_str: &str) {
-        set_mode_str(mode_str);
-        set_price_dir_str(price_dir_str);
-        cx.set_global(UiTheme {
-            t: cur(),
-            light: is_light(),
-        });
-    }
-
-    /// 主题或方向配置变更后调用：重算色板并写回全局
-    pub fn refresh(&mut self) {
-        self.t = cur();
-        self.light = is_light();
-    }
-}
-
-/// 组件取色入口：当前主题色板（up/down 已按方向翻转）
-pub fn c(cx: &App) -> &Theme {
-    // 全局在启动时 install，未安装属于编程错误
-    &cx.global::<UiTheme>().t
-}
-
-// ---------- 静态模式/方向存储（配置写档用，渲染走 UiTheme 全局） ----------
+// ---------- 静态模式/方向存储 ----------
 
 static MODE: AtomicU8 = AtomicU8::new(0);
 pub const DARK_MODE: u8 = 0;

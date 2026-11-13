@@ -17,12 +17,15 @@ use gpui::{
 use zeroize::Zeroizing;
 
 /// 解锁已有凭据库：成功 → Main；库不存在 → EnterKeys；密码错误 → pw_err
-pub fn try_unlock(app: &mut BnApp) {
+pub fn try_unlock(app: &mut BnApp, cx: &mut Context<BnApp>) {
     let dir = config::data_dir();
     match vault::load_creds(dir, &app.pw1) {
         Ok(creds) => {
             app.state.set_creds(Some(creds));
             app.pw1.clear();
+            // 密码框实体是主密码的另一份明文拷贝（egui 版就地编辑 Zeroizing
+            // 缓冲不存在该副本），必须同步清空——否则明文驻留到进程退出
+            app.pw1_field.update(cx, |f, _| f.clear());
             app.pw_err.clear();
             app.state
                 .push_toast(ToastKind::Ok, crate::i18n::tr("已解锁，开始同步账户数据"));
@@ -38,7 +41,7 @@ pub fn try_unlock(app: &mut BnApp) {
 }
 
 /// 校验主密码并加密保存密钥，成功后进入主界面（保存按钮与 Secret 回车共用）
-pub fn save_keys(app: &mut BnApp, dir: &std::path::Path, vault_exists: bool) {
+pub fn save_keys(app: &mut BnApp, cx: &mut Context<BnApp>, dir: &std::path::Path, vault_exists: bool) {
     let creds = Creds {
         api_key: app.api_key.trim().to_string(),
         api_secret: app.api_secret.trim().to_string(),
@@ -75,6 +78,11 @@ pub fn save_keys(app: &mut BnApp, dir: &std::path::Path, vault_exists: bool) {
                     app.state.set_creds(Some(creds));
                     app.api_key.clear();
                     app.api_secret.clear();
+                    // 密钥/密码框实体各持一份明文拷贝，与 Zeroizing 缓冲同步清空
+                    app.api_key_field.update(cx, |f, _| f.clear());
+                    app.api_secret_field.update(cx, |f, _| f.clear());
+                    app.pw1_field.update(cx, |f, _| f.clear());
+                    app.pw2_field.update(cx, |f, _| f.clear());
                     app.keys_err.clear();
                     app.master = None;
                     app.pw1.clear();
@@ -97,7 +105,7 @@ pub fn save_keys(app: &mut BnApp, dir: &std::path::Path, vault_exists: bool) {
 /// 认证页：背景光晕（canvas）+ 品牌标题 + 居中卡片 + 右上角环境徽标。
 /// 矮窗口下卡片纵向溢出时由 overflow 遮挡裁剪（既有取舍：遮挡优于顶歪）
 pub fn page(app: &mut BnApp, window: &mut Window, cx: &mut Context<BnApp>) -> Div {
-    let t = *theme::c(cx);
+    let t = theme::c(cx);
     // 自动聚焦：当前无任何焦点控件时聚焦主密码框（egui 版同款——每帧强制
     // 抢占会让用户点不进其他输入框，仅在无焦点时请求一次）
     let has_focus = window.focused(cx).is_some();
@@ -236,7 +244,7 @@ fn env_hint(testnet: bool) -> impl IntoElement {
 
 /// 认证卡片（440px：标题行 + 分隔线 + 按阶段的表单）
 fn card(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
-    let t = *theme::c(cx);
+    let t = theme::c(cx);
     let title = match app.phase {
         Phase::Unlock => crate::i18n::tr("解锁").to_string(),
         Phase::EnterKeys => crate::i18n::tr("配置 API 密钥").to_string(),
@@ -302,7 +310,7 @@ fn error_text(msg: &str) -> Div {
 
 /// 解锁表单：说明 + 主密码 + 错误 + 解锁/仅看行情/重置凭据库
 fn unlock_form(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
-    let t = *theme::c(cx);
+    let t = theme::c(cx);
     div()
         .flex()
         .flex_col()
@@ -321,7 +329,7 @@ fn unlock_form(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             widgets::btn_primary("unlock_go", crate::i18n::tr("解锁"), true).on_click(
                 cx.listener(|app: &mut BnApp, _, _, cx| {
                     app.pw1 = Zeroizing::new(app.pw1_field.read(cx).text().to_string());
-                    try_unlock(app);
+                    try_unlock(app, cx);
                     cx.notify();
                 }),
             ),
@@ -385,7 +393,7 @@ fn reset_row(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
 
 /// 配钥表单：环境提示 + 主密码（一体设置/验证）+ API Key/Secret + 保存/跳过
 fn enter_keys_form(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
-    let t = *theme::c(cx);
+    let t = theme::c(cx);
     let vault_exists = vault::vault_exists(config::data_dir());
     let testnet = app.state.cfg.read().testnet;
     let need_master = vault_exists || app.master.is_none();
@@ -473,6 +481,7 @@ fn enter_keys_form(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                     if can_save {
                         save_keys(
                             app,
+                            cx,
                             config::data_dir(),
                             vault::vault_exists(config::data_dir()),
                         );

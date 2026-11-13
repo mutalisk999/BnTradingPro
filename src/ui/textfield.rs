@@ -182,6 +182,10 @@ impl TextField {
     pub fn focus(&self, window: &mut Window) {
         self.focus.focus(window);
     }
+    /// 本输入框是否持有焦点（根级快捷键让位判定用）
+    pub fn is_focused(&self, window: &Window) -> bool {
+        self.focus.is_focused(window)
+    }
     pub fn select_all(&mut self) {
         self.sel_anchor = Some(0);
         self.cursor = self.text.len();
@@ -366,7 +370,11 @@ impl TextField {
                 cx.notify();
             }
             "c" | "x" if ctrl => {
-                if let Some(r) = self.sel_range() {
+                // 掩码字段（主密码/API Key/Secret）禁止进剪贴板：系统剪贴板
+                // 全局可读，剪贴板历史/跨设备同步还可能保留超出会话的生命周期
+                if self.masked {
+                    cx.notify();
+                } else if let Some(r) = self.sel_range() {
                     let s = self.text[r.clone()].to_string();
                     cx.write_to_clipboard(ClipboardItem::new_string(s));
                     if key == "x" {
@@ -403,7 +411,7 @@ impl TextField {
 
 impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = *crate::ui::theme::c(cx);
+        let t = crate::ui::theme::c(cx);
         let focused = self.focus.is_focused(window);
         self.paint_color = t.text.into();
 

@@ -385,8 +385,8 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         &theme_mode,
         |app: &mut BnApp, v: &str| app.settings.theme_mode = v.to_string(),
     );
-    // 涨跌方向：仅改全局色表（signed_color/up_color/down_color 即时翻转），
-    // 不涉及字体/Style，无需重新 apply
+    // 涨跌方向：取色全部由 theme::cur() 现算，set_price_dir_str 后下一帧
+    // 自动生效，无需任何刷新步骤
     let dir_current = theme::PriceDir::from_cfg(&app.settings.price_dir);
     let price_pills = pills(
         cx,
@@ -551,6 +551,9 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                         app.api_secret.clear();
                         app.api_key_field.update(cx, |f, _| f.set_text(""));
                         app.api_secret_field.update(cx, |f, _| f.set_text(""));
+                        // 主密码框必须一并清空：残留明文会在表单里预填回显，
+                        // "验证已有主密码"一步被陈旧状态满足
+                        app.pw1_field.update(cx, |f, _| f.set_text(""));
                         app.phase = Phase::EnterKeys;
                         cx.notify();
                     })),

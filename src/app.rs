@@ -485,10 +485,22 @@ impl BnApp {
                 f
             });
 
-            // 唤醒任务：tokio 通道的 waker 唤醒 GPUI 主线程上的 async 任务，
-            // 延迟与旧版 request_repaint 相当
+            // 唤醒任务：tokio 通道的 waker 唤醒 GPUI 主线程上的 async 任务。
+            // 必须合并：行情活跃时 WS 消息可达数百条/秒，逐条 notify 会让整树
+            // 按 vsync 频率全量重建（egui 版 request_repaint_after(100ms) 的
+            // 合并语义）——首条唤醒后先排空通道再统一 notify 一次，最小间隔
+            // 对齐 REPAINT_QUOTE；尾随帧由心跳任务兜底
             cx.spawn(async move |this, cx| {
-                while wake_rx.recv().await.is_some() {
+                loop {
+                    if wake_rx.recv().await.is_none() {
+                        break;
+                    }
+                    // 排空积压唤醒 + 限流到 10fps：期间新到的唤醒一并消化
+                    // （GPUI 主线程 async 无 tokio reactor，必须用背景执行器计时）
+                    cx.background_executor()
+                        .timer(Duration::from_millis(theme::REPAINT_QUOTE))
+                        .await;
+                    while wake_rx.try_recv().is_ok() {}
                     let _: Result<(), _> = this.update(cx, |_, cx| cx.notify());
                 }
             })
@@ -588,7 +600,7 @@ impl BnApp {
                         .update(cx, |app: &mut BnApp, cx| {
                             app.pw1 =
                                 Zeroizing::new(app.pw1_field.read(cx).text().to_string());
-                            unlock::try_unlock(app);
+                            unlock::try_unlock(app, cx);
                             app.phase == Phase::Main
                         })
                         .unwrap_or(false);
@@ -610,6 +622,7 @@ impl BnApp {
                             if can_save {
                                 unlock::save_keys(
                                     app,
+                                    cx,
                                     config::data_dir(),
                                     vault::vault_exists(config::data_dir()),
                                 );
@@ -975,7 +988,6 @@ impl BnApp {
         };
         if self.applied_theme != theme_mode {
             theme::set_mode_str(&theme_mode);
-            cx.global_mut::<theme::UiTheme>().refresh();
             self.applied_theme = theme_mode;
         }
         if self.applied_lang != lang {
@@ -1026,7 +1038,7 @@ impl BnApp {
     /// 右侧簇内容超宽时由顶栏 overflow 遮挡裁剪——大字号 + 窄窗口下宁可
     /// 裁掉右侧指示，也不让它们压到左侧页签文字
     fn topbar(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         let mut bar = div()
             .flex()
             .items_center()
@@ -1169,7 +1181,6 @@ impl BnApp {
             "light".into()
         };
         theme::set_mode_str(&cfg.theme_mode);
-        cx.global_mut::<theme::UiTheme>().refresh();
         self.applied_theme = cfg.theme_mode.clone();
         self.settings.theme_mode = cfg.theme_mode.clone();
         *self.state.cfg.write() = cfg;
@@ -1204,7 +1215,7 @@ impl BnApp {
     // 面板宽度用固定宽 + 自绘把手锁死：不用容器自适应（egui 版可调面板会把
     // 内容宽度持久化，页签来回切会越撑越宽）
     fn trading_ui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         let mut row = div().flex_1().flex().flex_row().overflow_hidden();
         row = row.child(self.sidebar(cx));
         // 图表最大化：盘口/下单/订单区全部隐藏，图表占满中央区
@@ -1235,7 +1246,7 @@ impl BnApp {
     /// 左侧交易对列表：展开态（收起钮 + 搜索框 + 列表 + 右缘把手）/
     /// 折叠态（36px 窄条只放展开钮）。过滤词在搜索框内，折叠不丢状态
     fn sidebar(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         if self.sidebar_expanded {
             let has_filter = !self.search_field.read(cx).text().trim().is_empty();
             let top_row = div()
@@ -1316,7 +1327,7 @@ impl BnApp {
     /// 盘口面板（左，全高）：一直显示到 UI 最下面，不被底部订单区挤上去。
     /// 内容（页签/盘口行/价差/档位胶囊、成交明细）在 market.rs 渲染
     fn book_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         // 盘口内容高度预算：视口高 − 顶栏（36 行高 + 1 下边框）− 面板上内边距 8
         // − 页签行 BTN_H − 页签下分隔线（1 + 上下 my 4）。档位数/行高在
         // market.rs 内据此现算（GPUI 布局前无法询问剩余空间）
@@ -1343,7 +1354,7 @@ impl BnApp {
     /// 右缘 36px 窄条「«」。表单状态都在 page 上，折叠不丢输入；
     /// 表单本体在里程碑 7 移植
     fn trade_panel(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         if self.trade_expanded {
             let symbol = self.page.symbol.clone();
             div()
@@ -1425,7 +1436,7 @@ impl BnApp {
     /// 底部订单区：子页签 + 表格区（M8）。从盘口右缘一直铺到窗口右缘，
     /// 持仓/挂单表格的列才放得下
     fn orders_panel(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         div()
             .relative()
             .h(px(self.orders_h))
@@ -1443,7 +1454,7 @@ impl BnApp {
 
     /// 交易页底部子页签：挂单 / 持仓+资金流水(合约) / 历史 / 成交
     fn sub_tabs(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         // 资金流水与持仓一样仅合约提供（现货无统一流水端点）：
         // 合约 = 挂单/持仓/历史/成交/流水，现货 = 挂单/历史/成交
         let mut tabs: Vec<(SubTab, &str)> = vec![
@@ -1487,9 +1498,51 @@ impl BnApp {
 
     // ---------- 快捷键 ----------
 
-    /// B/S：切换买卖侧并聚焦数量框（输入框聚焦时 TextField 消费按键，不会到这）
+    /// 是否有输入框聚焦：GPUI 0.2.2 的 action 分发先于 key listener（bubble
+    /// 阶段的 action 监听器运行前就置 propagate_event=false），TextField 的
+    /// stop_propagation 拦不住已分发的 action，因此 B/S/Ctrl+Shift+C 必须
+    /// 在 handler 里自行让位于输入框——egui 版 focused() 门控的对应物
+    fn text_field_focused(&self, window: &Window, cx: &App) -> bool {
+        // window.focused() 为 None 说明焦点在非输入元素上，直接判否
+        if window.focused(cx).is_none() {
+            return false;
+        }
+        let owned = [
+            &self.pw1_field,
+            &self.pw2_field,
+            &self.api_key_field,
+            &self.api_secret_field,
+            &self.search_field,
+            &self.tpsl_sl_field,
+            &self.tpsl_tp_field,
+            &self.alert_field,
+            &self.trade_fields.price,
+            &self.trade_fields.qty,
+            &self.trade_fields.trigger,
+            &self.trade_fields.stop_limit,
+            &self.trade_fields.callback_rate,
+            &self.trade_fields.tp,
+            &self.trade_fields.sl,
+            &self.trade_fields.leverage,
+            &self.settings_fields.proxy_url,
+            &self.settings_fields.default_symbol,
+            &self.settings_fields.recv_window,
+            &self.settings_fields.http_timeout,
+            &self.settings_fields.ov_spot_rest,
+            &self.settings_fields.ov_spot_ws,
+            &self.settings_fields.ov_fut_rest,
+            &self.settings_fields.ov_fut_ws,
+        ];
+        owned.iter().any(|f| f.read(cx).is_focused(window))
+    }
+
+    /// B/S：切换买卖侧并聚焦数量框（输入框聚焦时让位，见 text_field_focused）
     fn side_shortcut(&mut self, side: Side, window: &mut Window, cx: &mut Context<Self>) {
-        if self.phase == Phase::Main && self.tab.market().is_some() && self.confirm.is_none() {
+        if self.phase == Phase::Main
+            && self.tab.market().is_some()
+            && self.confirm.is_none()
+            && !self.text_field_focused(window, cx)
+        {
             self.page.form.side = side;
             self.trade_fields.qty.update(cx, |f, _| f.focus(window));
             cx.notify();
@@ -1498,11 +1551,12 @@ impl BnApp {
 
     /// Ctrl+Shift+C 两步全撤当前交易对：武装态按 (交易对, 4 秒窗口) 匹配，
     /// 换交易对或超时即视为首次按下重新武装，杜绝「多久之前误按一次后被
-    /// 补键撤销」
-    fn cancel_all_shortcut(&mut self, _cx: &mut Context<Self>) {
+    /// 补键撤销」。输入框聚焦时让位（见 text_field_focused）
+    fn cancel_all_shortcut(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.phase != Phase::Main
             || self.tab.market().is_none()
             || self.confirm.is_some()
+            || self.text_field_focused(window, cx)
             || !self.state.has_creds()
         {
             return;
@@ -1556,7 +1610,7 @@ impl Render for BnApp {
             self.initial_load_done = false;
         }
 
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         let body = match self.phase {
             Phase::Main => self.render_main(window, cx),
             _ => self.render_auth(window, cx),
@@ -1570,16 +1624,17 @@ impl Render for BnApp {
             .font_family(theme::FONT_UI)
             .bg(t.bg)
             .text_color(t.text)
-            // 快捷键：B/S 切换买卖侧、Ctrl+Shift+C 两步全撤（输入框聚焦时
-            // TextField 消费按键，动作不会从这里触发）
+            // 快捷键：B/S 切换买卖侧、Ctrl+Shift+C 两步全撤。GPUI 的 action
+            // 分发先于 TextField 的 key listener（无法靠 stop_propagation 拦截），
+            // 输入框聚焦时的让位在各 handler 内部判定（text_field_focused）
             .on_action(cx.listener(|app: &mut BnApp, _: &Buy, window, cx| {
                 app.side_shortcut(Side::Buy, window, cx);
             }))
             .on_action(cx.listener(|app: &mut BnApp, _: &Sell, window, cx| {
                 app.side_shortcut(Side::Sell, window, cx);
             }))
-            .on_action(cx.listener(|app: &mut BnApp, _: &CancelAllShortcut, _, cx| {
-                app.cancel_all_shortcut(cx);
+            .on_action(cx.listener(|app: &mut BnApp, _: &CancelAllShortcut, window, cx| {
+                app.cancel_all_shortcut(window, cx);
             }))
             // Esc：确认下单弹窗 / 持仓 TP/SL 弹窗 / 订单类型下拉 / 副图指标
             // 下拉 / 两步撤销武装态，逐层关闭解除。输入框聚焦时 TextField

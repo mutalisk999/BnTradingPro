@@ -67,9 +67,11 @@ fn main() {
     tracing::info!("BnTradingPro 启动，数据目录: {}", dir.display());
 
     Application::new().run(move |cx: &mut gpui::App| {
-        // 字体：Windows 系统字体注入（雅黑正文 / Cascadia 等宽数字）
+        // 字体：Windows 系统字体注入（雅黑正文 / Cascadia 等宽数字）；
+        // 主题模式/涨跌方向由静态原子承载，取色经 theme::c() 现算
         ui::theme::apply_fonts(cx);
-        ui::theme::UiTheme::install(cx, &cfg.theme_mode, &cfg.price_dir);
+        ui::theme::set_mode_str(&cfg.theme_mode);
+        ui::theme::set_price_dir_str(&cfg.price_dir);
 
         // 窗口参数：初始 1200×600（= 最小尺寸，默认即最大信息密度布局）
         let bounds = Bounds {
