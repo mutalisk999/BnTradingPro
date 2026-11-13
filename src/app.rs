@@ -33,7 +33,9 @@ gpui::actions!(bn, [Buy, Sell, CancelAllShortcut]);
 const SIDE_W: f32 = 190.0;
 const SIDE_W_MIN: f32 = 190.0;
 const SIDE_W_MAX: f32 = 240.0;
-const BOOK_W: f32 = 230.0;
+// 盘口/成交面板默认宽：默认字号下成交明细需完整显示 HH:MM:SS（时间列
+// 降级阈值 ≈230.4px，取 240 留出余量，秒位不因 1px 之差被省略）
+const BOOK_W: f32 = 240.0;
 const BOOK_W_MIN: f32 = 180.0;
 const BOOK_W_MAX: f32 = 340.0;
 const TRADE_W: f32 = 300.0;
