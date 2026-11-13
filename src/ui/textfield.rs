@@ -17,10 +17,11 @@
 //! （外部改价，如盘口点击填价）。双向一致性由"谁改谁通知"保证。
 
 use gpui::{
-    canvas, div, font, px, size, App, Bounds, ClipboardItem, Context, EntityInputHandler,
-    FocusHandle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, Render, SharedString, StatefulInteractiveElement, Styled, TextRun,
-    UTF16Selection, Window,
+    canvas, div, font, point, prelude::FluentBuilder, px, size, App, Bounds, ClipboardItem,
+    Context,
+    EntityInputHandler, FocusHandle, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString,
+    StatefulInteractiveElement, Styled, TextRun, UTF16Selection, Window,
 };
 use crate::ui::theme;
 use std::ops::Range;
@@ -435,6 +436,15 @@ impl Render for TextField {
         let font = font(self.font_family.clone());
         let font_size = self.font_size;
 
+        // 聚焦态：accent 边框之外再叠一圈柔和 accent 光晕（BoxShadow 无偏移
+        // 纯模糊），与边框同源同色，输入位置一眼可辨
+        let focus_ring = gpui::BoxShadow {
+            color: gpui::Hsla::from(t.accent).opacity(theme::TINT_SOFT),
+            offset: point(px(0.0), px(0.0)),
+            blur_radius: px(6.0),
+            spread_radius: px(0.0),
+        };
+
         div()
             .id(self.id.clone())
             .track_focus(&self.focus)
@@ -450,6 +460,7 @@ impl Render for TextField {
             .border_1()
             .border_color(border_color)
             .rounded(px(crate::ui::theme::R_SM))
+            .when(focused, |d| d.shadow(vec![focus_ring]))
             .overflow_hidden()
             .child(canvas(
                 move |bounds, _window, _cx| bounds,

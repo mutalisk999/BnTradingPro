@@ -396,10 +396,11 @@ pub fn btn_ghost(
     finish_btn(base, enabled)
 }
 
-/// 按钮公共收尾：禁用降透明度，可用时手型光标
+/// 按钮公共收尾：禁用降透明度，可用时手型光标 + 按压反馈
+/// （gpui 无 hover transition，按压瞬时降透明度作反馈）
 fn finish_btn(base: Stateful<gpui::Div>, enabled: bool) -> Stateful<gpui::Div> {
     base.when(!enabled, |d| d.opacity(0.5))
-        .when(enabled, |d| d.cursor_pointer())
+        .when(enabled, |d| d.cursor_pointer().active(|s| s.opacity(0.85)))
 }
 
 // ---------- 胶囊页签 ----------
@@ -425,7 +426,15 @@ pub fn pill_tab(
         .text_color(if active { t.accent } else { t.text_dim })
         .whitespace_nowrap()
         .cursor_pointer()
-        .when(active, |d| d.bg(faded(t.accent, 0.16)))
+        // 无条件带 1px 描边：选中 accent 描边、未选中透明，选中态有
+        // 轮廓且两种状态间无布局抖动
+        .border_1()
+        .border_color(if active {
+            faded(t.accent, theme::TINT_SOFT)
+        } else {
+            gpui::transparent_black()
+        })
+        .when(active, |d| d.bg(faded(t.accent, theme::TINT_FILL)))
         .when(!active, |d| d.hover(|s| s.bg(t.row_hover)))
         .child(label.into())
 }
@@ -450,7 +459,15 @@ pub fn pill_tab_sm(
         .text_color(if active { t.accent } else { t.text_dim })
         .whitespace_nowrap()
         .cursor_pointer()
-        .when(active, |d| d.bg(faded(t.accent, 0.16)))
+        // 无条件带 1px 描边：选中 accent 描边、未选中透明，选中态有
+        // 轮廓且两种状态间无布局抖动
+        .border_1()
+        .border_color(if active {
+            faded(t.accent, theme::TINT_SOFT)
+        } else {
+            gpui::transparent_black()
+        })
+        .when(active, |d| d.bg(faded(t.accent, theme::TINT_FILL)))
         .when(!active, |d| d.hover(|s| s.bg(t.row_hover)))
         .child(label.into())
 }
@@ -475,7 +492,15 @@ pub fn pill_tab_rect(
         .text_color(if active { t.accent } else { t.text_dim })
         .whitespace_nowrap()
         .cursor_pointer()
-        .when(active, |d| d.bg(faded(t.accent, 0.16)))
+        // 无条件带 1px 描边：选中 accent 描边、未选中透明，选中态有
+        // 轮廓且两种状态间无布局抖动
+        .border_1()
+        .border_color(if active {
+            faded(t.accent, theme::TINT_SOFT)
+        } else {
+            gpui::transparent_black()
+        })
+        .when(active, |d| d.bg(faded(t.accent, theme::TINT_FILL)))
         .when(!active, |d| d.hover(|s| s.bg(t.row_hover)))
         .child(label.into())
 }
@@ -624,10 +649,10 @@ pub fn card() -> gpui::Div {
         .bg(t.card)
         // 边框压暗一档：卡片轮廓更实，与面板底色拉开层次
         .border_1()
-        .border_color(faded(t.border, 0.7))
+        .border_color(faded(t.border, theme::FADE_BORDER))
         .rounded(px(crate::ui::theme::R_LG))
         .px(px(theme::SPACE_XL))
-        .py(px(10.0))
+        .py(px(theme::SPACE_LG))
         .my(px(theme::SPACE_SM))
 }
 
@@ -655,7 +680,7 @@ pub fn separator() -> gpui::Div {
         .w_full()
         .h(px(1.0))
         .my(px(theme::SPACE_MD))
-        .bg(faded(t.border, 0.7))
+        .bg(faded(t.border, theme::FADE_BORDER))
 }
 
 /// 带标题行的卡片：标题 + 可选右侧操作槽 + 分隔线 + 内容体
