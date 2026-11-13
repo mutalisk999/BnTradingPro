@@ -12,7 +12,7 @@ use crate::app::BnApp;
 use crate::engine::state::SharedState;
 use crate::engine::Command;
 use crate::i18n::tr;
-use crate::ui::theme::{cur, faded, font_body, font_lg, font_md};
+use crate::ui::theme::{self, cur, faded, font_body, font_lg, font_md};
 use crate::ui::widgets;
 use gpui::{
     div, prelude::FluentBuilder, px, Context, Div, FontWeight, InteractiveElement, IntoElement,
@@ -40,7 +40,7 @@ fn td(c: &Col, child: impl IntoElement) -> Div {
         .flex()
         .items_center()
         .overflow_hidden()
-        .px(px(6.0))
+        .px(px(theme::SPACE_MD))
         .w(px(c.w))
         .when(c.right, |d| d.justify_end())
         .child(child)
@@ -52,7 +52,7 @@ fn head_cell(txt: &'static str, c: &Col) -> Div {
         .flex()
         .items_center()
         .overflow_hidden()
-        .px(px(6.0))
+        .px(px(theme::SPACE_MD))
         .w(px(c.w))
         .when(c.right, |d| d.justify_end())
         .child(widgets::card_label(tr(txt)))
@@ -61,7 +61,7 @@ fn head_cell(txt: &'static str, c: &Col) -> Div {
 fn header_row(cols: &[Col], labels: &[&'static str]) -> Div {
     let t = cur();
     let mut h = div()
-        .h(px(22.0))
+        .h(px(theme::TH_H))
         .flex()
         .flex_row()
         .items_center()
@@ -76,7 +76,7 @@ fn header_row(cols: &[Col], labels: &[&'static str]) -> Div {
 fn tr_row(idx: usize, cells: Vec<Div>) -> Div {
     let t = cur();
     div()
-        .h(px(22.0))
+        .h(px(theme::TABLE_ROW_H))
         .flex()
         .flex_row()
         .items_center()
@@ -102,7 +102,7 @@ fn load_failed_row(_state: &Arc<SharedState>, err: Option<String>, cx: &mut Cont
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.0))
+            .gap(px(theme::SPACE_LG))
             .child(
                 div()
                     .flex_1()
@@ -156,16 +156,16 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .overflow_y_scroll()
         .child(
             div()
-                .px(px(12.0))
-                .py(px(8.0))
+                .px(px(theme::SPACE_XL))
+                .py(px(theme::SPACE_LG))
                 .flex()
                 .flex_col()
-                .gap(px(10.0))
+                .gap(px(theme::SPACE_LG))
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.0))
+                        .gap(px(theme::SPACE_LG))
                         .child(
                             div()
                                 .text_size(font_lg())
@@ -324,7 +324,7 @@ fn fut_section(state: &Arc<SharedState>, cx: &mut Context<BnApp>) -> Div {
         div()
             .flex()
             .items_center()
-            .gap(px(6.0))
+            .gap(px(theme::SPACE_MD))
             .child(widgets::card_label(tr(label)))
             .child(
                 div()

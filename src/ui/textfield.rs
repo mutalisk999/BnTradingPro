@@ -22,6 +22,7 @@ use gpui::{
     ParentElement, Pixels, Point, Render, SharedString, StatefulInteractiveElement, Styled, TextRun,
     UTF16Selection, Window,
 };
+use crate::ui::theme;
 use std::ops::Range;
 
 /// 文本框实例：由父视图 `cx.new(|cx| TextField::new(cx))` 创建并持有 Entity
@@ -444,7 +445,7 @@ impl Render for TextField {
             .items_center()
             .w_full()
             .h(line_h)
-            .px(px(6.0))
+            .px(px(theme::SPACE_MD))
             .bg(t.panel2)
             .border_1()
             .border_color(border_color)

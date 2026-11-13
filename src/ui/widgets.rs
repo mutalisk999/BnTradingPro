@@ -161,7 +161,7 @@ pub fn fmt_time_short(ms: i64) -> String {
 // ---------- 主题/样式小工具 ----------
 
 use crate::ui::theme::{
-    cur, faded, font_body, font_xl, font_lg, font_md, font_sm, is_light, lerp_color, cur as _t,
+    self, cur, faded, font_body, font_xl, font_lg, font_md, font_sm, is_light, lerp_color, cur as _t,
 };
 
 /// hover 反馈色：向主题文字色插值一档。浅色主题下文字是深墨（压暗），
@@ -182,8 +182,8 @@ impl Render for TextTooltip {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let t = cur();
         div()
-            .px(px(8.0))
-            .py(px(4.0))
+            .px(px(theme::SPACE_LG))
+            .py(px(theme::SPACE_SM))
             .max_w(px(360.0))
             .bg(t.panel2)
             .border_1()
@@ -246,7 +246,7 @@ pub fn btn_default(
     let base = div()
         .id(id)
         .h(px(crate::ui::theme::BTN_H))
-        .px(px(12.0))
+        .px(px(theme::SPACE_XL))
         .rounded(px(crate::ui::theme::R_MD))
         .flex()
         .items_center()
@@ -273,7 +273,7 @@ pub fn btn_default_w(
         .id(id)
         .min_w(px(min_w))
         .h(px(crate::ui::theme::BTN_H))
-        .px(px(12.0))
+        .px(px(theme::SPACE_XL))
         .rounded(px(crate::ui::theme::R_MD))
         .flex()
         .items_center()
@@ -324,7 +324,7 @@ pub fn btn_danger(
     let base = div()
         .id(id)
         .h(px(crate::ui::theme::BTN_H))
-        .px(px(12.0))
+        .px(px(theme::SPACE_XL))
         .rounded(px(crate::ui::theme::R_MD))
         .flex()
         .items_center()
@@ -352,7 +352,7 @@ pub fn btn_solid(
     let base = div()
         .id(id)
         .h(px(crate::ui::theme::BTN_H))
-        .px(px(12.0))
+        .px(px(theme::SPACE_XL))
         .rounded(px(crate::ui::theme::R_MD))
         .flex()
         .items_center()
@@ -379,7 +379,7 @@ pub fn btn_ghost(
     let base = div()
         .id(id)
         .h(px(22.0))
-        .px(px(8.0))
+        .px(px(theme::SPACE_LG))
         .rounded(px(crate::ui::theme::R_SM))
         .flex()
         .items_center()
@@ -418,7 +418,7 @@ pub fn pill_tab(
         .flex()
         .items_center()
         .justify_center()
-        .px(px(12.0))
+        .px(px(theme::SPACE_XL))
         .h(px(crate::ui::theme::BTN_H))
         .rounded(px(crate::ui::theme::R_MD))
         .text_size(font_body())
@@ -488,7 +488,7 @@ pub fn badge(text: impl Into<SharedString>, fg: Rgba) -> gpui::Div {
         .flex()
         .items_center()
         .px(px(7.0))
-        .py(px(2.0))
+        .py(px(theme::SPACE_XS))
         .rounded(px(crate::ui::theme::R_SM))
         .bg(faded(fg, 0.22))
         .border_1()
@@ -548,7 +548,7 @@ fn status_item(name: &str, c: Rgba, glow: bool, hover: String) -> Stateful<gpui:
         .id(SharedString::from(format!("st_{name}")))
         .flex()
         .items_center()
-        .gap(px(3.0))
+        .gap(px(theme::SPACE_SM))
         .child(
             div()
                 .text_size(font_sm())
@@ -605,7 +605,7 @@ pub fn glyph_button(
         .items_center()
         .justify_center()
         .h(px(size + 4.0))
-        .px(px(4.0))
+        .px(px(theme::SPACE_SM))
         .rounded(px(crate::ui::theme::R_SM))
         .text_size(px(size))
         .text_color(color)
@@ -626,9 +626,9 @@ pub fn card() -> gpui::Div {
         .border_1()
         .border_color(faded(t.border, 0.7))
         .rounded(px(crate::ui::theme::R_LG))
-        .px(px(12.0))
+        .px(px(theme::SPACE_XL))
         .py(px(10.0))
-        .my(px(4.0))
+        .my(px(theme::SPACE_SM))
 }
 
 /// 卡片内标题行：标题 + flex_1 弹性槽（调用方在槽后追加右侧操作元素即右对齐）
@@ -654,7 +654,7 @@ pub fn separator() -> gpui::Div {
     div()
         .w_full()
         .h(px(1.0))
-        .my(px(6.0))
+        .my(px(theme::SPACE_MD))
         .bg(faded(t.border, 0.7))
 }
 
@@ -734,8 +734,8 @@ pub fn empty_state(icon: &str, title: &str, subtitle: &str) -> gpui::Div {
         .flex_col()
         .items_center()
         .w_full()
-        .pt(px(16.0))
-        .pb(px(16.0))
+        .pt(px(theme::SPACE_XXL))
+        .pb(px(theme::SPACE_XXL))
         .child(
             div()
                 .text_size(font_xl())
@@ -745,7 +745,7 @@ pub fn empty_state(icon: &str, title: &str, subtitle: &str) -> gpui::Div {
         .child(
             // 标题用正文色加粗压过副标题：空态也要有信息层级
             div()
-                .mt(px(2.0))
+                .mt(px(theme::SPACE_XS))
                 .text_size(font_body())
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(t.text)
@@ -773,7 +773,7 @@ pub fn loading_state(msg: &str) -> impl IntoElement {
         .flex_col()
         .items_center()
         .justify_center()
-        .gap(px(8.0))
+        .gap(px(theme::SPACE_LG))
         .child(
             div()
                 .w(px(10.0))
@@ -835,12 +835,12 @@ pub fn draw_toasts(state: &Arc<SharedState>) -> gpui::Div {
     let toasts = prune_toasts(state);
     let mut wrap = div()
         .absolute()
-        .bottom(px(16.0))
-        .right(px(16.0))
+        .bottom(px(theme::SPACE_XXL))
+        .right(px(theme::SPACE_XXL))
         .flex()
         .flex_col()
         .items_end()
-        .gap(px(6.0));
+        .gap(px(theme::SPACE_MD));
     for (i, t) in toasts.iter().enumerate() {
         wrap = wrap.child(draw_toast(state, i, t));
     }
@@ -863,11 +863,11 @@ fn draw_toast(state: &Arc<SharedState>, i: usize, t: &Toast) -> impl IntoElement
         .id(ElementId::named_usize("toast", i))
         .relative()
         .max_w(px(TOAST_MAX_W))
-        .px(px(12.0))
-        .py(px(9.0))
+        .px(px(theme::SPACE_XL))
+        .py(px(theme::SPACE_LG))
         .flex()
         .items_center()
-        .gap(px(8.0))
+        .gap(px(theme::SPACE_LG))
         .bg(t_cur.panel2)
         .border_1()
         .border_color(t_cur.border)

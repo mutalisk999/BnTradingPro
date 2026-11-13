@@ -949,11 +949,11 @@ impl TradeFields {
 fn row(label: &'static str) -> Div {
     let tr = crate::i18n::tr;
     div()
-        .h(px(22.0))
+        .h(px(theme::CONTROL_H))
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(8.0))
+        .gap(px(theme::SPACE_LG))
         .child(
             div()
                 .w(px(48.0))
@@ -1068,7 +1068,7 @@ pub fn panel(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .w_full()
         .flex()
         .flex_col()
-        .gap(px(3.0))
+        .gap(px(theme::SPACE_SM))
         // 点击面板任意空白处收起订单类型下拉
         .on_mouse_down(
             MouseButton::Left,
@@ -1094,11 +1094,11 @@ pub fn panel(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     root = root.child(
         div()
             .w_full()
-            .pb(px(2.0))
+            .pb(px(theme::SPACE_XS))
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.0))
+            .gap(px(theme::SPACE_LG))
             .child(
                 side_btn(app.page.form.side == Side::Buy, Side::Buy, market, "side_buy")
                     .on_click(cx.listener(|app: &mut BnApp, _, _, cx| {
@@ -1129,11 +1129,11 @@ pub fn panel(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     };
     let mut card = widgets::card()
         .px(px(10.0))
-        .py(px(6.0))
-        .my(px(2.0))
+        .py(px(theme::SPACE_MD))
+        .my(px(theme::SPACE_XS))
         .flex()
         .flex_col()
-        .gap(px(3.0));
+        .gap(px(theme::SPACE_SM));
 
     // 类型行：下拉按钮（菜单覆盖层在 root 末尾统一渲染，保证盖住后续行）
     let mut kind_row = row("类型");
@@ -1529,7 +1529,7 @@ pub fn panel(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.0))
+            .gap(px(theme::SPACE_LG))
             .child(
                 div()
                     .text_size(font_sm())
@@ -1612,7 +1612,7 @@ pub fn panel(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         root = root.child(
             div()
                 .rounded(px(theme::R_SM))
-                .px(px(8.0))
+                .px(px(theme::SPACE_LG))
                 .py(px(3.0))
                 .bg(faded(t.err, 0.16))
                 // 字号与输入框占位一致：错误条与输入框相邻出现时文字高低统一
@@ -1682,7 +1682,7 @@ pub fn panel(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             .top(px(62.0))
             .left(px(56.0))
             .w(px(96.0))
-            .py(px(4.0))
+            .py(px(theme::SPACE_SM))
             .rounded(px(theme::R_MD))
             .bg(t.card)
             .border_1()
@@ -1822,7 +1822,7 @@ pub fn confirm_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
     let rows = c.rows.clone();
 
     // 行值列等宽字体 + 方向色：数字一眼可辨（egui 版 Grid + monospace 同语义）
-    let mut rows_col = div().w_full().flex().flex_col().gap(px(8.0));
+    let mut rows_col = div().w_full().flex().flex_col().gap(px(theme::SPACE_LG));
     for (k, v) in rows {
         rows_col = rows_col.child(
             div()
@@ -1830,7 +1830,7 @@ pub fn confirm_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(16.0))
+                .gap(px(theme::SPACE_XXL))
                 .child(
                     div()
                         .w(px(88.0))
@@ -1872,7 +1872,7 @@ pub fn confirm_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         .p(px(14.0))
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         // 警示行是弹窗真正的信息核心，层级必须压过装饰性标题
         .child(
             div()
@@ -1887,12 +1887,12 @@ pub fn confirm_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         .child(rows_col)
         .child(
             div()
-                .pt(px(4.0))
+                .pt(px(theme::SPACE_SM))
                 .flex()
                 .flex_row()
                 .justify_end()
                 .items_center()
-                .gap(px(8.0))
+                .gap(px(theme::SPACE_LG))
                 .child(
                     widgets::btn_default("confirm_cancel", tr("取消"), true)
                         // 初始焦点语义（egui 版取消键默认聚焦走安全路径）在

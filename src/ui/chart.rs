@@ -333,8 +333,8 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .w_full()
         .flex()
         .flex_col()
-        .gap(px(4.0))
-        .pb(px(4.0))
+        .gap(px(theme::SPACE_SM))
+        .pb(px(theme::SPACE_SM))
         .child(tools_intervals(app, cx))
         .child(tools_ma(app, cx));
 
@@ -697,7 +697,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
 
 /// 工具行第一行：周期直选（pill_tab_sm，与页头同一样式）
 fn tools_intervals(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
-    let mut row = div().w_full().flex().flex_row().items_center().gap(px(2.0));
+    let mut row = div().w_full().flex().flex_row().items_center().gap(px(theme::SPACE_XS));
     for (i, iv) in Interval::all().into_iter().enumerate() {
         row = row.child(
             widgets::pill_tab_sm(("civ", i), iv.label(), app.page.interval == iv).on_click(
@@ -721,14 +721,14 @@ fn tools_ma(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(2.0));
+        .gap(px(theme::SPACE_XS));
     for (i, &period) in MA_PERIODS.iter().enumerate() {
         let on = app.page.chart.ma[i];
         let color = ma_colors[i];
         row = row.child(
             div()
                 .id(ElementId::from(("ma", i)))
-                .px(px(6.0))
+                .px(px(theme::SPACE_MD))
                 .h_full()
                 .flex()
                 .items_center()
@@ -783,7 +783,7 @@ fn sub_menu(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .top(px(58.0))
         .right(px(4.0))
         .w(px(110.0))
-        .py(px(4.0))
+        .py(px(theme::SPACE_SM))
         .rounded(px(theme::R_MD))
         .bg(t.card)
         .border_1()

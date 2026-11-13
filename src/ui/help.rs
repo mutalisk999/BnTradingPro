@@ -5,7 +5,7 @@
 
 use crate::app::BnApp;
 use crate::i18n::tr;
-use crate::ui::theme::{cur, faded, font_body, font_lg, font_md, font_sm};
+use crate::ui::theme::{self, cur, faded, font_body, font_lg, font_md, font_sm};
 use crate::ui::widgets;
 use gpui::{
     div, px, Context, Div, FontWeight, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled,
@@ -16,7 +16,7 @@ fn section(title: &'static str, body: Div) -> Div {
     widgets::card()
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .child(
             div()
                 .text_size(font_lg())
@@ -39,7 +39,7 @@ fn bullet(text: &'static str) -> Div {
     div()
         .flex()
         .flex_row()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .child(div().text_size(font_body()).text_color(cur().accent).child("•"))
         .child(
             div()
@@ -56,7 +56,7 @@ fn kv(k: &'static str, v: &'static str) -> Div {
     div()
         .flex()
         .flex_row()
-        .gap(px(8.0))
+        .gap(px(theme::SPACE_LG))
         .child(
             div()
                 .flex_shrink_0()
@@ -77,7 +77,7 @@ fn kv(k: &'static str, v: &'static str) -> Div {
 
 /// 多条内容纵向排列
 fn col(items: Vec<Div>) -> Div {
-    let mut d = div().flex().flex_col().gap(px(4.0));
+    let mut d = div().flex().flex_col().gap(px(theme::SPACE_SM));
     for it in items {
         d = d.child(it);
     }
@@ -93,11 +93,11 @@ pub fn show(_app: &mut BnApp, _cx: &mut Context<BnApp>) -> Div {
         .overflow_y_scroll()
         .child(
             div()
-                .px(px(12.0))
-                .py(px(8.0))
+                .px(px(theme::SPACE_XL))
+                .py(px(theme::SPACE_LG))
                 .flex()
                 .flex_col()
-                .gap(px(6.0))
+                .gap(px(theme::SPACE_MD))
                 .child(section(
                     "快速开始",
                     col(vec![
@@ -169,7 +169,7 @@ pub fn show(_app: &mut BnApp, _cx: &mut Context<BnApp>) -> Div {
                 ))
                 .child(
                     div()
-                        .pt(px(2.0))
+                        .pt(px(theme::SPACE_XS))
                         .text_size(font_sm())
                         .text_color(faded(t.text_dim, 0.85))
                         .child(format!("BnTradingPro v{}", env!("CARGO_PKG_VERSION"))),

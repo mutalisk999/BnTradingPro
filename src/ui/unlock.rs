@@ -153,7 +153,7 @@ pub fn page(app: &mut BnApp, window: &mut Window, cx: &mut Context<BnApp>) -> Di
                 )
                 .child(
                     div()
-                        .mt(px(6.0))
+                        .mt(px(theme::SPACE_MD))
                         .text_size(font_body())
                         .text_color(t.text_dim)
                         .child(crate::i18n::tr("Binance 现货 / U本位合约 交易终端")),
@@ -168,7 +168,7 @@ pub fn page(app: &mut BnApp, window: &mut Window, cx: &mut Context<BnApp>) -> Di
                         .flex_col()
                         .items_center()
                         .justify_center()
-                        .px(px(12.0))
+                        .px(px(theme::SPACE_XL))
                         .child(card(app, cx)),
                 ),
         )
@@ -229,8 +229,8 @@ fn env_hint(testnet: bool) -> impl IntoElement {
     };
     div()
         .absolute()
-        .top(px(14.0))
-        .right(px(14.0))
+        .top(px(theme::SPACE_XXL))
+        .right(px(theme::SPACE_XXL))
         .child(widgets::badge(txt, color))
 }
 
@@ -244,8 +244,8 @@ fn card(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     };
     let card = widgets::card()
         .w(px(440.0))
-        .px(px(22.0))
-        .py(px(12.0))
+        .px(px(theme::SPACE_XXL))
+        .py(px(theme::SPACE_XL))
         .my(px(0.0))
         .border_color(t.border)
         .flex()
@@ -273,7 +273,7 @@ fn error_text(msg: &str) -> Div {
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .child(
             div()
                 .w(px(16.0))
@@ -306,8 +306,8 @@ fn unlock_form(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     div()
         .flex()
         .flex_col()
-        .mt(px(2.0))
-        .gap(px(6.0))
+        .mt(px(theme::SPACE_XS))
+        .gap(px(theme::SPACE_MD))
         .child(
             div()
                 .text_size(font_md())
@@ -390,7 +390,7 @@ fn enter_keys_form(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     let testnet = app.state.cfg.read().testnet;
     let need_master = vault_exists || app.master.is_none();
 
-    let mut col = div().flex().flex_col().mt(px(2.0)).gap(px(6.0));
+    let mut col = div().flex().flex_col().mt(px(theme::SPACE_XS)).gap(px(theme::SPACE_MD));
     col = col.child(
         div()
             .text_size(font_md())
@@ -431,13 +431,13 @@ fn enter_keys_form(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                     div()
                         .flex()
                         .flex_row()
-                        .gap(px(8.0))
+                        .gap(px(theme::SPACE_LG))
                         .child(
                             div()
                                 .flex_1()
                                 .flex()
                                 .flex_col()
-                                .gap(px(2.0))
+                                .gap(px(theme::SPACE_XS))
                                 .child(widgets::card_label(crate::i18n::tr(
                                     "主密码（至少 8 位）",
                                 )))
@@ -448,7 +448,7 @@ fn enter_keys_form(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                                 .flex_1()
                                 .flex()
                                 .flex_col()
-                                .gap(px(2.0))
+                                .gap(px(theme::SPACE_XS))
                                 .child(widgets::card_label(crate::i18n::tr("再输一次")))
                                 .child(app.pw2_field.clone()),
                         ),
@@ -492,7 +492,7 @@ fn enter_keys_form(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             div()
                 .w_full()
                 .h(px(1.0))
-                .my(px(4.0))
+                .my(px(theme::SPACE_SM))
                 .bg(faded(t.border, 0.7)),
         )
         .child(

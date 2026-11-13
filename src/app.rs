@@ -27,6 +27,24 @@ use zeroize::Zeroizing;
 // 与按钮路径同一两步纪律——第一击武装（4 秒窗口内）并提示，第二击才执行
 gpui::actions!(bn, [Buy, Sell, CancelAllShortcut]);
 
+// ---------- 交易页骨架尺寸 ----------
+// 默认值与拖拽 clamp 同源：BnApp::new 的初始宽高与 on_drag_move 的
+// clamp 边界都引用这里，改布局只动一处
+const SIDE_W: f32 = 190.0;
+const SIDE_W_MIN: f32 = 190.0;
+const SIDE_W_MAX: f32 = 240.0;
+const BOOK_W: f32 = 230.0;
+const BOOK_W_MIN: f32 = 180.0;
+const BOOK_W_MAX: f32 = 340.0;
+const TRADE_W: f32 = 300.0;
+const TRADE_W_MIN: f32 = 300.0;
+const TRADE_W_MAX: f32 = 360.0;
+const ORDERS_H: f32 = 240.0;
+const ORDERS_H_MIN: f32 = 120.0;
+const ORDERS_H_MAX: f32 = 500.0;
+/// 收起态侧栏窄条宽
+const RAIL_W: f32 = 36.0;
+
 /// 面板尺寸拖拽把手的载荷标记：类型即身份，on_drag_move 按载荷类型分发到
 /// 各自的宽度/高度调整逻辑（同一根容器上注册四个互不干扰的处理器）
 #[derive(Default)]
@@ -538,12 +556,12 @@ impl BnApp {
                 alerts_open: false,
                 alert_input: String::new(),
                 sidebar_expanded: true,
-                sidebar_width: 190.0,
-                book_width: 230.0,
+                sidebar_width: SIDE_W,
+                book_width: BOOK_W,
                 chart_maximized: false,
                 trade_expanded: true,
-                trade_width: 300.0,
-                orders_h: 240.0,
+                trade_width: TRADE_W,
+                orders_h: ORDERS_H,
                 resize_drag_x: None,
                 resize_drag_y: None,
                 flash: flash::FlashState::default(),
@@ -1012,9 +1030,9 @@ impl BnApp {
         let mut bar = div()
             .flex()
             .items_center()
-            .h(px(36.0))
-            .px(px(14.0))
-            .gap(px(12.0))
+            .h(px(theme::TOPBAR_H))
+            .px(px(theme::SPACE_XL))
+            .gap(px(theme::SPACE_XL))
             .bg(t.panel)
             .border_b_1()
             .border_color(t.border)
@@ -1051,7 +1069,7 @@ impl BnApp {
 
         // 右侧簇（视觉自左向右）：账户灯 → 行情灯 → REST → 分隔 →
         // 环境徽标 → 分隔 → 语言 → 主题（egui RTL 容器的视觉顺序）
-        let mut right = div().flex().items_center().gap(px(6.0));
+        let mut right = div().flex().items_center().gap(px(theme::SPACE_MD));
         if let Some(m) = self.tab.market() {
             if self.state.has_creds() {
                 let uws = self.state.md.lock().user_ws(m).clone();
@@ -1062,7 +1080,7 @@ impl BnApp {
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(3.0))
+                        .gap(px(theme::SPACE_SM))
                         .child(
                             div()
                                 .text_size(theme::font_sm())
@@ -1198,7 +1216,7 @@ impl BnApp {
             .flex_1()
             .flex()
             .flex_col()
-            .p(px(8.0))
+            .p(px(theme::SPACE_LG))
             .bg(t.bg)
             .child(market::header(self, cx))
             .child(chart::show(self, cx));
@@ -1224,7 +1242,7 @@ impl BnApp {
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(4.0))
+                .gap(px(theme::SPACE_SM))
                 .h(px(theme::CONTROL_H))
                 .child(
                     widgets::glyph_button(
@@ -1262,7 +1280,7 @@ impl BnApp {
                 .h_full()
                 .flex()
                 .flex_col()
-                .p(px(8.0))
+                .p(px(theme::SPACE_LG))
                 .pb(px(0.0))
                 .bg(t.panel)
                 .child(top_row)
@@ -1272,12 +1290,12 @@ impl BnApp {
         } else {
             div()
                 .relative()
-                .w(px(36.0))
+                .w(px(RAIL_W))
                 .h_full()
                 .flex()
                 .flex_col()
                 .items_center()
-                .p(px(4.0))
+                .p(px(theme::SPACE_SM))
                 .bg(t.panel)
                 .child(
                     widgets::glyph_button(
@@ -1303,15 +1321,17 @@ impl BnApp {
         // − 页签行 BTN_H − 页签下分隔线（1 + 上下 my 4）。档位数/行高在
         // market.rs 内据此现算（GPUI 布局前无法询问剩余空间）
         let vh = f32::from(window.viewport_size().height);
-        let body_h = (vh - 37.0 - 8.0 - theme::BTN_H - 9.0).max(0.0);
-        let avail_w = (self.book_width - 16.0).max(0.0);
+        let body_h = (vh - theme::TOPBAR_H - 1.0 - theme::SPACE_LG - theme::BTN_H
+            - (1.0 + theme::SPACE_SM * 2.0))
+            .max(0.0);
+        let avail_w = (self.book_width - theme::SPACE_XXL * 2.0).max(0.0);
         div()
             .relative()
             .w(px(self.book_width))
             .h_full()
             .flex()
             .flex_col()
-            .p(px(8.0))
+            .p(px(theme::SPACE_LG))
             .pb(px(0.0))
             .bg(t.panel)
             .child(market::book_panel(self, window, cx, body_h, avail_w))
@@ -1332,7 +1352,7 @@ impl BnApp {
                 .h_full()
                 .flex()
                 .flex_col()
-                .p(px(8.0))
+                .p(px(theme::SPACE_LG))
                 .bg(t.panel)
                 .child(
                     // 顶行：收起按钮居左，标题居右——标题右缘对齐下方
@@ -1379,12 +1399,12 @@ impl BnApp {
         } else {
             div()
                 .relative()
-                .w(px(36.0))
+                .w(px(RAIL_W))
                 .h_full()
                 .flex()
                 .flex_col()
                 .items_center()
-                .p(px(4.0))
+                .p(px(theme::SPACE_SM))
                 .bg(t.panel)
                 .child(
                     widgets::glyph_button(
@@ -1411,7 +1431,7 @@ impl BnApp {
             .h(px(self.orders_h))
             .flex()
             .flex_col()
-            .p(px(8.0))
+            .p(px(theme::SPACE_LG))
             .bg(t.panel)
             .child(self.sub_tabs(cx))
             .child(widgets::separator())
@@ -1446,7 +1466,7 @@ impl BnApp {
             }
         }
         let open_n = self.state.orders.lock().open(self.market).len();
-        let mut row = div().flex().flex_row().items_center().gap(px(2.0));
+        let mut row = div().flex().flex_row().items_center().gap(px(theme::SPACE_XS));
         for (i, (tab, label)) in tabs.into_iter().enumerate() {
             row = row.child(
                 widgets::pill_tab(("subtab", i), label, self.page.sub_tab == tab).on_click(
@@ -1622,7 +1642,7 @@ impl Render for BnApp {
                     let last = app.resize_drag_x.replace(x);
                     if let Some(d) = drag_delta(last, x) {
                         // 指针右移 = 面板变宽（最小宽度 190 按用户要求）
-                        app.sidebar_width = (app.sidebar_width + d).clamp(190.0, 240.0);
+                        app.sidebar_width = (app.sidebar_width + d).clamp(SIDE_W_MIN, SIDE_W_MAX);
                     }
                     cx.notify();
                 },
@@ -1632,7 +1652,7 @@ impl Render for BnApp {
                     let x = f32::from(e.event.position.x);
                     let last = app.resize_drag_x.replace(x);
                     if let Some(d) = drag_delta(last, x) {
-                        app.book_width = (app.book_width + d).clamp(180.0, 340.0);
+                        app.book_width = (app.book_width + d).clamp(BOOK_W_MIN, BOOK_W_MAX);
                     }
                     cx.notify();
                 },
@@ -1643,7 +1663,7 @@ impl Render for BnApp {
                     let last = app.resize_drag_x.replace(x);
                     if let Some(d) = drag_delta(last, x) {
                         // 指针左移 = 面板变宽；下限两市场统一 300
-                        app.trade_width = (app.trade_width - d).clamp(300.0, 360.0);
+                        app.trade_width = (app.trade_width - d).clamp(TRADE_W_MIN, TRADE_W_MAX);
                     }
                     cx.notify();
                 },
@@ -1654,7 +1674,7 @@ impl Render for BnApp {
                     let last = app.resize_drag_y.replace(y);
                     if let Some(d) = drag_delta(last, y) {
                         // 指针上移 = 订单区变高
-                        app.orders_h = (app.orders_h - d).clamp(120.0, 500.0);
+                        app.orders_h = (app.orders_h - d).clamp(ORDERS_H_MIN, ORDERS_H_MAX);
                     }
                     cx.notify();
                 },

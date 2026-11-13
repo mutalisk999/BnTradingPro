@@ -136,7 +136,7 @@ fn pills(
     current: &str,
     pick: impl Fn(&mut BnApp, &str) + Clone + 'static,
 ) -> Div {
-    let mut d = div().flex().flex_row().items_center().gap(px(4.0));
+    let mut d = div().flex().flex_row().items_center().gap(px(theme::SPACE_SM));
     for (i, (v, label)) in options.into_iter().enumerate() {
         let pick = pick.clone();
         let active = v == current;
@@ -183,7 +183,7 @@ fn checkbox_row(
         .id(id)
         .flex()
         .items_center()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .cursor_pointer()
         .hover(|s| s.text_color(t.accent))
         .on_click(cx.listener(move |app: &mut BnApp, _, _, cx| {
@@ -282,7 +282,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         if testnet { "testnet" } else { "mainnet" },
         |app: &mut BnApp, v: &str| app.settings.testnet = v == "testnet",
     );
-    let mut env_body = div().flex().flex_col().gap(px(6.0)).child(
+    let mut env_body = div().flex().flex_col().gap(px(theme::SPACE_MD)).child(
         widgets::form_row()
             .child(env_pills)
             .child(div().flex_1())
@@ -315,7 +315,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         div()
             .flex()
             .flex_col()
-            .gap(px(6.0))
+            .gap(px(theme::SPACE_MD))
             .child(checkbox_row(
                 cx,
                 "set_proxy_en",
@@ -398,7 +398,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     let look_body = div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .child(
             widgets::form_row()
                 .child(widgets::row_label(tr("语言"), 68.0))
@@ -459,7 +459,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     let param_body = div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .child(
             widgets::form_row()
                 .child(
@@ -539,7 +539,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     let ep_body = div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .child(ep_row("现货 REST", &app.settings_fields.ov_spot_rest))
         .child(ep_row("现货 WS", &app.settings_fields.ov_spot_ws))
         .child(ep_row("合约 REST", &app.settings_fields.ov_fut_rest))
@@ -572,7 +572,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     let keys_body = div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .child(
             widgets::form_row()
                 .child(widgets::badge(
@@ -649,7 +649,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     let about_body = div()
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .child(
             div()
                 .text_size(font_sm())
@@ -679,11 +679,11 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .overflow_y_scroll()
         .child(
             div()
-                .px(px(12.0))
-                .py(px(8.0))
+                .px(px(theme::SPACE_XL))
+                .py(px(theme::SPACE_LG))
                 .flex()
                 .flex_col()
-                .gap(px(10.0))
+                .gap(px(theme::SPACE_LG))
                 .child(
                     div()
                         .text_size(font_lg())

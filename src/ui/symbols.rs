@@ -87,7 +87,7 @@ pub fn list(app: &mut BnApp, cx: &mut Context<BnApp>) -> AnyElement {
         !rules[app.market as usize].symbols.is_empty()
     };
     if !rules_loaded {
-        let mut col = div().flex_1().flex().flex_col().mt(px(2.0));
+        let mut col = div().flex_1().flex().flex_col().mt(px(theme::SPACE_XS));
         if !favs.is_empty() {
             col = col
                 .child(section_row(crate::i18n::tr("自选"), m))
@@ -98,7 +98,7 @@ pub fn list(app: &mut BnApp, cx: &mut Context<BnApp>) -> AnyElement {
         }
         col = col.child(
             div()
-                .mt(px(6.0))
+                .mt(px(theme::SPACE_MD))
                 .text_size(font_md())
                 .text_color(t.text_dim)
                 .child(crate::i18n::tr("交易规则加载中，请检查网络与代理").to_string()),
@@ -368,7 +368,7 @@ fn sym_row(
                 .flex()
                 .flex_row()
                 .items_center()
-                .pl(px(6.0))
+                .pl(px(theme::SPACE_MD))
                 .child(
                     div()
                         .id(ElementId::from(("symstar", i)))
@@ -377,7 +377,7 @@ fn sym_row(
                         .flex()
                         .items_center()
                         .justify_center()
-                        .mr(px(4.0))
+                        .mr(px(theme::SPACE_SM))
                         .text_size(font_md())
                         .text_color(if is_fav { t.accent } else { t.text_dim })
                         .cursor_pointer()

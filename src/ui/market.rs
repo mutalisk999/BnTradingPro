@@ -209,7 +209,7 @@ pub fn book_panel(
                 cx.notify();
             })),
         )
-        .child(div().w(px(1.0)).my(px(4.0)).bg(t.border))
+        .child(div().w(px(1.0)).my(px(theme::SPACE_SM)).bg(t.border))
         .child(
             widgets::pill_tab_rect(
                 "booktab_trades",
@@ -231,7 +231,7 @@ pub fn book_panel(
         .flex_col()
         .overflow_hidden()
         .child(tabs)
-        .child(div().w_full().h(px(1.0)).my(px(4.0)).bg(faded(t.border, 0.7)));
+        .child(div().w_full().h(px(1.0)).my(px(theme::SPACE_SM)).bg(faded(t.border, 0.7)));
     match app.book_tab {
         BookTab::Trades => panel = panel.child(
             show_trades(app, window, cx, avail_h, avail_w)
@@ -292,12 +292,12 @@ fn show_book(
     // 不再在卖盘顶部或买盘底部留下整条空档
     const SPREAD_H: f32 = 24.0;
     const SPREAD_PAD: f32 = 8.0; // 价差行上下呼吸
-    const ROW_H: f32 = 17.0;
-    const ROW_H_MIN: f32 = ROW_H * 0.75; // 面板过矮（n 触底下限）时允许压缩
-    const ROW_H_MAX: f32 = ROW_H * 1.35; // n 触顶 20 档时允许拉伸
-    let budget = (avail_h - SPREAD_H - SPREAD_PAD).max(2.0 * ROW_H_MIN);
-    let n = ((budget / (2.0 * ROW_H)).round() as usize).clamp(BOOK_LEVELS, BOOK_MAX_LEVELS);
-    let row_h = (budget / (2.0 * n as f32)).clamp(ROW_H_MIN, ROW_H_MAX);
+    const BOOK_ROW_H: f32 = 17.0;
+    const BOOK_ROW_H_MIN: f32 = BOOK_ROW_H * 0.75; // 面板过矮（n 触底下限）时允许压缩
+    const BOOK_ROW_H_MAX: f32 = BOOK_ROW_H * 1.35; // n 触顶 20 档时允许拉伸
+    let budget = (avail_h - SPREAD_H - SPREAD_PAD).max(2.0 * BOOK_ROW_H_MIN);
+    let n = ((budget / (2.0 * BOOK_ROW_H)).round() as usize).clamp(BOOK_LEVELS, BOOK_MAX_LEVELS);
+    let row_h = (budget / (2.0 * n as f32)).clamp(BOOK_ROW_H_MIN, BOOK_ROW_H_MAX);
 
     // 聚合档位步长：tick 的 1/10/100/1000 倍（0 = 不聚合）
     let group_step = {
@@ -444,7 +444,7 @@ fn show_book(
             .flex_row()
             .items_center()
             .overflow_hidden()
-            .px(px(2.0))
+            .px(px(theme::SPACE_XS))
             // 价差行中间价：与页头最新价同一「大数字」语义，700 字重
             .child(
                 div()
@@ -471,7 +471,7 @@ fn show_book(
                 div()
                     .text_size(font_sm())
                     .text_color(t.text_dim)
-                    .ml(px(4.0))
+                    .ml(px(theme::SPACE_SM))
                     .child(crate::i18n::tr("价差").to_string()),
             ),
     );
@@ -610,7 +610,7 @@ fn book_row(
             .h_full()
             .child(
                 div()
-                    .pl(px(2.0))
+                    .pl(px(theme::SPACE_XS))
                     .font_family(FONT_MONO)
                     .text_size(font_md())
                     .text_color(Hsla::from(price_color))
@@ -621,7 +621,7 @@ fn book_row(
             .child(div().flex_1())
             .child(
                 div()
-                    .pr(px(2.0))
+                    .pr(px(theme::SPACE_XS))
                     .font_family(FONT_MONO)
                     .text_size(font_md())
                     .text_color(t.text)
@@ -675,7 +675,7 @@ fn show_book_group(window: &mut Window, app: &mut BnApp, cx: &mut Context<BnApp>
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(3.0))
+        .gap(px(theme::SPACE_SM))
         .child(
             div()
                 .text_size(font_sm())
@@ -739,9 +739,9 @@ fn show_trades(
 
     // 行数随面板高度自适应（同盘口思路：内容刚好占满），
     // 上限为行情缓冲的 100 笔；留 4px 余量防止取整溢出
-    const ROW_H: f32 = 17.0; // 数据行内容高（FONT_MD 文本行）
+    const TRADES_ROW_H: f32 = 17.0; // 数据行内容高（FONT_MD 文本行）
     const HEADER_H: f32 = 14.0; // 表头内容高（FONT_SM 文本行）
-    let row_pitch = ROW_H + 2.0;
+    let row_pitch = TRADES_ROW_H + 2.0;
     let n = (((avail_h - HEADER_H - 4.0) / row_pitch).floor() as usize).clamp(1, 100);
 
     // 短锁拷贝最近 n 笔后绘制
@@ -837,7 +837,7 @@ fn show_trades(
         };
         base.child(
             div()
-                .pl(px(2.0))
+                .pl(px(theme::SPACE_XS))
                 .w(px(w_price))
                 // 价格列禁收缩：行内总宽超预算时 taffy 会按比例压缩各固定宽
                 // 子项，价格小数尾数最先被数量列盖住（遮挡优于叠印的取舍）
@@ -861,7 +861,7 @@ fn show_trades(
         .child(div().flex_1())
         .child(
             div()
-                .pr(px(2.0))
+                .pr(px(theme::SPACE_XS))
                 .whitespace_nowrap()
                 .overflow_hidden()
                 .text_size(px(sz))
@@ -870,7 +870,7 @@ fn show_trades(
         )
     };
 
-    let mut list = div().w_full().flex().flex_col().gap(px(2.0));
+    let mut list = div().w_full().flex().flex_col().gap(px(theme::SPACE_XS));
     list = list.child(mk_row(
         crate::i18n::tr("价格").to_string(),
         crate::i18n::tr("数量").to_string(),
@@ -905,7 +905,7 @@ fn show_trades(
             format!("{:.*}", dp, widgets::f64_decimal(&tr.price)),
             format!("{:.*}", qdp, widgets::f64_decimal(&tr.qty)),
             time_txt,
-            ROW_H,
+            TRADES_ROW_H,
             Hsla::from(col),
             false,
         ));
@@ -954,7 +954,7 @@ pub fn header(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(3.0))
+            .gap(px(theme::SPACE_SM))
             .child(widgets::card_label(label))
             .child(
                 div()
@@ -1001,7 +1001,7 @@ pub fn header(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(8.0))
+        .gap(px(theme::SPACE_LG))
         .overflow_hidden()
         .child(sym_title)
         .child(vsep());
@@ -1084,7 +1084,7 @@ pub fn header(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .overflow_hidden();
     if let Some(tk) = &tick {
         let o = widgets::fmt_thousands(widgets::f64_decimal(&tk.open_price), dp);
@@ -1106,7 +1106,7 @@ pub fn header(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .overflow_hidden();
     if let Some(tk) = &tick {
         let base_txt = if base.is_empty() {
@@ -1153,7 +1153,7 @@ pub fn header(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(3.0))
+            .gap(px(theme::SPACE_SM))
             .child(widgets::card_label(crate::i18n::tr("资金费率")))
             .child(
                 div()
@@ -1189,7 +1189,7 @@ pub fn header(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .w_full()
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .child(r1)
         .child(r3)
         .child(r4)
@@ -1233,7 +1233,7 @@ pub fn alerts_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .child(div().w(px(110.0)).child(app.alert_field.clone()))
         .child(
             widgets::btn_default("alert_add", tr("添加"), true).on_click(cx.listener(
@@ -1268,7 +1268,7 @@ pub fn alerts_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(4.0))
+                .gap(px(theme::SPACE_SM))
                 .child(
                     div()
                         .text_size(font_md())
@@ -1297,7 +1297,7 @@ pub fn alerts_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
                 .child(
                     div()
                         .id(("alert_del", i))
-                        .px(px(4.0))
+                        .px(px(theme::SPACE_SM))
                         .text_size(font_sm())
                         .text_color(t.text_dim)
                         .cursor_pointer()
@@ -1333,13 +1333,13 @@ pub fn alerts_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         .shadow_lg()
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .child(
             div()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(6.0))
+                .gap(px(theme::SPACE_MD))
                 .child(
                     div()
                         .text_size(font_lg())

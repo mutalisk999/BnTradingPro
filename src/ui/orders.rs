@@ -196,7 +196,7 @@ fn td(c: &Col, child: impl IntoElement) -> Div {
         .flex()
         .items_center()
         .overflow_hidden()
-        .px(px(6.0));
+        .px(px(theme::SPACE_MD));
     if c.w > 0.0 {
         d = d.w(px(c.w));
     } else {
@@ -242,7 +242,7 @@ fn head_cell(
         .flex()
         .items_center()
         .overflow_hidden()
-        .px(px(6.0));
+        .px(px(theme::SPACE_MD));
     if c.w > 0.0 {
         d = d.w(px(c.w));
     } else {
@@ -265,7 +265,7 @@ fn head_cell(
 fn header_row(cols: &[Col], labels: &[&'static str], tips: &[&'static str]) -> Div {
     let t = cur();
     let mut h = div()
-        .h(px(22.0))
+        .h(px(theme::TH_H))
         .flex()
         .flex_row()
         .items_center()
@@ -326,7 +326,7 @@ fn page_root(bar: Div, body: impl IntoElement) -> Div {
         .min_h(px(0.0))
         .flex()
         .flex_col()
-        .gap(px(4.0))
+        .gap(px(theme::SPACE_SM))
         .child(bar)
         .child(widgets::separator())
         .child(body)
@@ -394,7 +394,7 @@ fn show_open(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     }
 
     // ---- 工具条 ----
-    let mut bar = widgets::form_row().gap(px(8.0));
+    let mut bar = widgets::form_row().gap(px(theme::SPACE_LG));
     bar = bar.child(
         div()
             .text_size(font_md())
@@ -550,7 +550,7 @@ fn show_open(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         let sym_c = o.symbol.clone();
         rows.push(tr_row(
             i,
-            28.0,
+            theme::TABLE_ROW_H,
             vec![
                 td(&cols[0], widgets::num_cell(widgets::fmt_time(o.time), None)),
                 td(&cols[1], widgets::num_cell(o.symbol.clone(), None)),
@@ -649,7 +649,7 @@ fn show_open(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         let algo_id = a.algo_id;
         rows.push(tr_row(
             list.len() + i,
-            28.0,
+            theme::TABLE_ROW_H,
             vec![
                 td(
                     &cols[0],
@@ -747,7 +747,7 @@ fn show_positions(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     };
 
     // ---- 工具条 ----
-    let mut bar = widgets::form_row().gap(px(8.0));
+    let mut bar = widgets::form_row().gap(px(theme::SPACE_LG));
     bar = bar.child(
         div()
             .text_size(font_md())
@@ -888,7 +888,7 @@ fn show_positions(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(4.0))
+                .gap(px(theme::SPACE_SM))
                 .child(
                     div()
                         .font_family(FONT_MONO)
@@ -922,7 +922,7 @@ fn show_positions(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         let pos_side_rev = pos_side;
         rows.push(tr_row(
             i,
-            28.0,
+            theme::TABLE_ROW_H,
             vec![
                 td(&cols[0], widgets::num_cell(p.symbol.clone(), None)),
                 td(
@@ -968,7 +968,7 @@ fn show_positions(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                         .flex()
                         .flex_row()
                         .items_center()
-                        .gap(px(4.0))
+                        .gap(px(theme::SPACE_SM))
                         // 定宽按钮：中文四字与英文 TP/SL 长度不一，定宽保证
                         // 两种语言都不截断且点击区足够大
                         .child(
@@ -1067,7 +1067,7 @@ fn show_history(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     };
 
     // ---- 工具条 ----
-    let mut bar = widgets::form_row().gap(px(8.0));
+    let mut bar = widgets::form_row().gap(px(theme::SPACE_LG));
     bar = bar.child(match &key {
         Some((m, s)) => div()
             .text_size(font_md())
@@ -1234,7 +1234,7 @@ fn show_history(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             };
             tr_row(
                 i,
-                22.0,
+                theme::TABLE_ROW_H,
                 vec![
                     td(&cols[0], widgets::num_cell(widgets::fmt_time(o.time), None)),
                     td(&cols[1], mono(o.symbol.clone())),
@@ -1301,7 +1301,7 @@ fn show_trades_history(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         |sym: &str| state.with_rule(market, sym, |r| r.map(|x| x.qty_dp() as usize).unwrap_or(4));
 
     // ---- 工具条 ----
-    let mut bar = widgets::form_row().gap(px(8.0));
+    let mut bar = widgets::form_row().gap(px(theme::SPACE_LG));
     bar = bar.child(
         div()
             .text_size(font_md())
@@ -1406,7 +1406,7 @@ fn show_trades_history(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             };
             tr_row(
                 i,
-                22.0,
+                theme::TABLE_ROW_H,
                 vec![
                     td(&cols[0], widgets::num_cell(widgets::fmt_time(t2.time), None)),
                     td(&cols[1], mono(t2.symbol.clone())),
@@ -1471,7 +1471,7 @@ fn show_flow(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     };
 
     // ---- 工具条 ----
-    let mut bar = widgets::form_row().gap(px(8.0));
+    let mut bar = widgets::form_row().gap(px(theme::SPACE_LG));
     bar = bar.child(match flow_market {
         Some(m) => div()
             .text_size(font_md())
@@ -1572,7 +1572,7 @@ fn show_flow(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             };
             tr_row(
                 i,
-                22.0,
+                theme::TABLE_ROW_H,
                 vec![
                     td(&cols[0], widgets::num_cell(widgets::fmt_time(f.time), None)),
                     td(&cols[1], txt(crate::i18n::tr(f.kind))),
@@ -1620,7 +1620,7 @@ pub fn tpsl_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(10.0))
+            .gap(px(theme::SPACE_LG))
             .child(div().text_size(font_md()).child(tr(label)))
             .child(div().w(px(116.0)).child(f.clone()))
     };
@@ -1632,10 +1632,10 @@ pub fn tpsl_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         .border_color(faded(t.border, 0.7))
         // 悬浮层 elevation：无遮罩悬挂卡片靠阴影与页面分层
         .shadow_lg()
-        .p(px(12.0))
+        .p(px(theme::SPACE_XL))
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_MD))
         .child(
             div()
                 .text_size(theme::font_lg())
@@ -1653,12 +1653,12 @@ pub fn tpsl_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         .child(field_row("止盈触发", &app.tpsl_tp_field))
         .child(
             div()
-                .pt(px(2.0))
+                .pt(px(theme::SPACE_XS))
                 .flex()
                 .flex_row()
                 .justify_end()
                 .items_center()
-                .gap(px(8.0))
+                .gap(px(theme::SPACE_LG))
                 .child(
                     widgets::btn_default("tpsl_close", tr("关闭"), true).on_click(cx.listener(
                         |app: &mut BnApp, _, _, cx| {
