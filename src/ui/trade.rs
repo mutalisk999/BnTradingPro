@@ -877,7 +877,7 @@ impl TradeFields {
                 f.set_id(id)
                     .set_numeric(true)
                     .set_placeholder(ph)
-                    .set_font_size(theme::font_md());
+                    .set_font_size(theme::FONT_MD_BASE);
                 f
             })
         };
@@ -898,15 +898,10 @@ impl TradeFields {
     /// 写回目标是 app.page.form.*：字段只在其所属页为活动页时才渲染/接收输入，
     /// 回调触发时 app.page 即所有者页
     pub fn attach(&mut self, weak: &WeakEntity<BnApp>, cx: &mut Context<BnApp>) {
+        use crate::ui::textfield::bind_on_change;
         macro_rules! bind {
             ($e:expr, $set:expr) => {
-                $e.update(cx, |tf, _| {
-                    let weak = weak.clone();
-                    tf.set_on_change(Box::new(move |s, _, cx| {
-                        let s = s.to_string();
-                        let _ = weak.update(cx, |app: &mut BnApp, _| $set(app, s));
-                    }));
-                });
+                bind_on_change(&$e, weak, $set, cx);
             };
         }
         bind!(self.price, |app: &mut BnApp, v: String| app.page.form.price = v);
@@ -922,32 +917,30 @@ impl TradeFields {
         bind!(self.leverage, |app: &mut BnApp, v: String| app.page.leverage_input = v);
     }
 
-    /// 外部变更回灌：文本不同才 set（正在输入的框两侧已一致，不会重置光标）
-    fn sync(e: &Entity<TextField>, val: &str, cx: &mut Context<BnApp>) {
-        e.update(cx, |f, _| {
-            if f.text() != val {
-                f.set_text(val);
-            }
-        });
-    }
-
     pub fn sync_all(&self, app: &BnApp, cx: &mut Context<BnApp>) {
+        use crate::ui::textfield::sync_text;
         let f = &app.page.form;
-        Self::sync(&self.price, &f.price, cx);
-        Self::sync(&self.qty, &f.qty, cx);
-        Self::sync(&self.trigger, &f.trigger, cx);
-        Self::sync(&self.stop_limit, &f.stop_limit, cx);
-        Self::sync(&self.callback_rate, &f.callback_rate, cx);
-        Self::sync(&self.tp, &f.tp_price, cx);
-        Self::sync(&self.sl, &f.sl_price, cx);
-        Self::sync(&self.leverage, &app.page.leverage_input, cx);
+        sync_text(&self.price, &f.price, cx);
+        sync_text(&self.qty, &f.qty, cx);
+        sync_text(&self.trigger, &f.trigger, cx);
+        sync_text(&self.stop_limit, &f.stop_limit, cx);
+        sync_text(&self.callback_rate, &f.callback_rate, cx);
+        sync_text(&self.tp, &f.tp_price, cx);
+        sync_text(&self.sl, &f.sl_price, cx);
+        sync_text(&self.leverage, &app.page.leverage_input, cx);
     }
 }
 
-/// 表单行：行高 22（egui 版 compact_row 语义），标签列固定 48pt 容下
-/// "止损限价"四字，输入框左缘全行对齐
+/// 表单行：行高 22（egui 版 compact_row 语义），标签列宽按语言与字号档位
+/// 计算（中文 4 字 = 4×12px；英文最长 "Time in Force" ≈ 88px），随 font_sm
+/// 同步缩放——固定宽度在中/大字号档会裁切四字标签
 fn row(label: &'static str) -> Div {
     let tr = crate::i18n::tr;
+    let label_w = if crate::i18n::lang() == crate::i18n::EN {
+        92.0
+    } else {
+        52.0
+    } * theme::font_scale_pub();
     div()
         .h(px(theme::CONTROL_H))
         .flex()
@@ -956,7 +949,7 @@ fn row(label: &'static str) -> Div {
         .gap(px(theme::SPACE_LG))
         .child(
             div()
-                .w(px(48.0))
+                .w(px(label_w))
                 .flex_shrink_0()
                 .flex()
                 .items_center()
@@ -1928,7 +1921,10 @@ pub fn confirm_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
                 ),
         );
 
-    // 全屏遮罩：视觉聚焦弹窗 + 点击空白即取消（与 Esc 等效）
+    // 全屏遮罩：视觉聚焦弹窗 + 点击空白即取消（与 Esc 等效）。
+    // 卡片必须 occlude：GPUI 命中测试会收集所有含该点的 hitbox，
+    // 不遮挡的话点击卡片非按钮区会穿透到下层（盘口设价/图表），
+    // 同时仍命中遮罩的取消回调
     let dim = theme::backdrop(cx);
     Some(
         div()
@@ -1949,6 +1945,6 @@ pub fn confirm_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
                         cx.notify();
                     })),
             )
-            .child(card),
+            .child(card.occlude()),
     )
 }

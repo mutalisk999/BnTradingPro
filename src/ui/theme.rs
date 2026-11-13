@@ -1,8 +1,10 @@
 //! 主题与字体：明暗双主题 + Windows 系统字体（微软雅黑正文 / Cascadia 等宽数字）
 //!
-//! 颜色通过 `UiTheme` 全局（gpui::Global）运行时取值，主题切换即时生效。
-//! 色板经两轮 WCAG 审计精修：所有文字/语义色对各表面底色 ≥4.5:1，
-//! 每个非常规取值在字段注释里写明对比度依据，改动前先跑审计脚本核对。
+//! 颜色状态承载在静态原子（MODE / PRICE_DIR / FONT_STEP），`theme::c()` /
+//! `cur()` 每次调用现算返回 Copy 值——单一事实源，主题/字号/涨跌方向变更
+//! 下一帧自动生效，无需快照或刷新机制。
+//! 色板经 WCAG 审计精修：正文/表格文字对底色 ≥4.5:1；图表注释类（均线/
+//! 图例）按图形阈值 ≥3:1。每个非常规取值在字段注释里写明对比度依据。
 
 use gpui::{px, App, Hsla, Pixels, Rgba};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -44,26 +46,28 @@ mod test_util {
     use super::set_font_size_str;
     use std::sync::Mutex;
 
-    /// 仅测试用：FONT_STEP 是进程级全局量，cargo test 的并行线程会互相
-    /// 踩——一个用例设 large 量几何的同时，另一个正按 small 断言。
-    /// 改读档位或按 font_*() 量几何的用例统一先拿这把锁；
-    /// guard 释放时把档位恢复 small，下个持锁者看到的是干净基线
-    pub struct FontGuard(std::sync::MutexGuard<'static, ()>);
-
-    impl Drop for FontGuard {
-        fn drop(&mut self) {
-            set_font_size_str("small");
-        }
+    /// MODE/PRICE_DIR/FONT_STEP 三把静态原子共用同一把测试互斥锁：
+    /// 任何写这些全局量的用例都先拿锁，guard 释放时恢复默认
+    /// （dark + green_up + small），并行用例看到干净基线
+    pub fn theme_lock() -> ThemeGuard {
+        static LOCK: Mutex<()> = Mutex::new(());
+        ThemeGuard(LOCK.lock().unwrap())
     }
 
-    pub fn font_lock() -> FontGuard {
-        static LOCK: Mutex<()> = Mutex::new(());
-        FontGuard(LOCK.lock().unwrap())
+    /// theme_lock 的句柄：释放时把三个静态原子全部恢复默认基线
+    pub struct ThemeGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+    impl Drop for ThemeGuard {
+        fn drop(&mut self) {
+            super::set_mode_str("dark");
+            super::set_price_dir_str("green_up");
+            set_font_size_str("small");
+        }
     }
 }
 
 #[cfg(test)]
-pub use test_util::{font_lock, FontGuard};
+pub use test_util::theme_lock;
 
 /// 档位系数：小 ×1.0（当前基准）、中 ×1.15、大 ×1.3
 fn font_scale() -> f32 {
@@ -73,16 +77,24 @@ fn font_scale() -> f32 {
         _ => 1.0,
     }
 }
+/// 字号档位系数的公开入口：个别随字号缩放的布局量（如标签列宽）取值用
+pub fn font_scale_pub() -> f32 {
+    font_scale()
+}
 
 pub fn font_sm() -> Pixels {
     px(12.0 * font_scale())
 }
 pub fn font_md() -> Pixels {
-    px(13.5 * font_scale())
+    px(FONT_MD_BASE * font_scale())
 }
 pub fn font_body() -> Pixels {
-    px(14.0 * font_scale())
+    px(FONT_BODY_BASE * font_scale())
 }
+/// 基准字号常量（未乘档位系数）：TextField 等保留实体存基准值、
+/// 渲染时乘 font_scale_pub() 现算——字号设置变更作用于已存在的输入框
+pub const FONT_MD_BASE: f32 = 13.5;
+pub const FONT_BODY_BASE: f32 = 14.0;
 /// 品牌名等需要强调的展示型文字
 pub fn font_xl() -> Pixels {
     px(20.0 * font_scale())
@@ -112,73 +124,49 @@ pub const BTN_LG: f32 = 36.0;
 pub const CONTROL_H: f32 = 26.0;
 /// 表单行标准高度（≥ 控件高，留少量呼吸空间）
 pub const ROW_H: f32 = 30.0;
-#[allow(dead_code)]
 /// 表格表头行高（orders/assets 表头统一）
 pub const TH_H: f32 = 22.0;
-#[allow(dead_code)]
 /// 表格数据行高（orders/assets 数据行统一）
 pub const TABLE_ROW_H: f32 = 28.0;
-#[allow(dead_code)]
 /// 顶部导航栏总高（弹层锚、盘口高度预算共同引用）
 pub const TOPBAR_H: f32 = 36.0;
 
 // ---------- 间距 token ----------
 /// 全应用间距只走 6 档（2/4/6/8/12/16）；离档值（3/10/14）一律就近归档。
 /// 仅用于 padding/gap/margin 等布局间隙；图标尺寸、绘制坐标等几何量不适用
-// （Commit 2 接线全部调用点后移除该 allow）
-#[allow(dead_code)]
 pub const SPACE_XS: f32 = 2.0;
-#[allow(dead_code)]
 /// 小间隙：徽标内边距、微分隔
 pub const SPACE_SM: f32 = 4.0;
-#[allow(dead_code)]
 /// 行内间隙：表单行、紧凑列表
 pub const SPACE_MD: f32 = 6.0;
-#[allow(dead_code)]
 /// 面板标准内边距 / 组件标准间隙
 pub const SPACE_LG: f32 = 8.0;
-#[allow(dead_code)]
 /// 卡片/弹窗内边距、区块间隙
 pub const SPACE_XL: f32 = 12.0;
-#[allow(dead_code)]
 /// 页面级留白 / 浮层与窗口边缘距离
 pub const SPACE_XXL: f32 = 16.0;
 
 // ---------- faded() 透明度档 ----------
-// （Commit 2/3/4 接线全部调用点后移除该 allow）
-#[allow(dead_code)]
 /// 边框/分隔线统一淡化档（0.6 的零散用法并入此档）
 pub const FADE_BORDER: f32 = 0.7;
-#[allow(dead_code)]
-/// 淡填充档：页签选中底、图标底
-pub const TINT_FILL: f32 = 0.16;
-#[allow(dead_code)]
+/// accent 选中态填充叠加率：pill 页签选中底色。0.16 时 LIGHT 上 accent
+/// 文字对叠加底只有 4.31:1，降到 0.10 后 4.68:1（DARK 同步 6.57:1）
+pub const TINT_FILL: f32 = 0.10;
 /// 柔和填充档：徽标底、输入焦点环
 pub const TINT_SOFT: f32 = 0.22;
-#[allow(dead_code)]
 /// 表格斑马纹档（叠 text 色）
 pub const TINT_ZEBRA: f32 = 0.035;
-#[allow(dead_code)]
 /// 模态遮罩透明度：浅色主题（纸面底、遮罩轻）
 pub const BACKDROP_A_LIGHT: f32 = 0.27;
-#[allow(dead_code)]
 /// 模态遮罩透明度：深色主题
 pub const BACKDROP_A_DARK: f32 = 0.47;
 
-/// 边框淡化取色（分隔线/卡片描边统一入口）
-#[allow(dead_code)]
-pub fn border_fade(cx: &App) -> Hsla {
-    faded(c(cx).border, FADE_BORDER)
-}
-
 /// 表格斑马纹取色（orders/assets 奇数行底色）
-#[allow(dead_code)]
-pub fn zebra(cx: &App) -> Hsla {
-    faded(c(cx).text, TINT_ZEBRA)
+pub fn zebra() -> Hsla {
+    faded(cur().text, TINT_ZEBRA)
 }
 
 /// 模态遮罩取色（纯黑，透明度按明暗主题分档；签名带 cx 与其它取色入口一致）
-#[allow(dead_code)]
 pub fn backdrop(_cx: &App) -> Hsla {
     let a = if is_light() {
         BACKDROP_A_LIGHT
@@ -256,6 +244,14 @@ pub struct Theme {
     pub row_hover: Rgba,
     /// 大按钮未选中态底色（买/卖切换、页签等）
     pub btn_idle: Rgba,
+    /// 徽标前景专用变体：badge 的底色是同色 0.22 叠加半透明层，基础色板
+    /// 值直接当文字用对比度只有 3.6~4.5:1；这组值按"自身 0.22 叠加到
+    /// 全部上下文底色（bg/panel/panel2/card）的最差情况 ≥4.5:1"校准，
+    /// 与基础色的色相一致，仅明度偏差——徽标内文字请一律取这里
+    pub badge_up: Rgba,
+    pub badge_down: Rgba,
+    pub badge_accent: Rgba,
+    pub badge_warn: Rgba,
     /// 涨/跌等彩色填充（买卖按钮、最新价标签）上的前景文字
     pub on_fill: Rgba,
     /// 金色 accent 填充（主按钮）上的前景文字
@@ -293,6 +289,12 @@ pub const DARK: Theme = Theme {
     // down 提亮后深字同步加深补偿：对 up 9.3:1、对 down 6.6:1
     on_fill: rgb_const(0x030c08),
     on_accent: rgb_const(0x1c1602),
+    // 徽标变体：基础值在 0.22 自色叠加底上最差 3.57:1（down）；
+    // up/warn 提亮 12%、down 提亮 40% 后全上下文最差 ≥4.66:1（accent 原值已达标）
+    badge_up: rgb_const(0x2bd190),
+    badge_down: rgb_const(0xfd9eab),
+    badge_accent: rgb_const(0xf0b90b),
+    badge_warn: rgb_const(0xf2ab49),
 };
 
 pub const LIGHT: Theme = Theme {
@@ -334,47 +336,24 @@ pub const LIGHT: Theme = Theme {
     on_fill: rgb_const(0xffffff),
     // accent 加深后深色字对比度跌至 3.1:1，改白色（accent #846100 上 5.7:1）
     on_accent: rgb_const(0xffffff),
+    // 徽标变体：基础值在 0.22 自色叠加底上最差 3.92:1（accent）；
+    // 全部加深 18~20% 后全上下文（bg/panel/card）最差 ≥4.65:1
+    badge_up: rgb_const(0x025d39),
+    badge_down: rgb_const(0x952535),
+    badge_accent: rgb_const(0x6a4e00),
+    badge_warn: rgb_const(0x704a07),
 };
 
-// ---------- 全局主题（gpui::Global） ----------
+// ---------- 主题状态与取色入口 ----------
 
-/// UI 全局主题：渲染时经 `cx.global::<UiTheme>()` 取当前色板。
-/// 字段含 price_dir 翻转后的 cur() 语义（up/down 已按涨跌方向互换），
-/// 组件侧无需再关心方向配置
-pub struct UiTheme {
-    /// 当前色板（up/down 已按红涨绿跌配置翻转）
-    pub t: Theme,
-    /// 浅色主题标记（MA 配色等按主题取变体的场合用）
-    pub light: bool,
+/// 组件取色入口：当前主题色板（up/down 已按方向翻转）。
+/// Theme 是 Copy 值，直接由静态 MODE/PRICE_DIR 现算——单一事实源，
+/// 任何配置变更下一帧自动生效，无需快照/刷新机制
+pub fn c(_cx: &App) -> Theme {
+    cur()
 }
 
-impl gpui::Global for UiTheme {}
-
-impl UiTheme {
-    /// 由配置字符串初始化全局主题（mode: "light"/"dark"；price_dir: "red_up"/...）
-    pub fn install(cx: &mut App, mode_str: &str, price_dir_str: &str) {
-        set_mode_str(mode_str);
-        set_price_dir_str(price_dir_str);
-        cx.set_global(UiTheme {
-            t: cur(),
-            light: is_light(),
-        });
-    }
-
-    /// 主题或方向配置变更后调用：重算色板并写回全局
-    pub fn refresh(&mut self) {
-        self.t = cur();
-        self.light = is_light();
-    }
-}
-
-/// 组件取色入口：当前主题色板（up/down 已按方向翻转）
-pub fn c(cx: &App) -> &Theme {
-    // 全局在启动时 install，未安装属于编程错误
-    &cx.global::<UiTheme>().t
-}
-
-// ---------- 静态模式/方向存储（配置写档用，渲染走 UiTheme 全局） ----------
+// ---------- 静态模式/方向存储 ----------
 
 static MODE: AtomicU8 = AtomicU8::new(0);
 pub const DARK_MODE: u8 = 0;
@@ -588,10 +567,11 @@ pub const FONT_MONO: &str = "Cascadia Code";
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::test_util::theme_lock;
 
     #[test]
     fn font_scale_tokens_track_font_step() {
-        let _g = font_lock();
+        let _g = theme_lock();
         set_font_size_str("small");
         assert_eq!(font_body(), px(14.0));
         set_font_size_str("large");
@@ -600,12 +580,38 @@ mod tests {
 
     #[test]
     fn cur_flips_up_down_on_red_up() {
+        let _lock = theme_lock();
         let green = cur();
         set_price_dir_str("red_up");
         let red = cur();
         assert_eq!(green.up, red.down);
         assert_eq!(green.down, red.up);
         set_price_dir_str("green_up");
+    }
+
+    #[test]
+    fn theme_statics_default_and_restore() {
+        // 默认基线：dark + green_up。写过后由 theme_lock 恢复，
+        // 保证并行用例不被污染
+        let _lock = theme_lock();
+        set_mode_str("light");
+        set_price_dir_str("red_up");
+        assert!(is_light());
+        assert_eq!(mode(), LIGHT_MODE);
+        assert_eq!(PRICE_DIR.load(Ordering::Relaxed), DIR_RED_UP);
+        drop(_lock);
+        assert_eq!(mode(), DARK_MODE);
+        assert_eq!(PRICE_DIR.load(Ordering::Relaxed), DIR_GREEN_UP);
+    }
+
+    #[test]
+    fn setter_str_falls_back_to_default_on_unknown() {
+        // 未知字符串回落默认（配置文件手改损坏时不会 panic）
+        let _lock = theme_lock();
+        set_mode_str("bogus");
+        set_price_dir_str("bogus");
+        assert_eq!(mode(), DARK_MODE);
+        assert_eq!(PRICE_DIR.load(Ordering::Relaxed), DIR_GREEN_UP);
     }
 
     #[test]
@@ -624,27 +630,22 @@ mod tests {
         assert!((f.a - 0.5).abs() < 1e-3);
     }
 
-    #[test]
-    fn backdrop_alpha_per_theme_mode() {
-        // 遮罩透明度按明暗主题分档：浅色轻遮罩、深色重遮罩
+    #[gpui::test]
+    fn backdrop_alpha_per_theme_mode(cx: &mut App) {
+        // 遮罩透明度按明暗主题分档：浅色轻遮罩、深色重遮罩。
+        // 直接走真实 backdrop()（签名带 cx），不重写内部逻辑——
+        // 否则实现漂移时测试仍然全绿
+        let _lock = theme_lock();
         set_mode_str("light");
-        let light = backdrop_raw();
+        let light = backdrop(cx);
         set_mode_str("dark");
-        let dark = backdrop_raw();
-        assert!((light - BACKDROP_A_LIGHT).abs() < 1e-3);
-        assert!((dark - BACKDROP_A_DARK).abs() < 1e-3);
-        assert!(dark > light);
-        set_mode_str("light");
-    }
-
-    /// backdrop() 需要 App 才能调用（与其它取色入口签名一致），
-    /// 测试直接取同一实现的核心逻辑
-    fn backdrop_raw() -> f32 {
-        if is_light() {
-            BACKDROP_A_LIGHT
-        } else {
-            BACKDROP_A_DARK
-        }
+        let dark = backdrop(cx);
+        assert!((light.a - BACKDROP_A_LIGHT).abs() < 1e-3);
+        assert!((dark.a - BACKDROP_A_DARK).abs() < 1e-3);
+        assert!(dark.a > light.a);
+        // 纯黑遮罩
+        assert_eq!((light.l, light.s), (0.0, 0.0));
+        set_mode_str("dark");
     }
 
     #[test]
@@ -671,7 +672,7 @@ mod tests {
 
     #[test]
     fn font_caption_scales_with_step() {
-        let _g = font_lock();
+        let _g = theme_lock();
         set_font_size_str("small");
         assert_eq!(font_caption(), px(11.0));
         set_font_size_str("medium");

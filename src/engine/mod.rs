@@ -393,9 +393,15 @@ fn repaint(ctx: &WakeTx) {
     let _ = ctx.send(());
 }
 
-fn toast_err(state: &SharedState, e: &BinanceError) {
-    tracing::warn!("REST 错误: {e}");
-    state.push_toast(ToastKind::Err, e.friendly());
+/// REST 失败的统一出口：日志带操作上下文（便于从日志定位是哪一步失败），
+/// toast 前缀同样带上下文（用户同时操作多个面板时错误能对号入座）。
+/// push_toast 已对相邻同文去重，同一错误连续触发不会刷屏
+fn toast_err(ctx: &'static str, state: &SharedState, e: &BinanceError) {
+    tracing::warn!("{ctx}: {e}");
+    state.push_toast(
+        ToastKind::Err,
+        format!("{}: {}", crate::i18n::tr(ctx), e.friendly()),
+    );
 }
 
 // ---------------- 资金流水归一化助手（纯函数，便于测试） ----------------
@@ -648,7 +654,7 @@ async fn ensure_client(c: &mut CmdCtx) {
             c.built_for = (cfgv, credsv);
         }
         Err(e) => {
-            toast_err(&c.state, &e);
+            toast_err("REST 客户端初始化失败", &c.state, &e);
         }
     }
 }
@@ -963,6 +969,9 @@ async fn handle_cmd(
                         // REST 快照失败，用户数据流可能仍然健康
                         state.acct.lock().spot_err = Some(e.friendly());
                         if !matches!(e, BinanceError::NoCreds) {
+                            // 定时刷新失败也必须落日志：toast 是瞬时提示，
+                            // 账户快照停在旧值时日志是唯一的排查线索
+                            tracing::warn!("现货账户刷新失败: {e}");
                             state.push_toast(
                                 ToastKind::Err,
                                 format!("{}{}", crate::i18n::tr("现货账户: "), e.friendly()),
@@ -1023,6 +1032,8 @@ async fn handle_cmd(
                         ok = false;
                         fut_err = Some(e.friendly());
                         if !matches!(e, BinanceError::NoCreds) {
+                            // 同现货：定时刷新失败落日志，供事后排查
+                            tracing::warn!("合约账户刷新失败: {e}");
                             state.push_toast(
                                 ToastKind::Err,
                                 format!("{}{}", crate::i18n::tr("合约账户: "), e.friendly()),
@@ -1511,7 +1522,7 @@ async fn handle_cmd(
                     );
                     engine_tx.send(Command::RefreshAccount).ok();
                 }
-                Err(e) => toast_err(&state, &e),
+                Err(e) => toast_err("调整杠杆失败", &state, &e),
             }
             repaint(ctx);
         }
@@ -1559,7 +1570,7 @@ async fn handle_cmd(
                         crate::i18n::tr("保证金模式无需修改").to_string(),
                     );
                 }
-                Err(e) => toast_err(&state, &e),
+                Err(e) => toast_err("切换保证金模式失败", &state, &e),
             }
             repaint(ctx);
         }
@@ -1591,7 +1602,7 @@ async fn handle_cmd(
                     state.push_toast(ToastKind::Ok, crate::i18n::tr("持仓模式已切换").to_string());
                     engine_tx.send(Command::RefreshAccount).ok();
                 }
-                Err(e) => toast_err(&state, &e),
+                Err(e) => toast_err("切换持仓模式失败", &state, &e),
             }
             repaint(ctx);
         }
@@ -1812,7 +1823,7 @@ async fn place_order(
             engine_tx.send(Command::RefreshAccount).ok();
         }
         Err(e) => {
-            toast_err(state, &e);
+            toast_err("下单失败", state, &e);
             // 超时等场景下订单可能已被交易所接受：立即对账，
             // 避免用户看不到第一笔委托而重复下单
             engine_tx.send(Command::RefreshOpenOrders { market }).ok();
@@ -1857,7 +1868,7 @@ async fn cancel_order(
             );
             engine_tx.send(Command::RefreshOpenOrders { market }).ok();
         }
-        Err(e) => toast_err(state, &e),
+        Err(e) => toast_err("撤销委托失败", state, &e),
     }
 }
 
@@ -1897,7 +1908,7 @@ async fn cancel_algo_order(
                 })
                 .ok();
         }
-        Err(e) => toast_err(state, &e),
+        Err(e) => toast_err("撤销条件单失败", state, &e),
     }
 }
 
@@ -1984,7 +1995,7 @@ async fn place_oco(
                 .ok();
         }
         Err(e) => {
-            toast_err(state, &e);
+            toast_err("OCO 下单失败", state, &e);
             engine_tx
                 .send(Command::RefreshOpenOrders {
                     market: Market::Spot,
@@ -2238,7 +2249,7 @@ async fn cancel_all_orders(
             state.push_toast(ToastKind::Ok, msg);
             engine_tx.send(Command::RefreshOpenOrders { market }).ok();
         }
-        Err(e) => toast_err(state, &e),
+        Err(e) => toast_err("批量撤销失败", state, &e),
     }
 }
 

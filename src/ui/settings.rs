@@ -46,7 +46,7 @@ impl SettingsFields {
                 f.set_id(id)
                     .set_numeric(numeric)
                     .set_placeholder(ph)
-                    .set_font_size(font_md());
+                    .set_font_size(crate::ui::theme::FONT_MD_BASE);
                 f
             })
         };
@@ -65,15 +65,10 @@ impl SettingsFields {
     /// 挂接写回回调（BnApp::new 里实体创建后调用：回调需要 WeakEntity 句柄）。
     /// 数字框解析失败不写草稿（草稿保持上一个合法值）
     pub fn attach(&mut self, weak: &gpui::WeakEntity<BnApp>, cx: &mut Context<BnApp>) {
+        use crate::ui::textfield::bind_on_change;
         macro_rules! bind {
             ($e:expr, $set:expr) => {
-                $e.update(cx, |tf, _| {
-                    let weak = weak.clone();
-                    tf.set_on_change(Box::new(move |s, _, cx| {
-                        let s = s.to_string();
-                        let _ = weak.update(cx, |app: &mut BnApp, _| $set(app, s));
-                    }));
-                });
+                bind_on_change(&$e, weak, $set, cx);
             };
         }
         bind!(self.proxy_url, |app: &mut BnApp, v: String| app.settings.proxy_url = v);
@@ -104,25 +99,17 @@ impl SettingsFields {
             .override_fut_ws = v);
     }
 
-    /// 外部变更回灌：文本不同才 set（正在输入的框两侧已一致，不会重置光标）
-    fn sync(e: &Entity<TextField>, val: String, cx: &mut Context<BnApp>) {
-        e.update(cx, |f, _| {
-            if f.text() != val {
-                f.set_text(val);
-            }
-        });
-    }
-
     pub fn sync_all(&self, app: &BnApp, cx: &mut Context<BnApp>) {
+        use crate::ui::textfield::sync_text;
         let d = &app.settings;
-        Self::sync(&self.proxy_url, d.proxy_url.clone(), cx);
-        Self::sync(&self.default_symbol, d.default_symbol.clone(), cx);
-        Self::sync(&self.recv_window, d.recv_window_ms.to_string(), cx);
-        Self::sync(&self.http_timeout, d.http_timeout_secs.to_string(), cx);
-        Self::sync(&self.ov_spot_rest, d.override_spot_rest.clone(), cx);
-        Self::sync(&self.ov_spot_ws, d.override_spot_ws.clone(), cx);
-        Self::sync(&self.ov_fut_rest, d.override_fut_rest.clone(), cx);
-        Self::sync(&self.ov_fut_ws, d.override_fut_ws.clone(), cx);
+        sync_text(&self.proxy_url, &d.proxy_url, cx);
+        sync_text(&self.default_symbol, &d.default_symbol, cx);
+        sync_text(&self.recv_window, &d.recv_window_ms.to_string(), cx);
+        sync_text(&self.http_timeout, &d.http_timeout_secs.to_string(), cx);
+        sync_text(&self.ov_spot_rest, &d.override_spot_rest, cx);
+        sync_text(&self.ov_spot_ws, &d.override_spot_ws, cx);
+        sync_text(&self.ov_fut_rest, &d.override_fut_rest, cx);
+        sync_text(&self.ov_fut_ws, &d.override_fut_ws, cx);
     }
 }
 
@@ -221,14 +208,6 @@ fn set_row(label: &'static str) -> gpui::Div {
         .child(widgets::row_label(tr(label), 108.0))
 }
 
-/// 行尾英文/补充小字（跟在标签后的辅助说明）
-fn sub_hint(text: &'static str) -> Div {
-    div()
-        .text_size(font_sm())
-        .text_color(cur().text_dim)
-        .child(tr(text))
-}
-
 /// 应用：草稿 → 配置 + 重连（原 egui 版语义逐行迁移）
 fn apply_settings(app: &mut BnApp) {
     let state = Arc::clone(&app.state);
@@ -308,7 +287,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             .child(div().flex_1())
             .child(widgets::badge(
                 if testnet { "TESTNET" } else { tr("实盘 · 真实资金") },
-                if testnet { t.accent } else { t.err },
+                if testnet { t.badge_accent } else { t.badge_down },
             )),
     );
     if testnet {
@@ -371,10 +350,8 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         &app.settings.font_size,
         |app: &mut BnApp, v: &str| {
             app.settings.font_size = v.to_string();
-            let mut cfg = app.state.cfg.read().clone();
-            cfg.font_size = v.to_string();
-            *app.state.cfg.write() = cfg;
-            app.state.send_cmd(Command::PersistConfig);
+            app.state
+                .patch_cfg_persist(|cfg| cfg.font_size = v.to_string());
         },
     );
     let theme_mode = app.settings.theme_mode.clone();
@@ -385,8 +362,8 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         &theme_mode,
         |app: &mut BnApp, v: &str| app.settings.theme_mode = v.to_string(),
     );
-    // 涨跌方向：仅改全局色表（signed_color/up_color/down_color 即时翻转），
-    // 不涉及字体/Style，无需重新 apply
+    // 涨跌方向：取色全部由 theme::cur() 现算，set_price_dir_str 后下一帧
+    // 自动生效，无需任何刷新步骤
     let dir_current = theme::PriceDir::from_cfg(&app.settings.price_dir);
     let price_pills = pills(
         cx,
@@ -400,10 +377,8 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             app.settings.price_dir = v.to_string();
             theme::set_price_dir_str(v);
             // 同步进运行时配置：顶栏/盘口等直接读 theme::up_color 的区域立即生效
-            let mut cfg = app.state.cfg.read().clone();
-            cfg.price_dir = v.to_string();
-            *app.state.cfg.write() = cfg;
-            app.state.send_cmd(Command::PersistConfig);
+            app.state
+                .patch_cfg_persist(|cfg| cfg.price_dir = v.to_string());
         },
     );
     let look_body = div()
@@ -419,7 +394,6 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         widgets::card_with_header(tr("语言与主题"), None, look_body.into_any_element());
 
     // ---------- 参数 ----------
-    let recv_hint_zh = crate::i18n::lang() == crate::i18n::ZH;
     let log_current = app.settings.log_level.clone();
     let log_pills = pills(
         cx,
@@ -463,9 +437,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .gap(px(theme::SPACE_MD))
         // 接收窗口：仅中文界面补英文小字说明
         .child(
-            set_row("接收窗口")
-                .when(recv_hint_zh, |r| r.child(sub_hint("recvWindow")))
-                .child(field_box(&app.settings_fields.recv_window, 72.0)),
+            set_row("接收窗口").child(field_box(&app.settings_fields.recv_window, 72.0)),
         )
         .child(
             set_row("HTTP 超时").child(field_box(&app.settings_fields.http_timeout, 64.0)),
@@ -503,7 +475,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     // 自定义端点会把携带 API Key 的请求重定向到任意主机，必须显式可见
     let ep_right: Option<gpui::AnyElement> = if overridden {
         Some(
-            widgets::badge(tr("自定义端点已启用"), cur().warn).into_any_element(),
+            widgets::badge(tr("自定义端点已启用"), cur().badge_warn).into_any_element(),
         )
     } else {
         None
@@ -537,7 +509,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                     } else {
                         tr("未配置（仅公开行情）")
                     },
-                    if has_creds { cur().up } else { cur().warn },
+                    if has_creds { cur().badge_up } else { cur().badge_warn },
                 ))
                 .child(
                     widgets::btn_default(
@@ -551,6 +523,9 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                         app.api_secret.clear();
                         app.api_key_field.update(cx, |f, _| f.set_text(""));
                         app.api_secret_field.update(cx, |f, _| f.set_text(""));
+                        // 主密码框必须一并清空：残留明文会在表单里预填回显，
+                        // "验证已有主密码"一步被陈旧状态满足
+                        app.pw1_field.update(cx, |f, _| f.set_text(""));
                         app.phase = Phase::EnterKeys;
                         cx.notify();
                     })),

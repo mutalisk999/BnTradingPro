@@ -80,7 +80,7 @@ fn tr_row(idx: usize, cells: Vec<Div>) -> Div {
         .flex()
         .flex_row()
         .items_center()
-        .when(idx % 2 == 1, |d| d.bg(faded(t.text, 0.035)))
+        .when(idx % 2 == 1, |d| d.bg(theme::zebra()))
         // 与 orders.rs 表格同语义：指针所在行整行点亮
         .hover(|s| s.bg(t.row_hover))
         .children(cells)
@@ -217,7 +217,7 @@ fn spot_section(state: &Arc<SharedState>, cx: &mut Context<BnApp>) -> Div {
         .child(
             widgets::card_header(tr("现货资产"))
                 .when(!can_trade, |h| {
-                    h.child(widgets::badge(tr("该 Key 无交易权限"), cur().warn))
+                    h.child(widgets::badge(tr("该 Key 无交易权限"), cur().badge_warn))
                 })
                 .when(!nonzero.is_empty(), |h| {
                     h.child(widgets::card_label(format!(

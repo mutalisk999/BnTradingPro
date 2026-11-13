@@ -33,7 +33,9 @@ gpui::actions!(bn, [Buy, Sell, CancelAllShortcut]);
 const SIDE_W: f32 = 190.0;
 const SIDE_W_MIN: f32 = 190.0;
 const SIDE_W_MAX: f32 = 240.0;
-const BOOK_W: f32 = 230.0;
+// 盘口/成交面板默认宽：默认字号下成交明细需完整显示 HH:MM:SS（时间列
+// 降级阈值 ≈230.4px，取 240 留出余量，秒位不因 1px 之差被省略）
+const BOOK_W: f32 = 240.0;
 const BOOK_W_MIN: f32 = 180.0;
 const BOOK_W_MAX: f32 = 340.0;
 const TRADE_W: f32 = 300.0;
@@ -446,7 +448,7 @@ impl BnApp {
             let mk_field = |cx: &mut Context<Self>, id: &'static str| {
                 cx.new(|cx_tf| {
                     let mut f = TextField::new(cx_tf);
-                    f.set_id(id).set_masked(true).set_font_size(theme::font_body());
+                    f.set_id(id).set_masked(true).set_font_size(theme::FONT_BODY_BASE);
                     f
                 })
             };
@@ -459,7 +461,7 @@ impl BnApp {
                 let mut f = TextField::new(cx_tf);
                 f.set_id("symbol_search")
                     .set_placeholder(crate::i18n::tr("搜索交易对…"))
-                    .set_font_size(theme::font_body());
+                    .set_font_size(theme::FONT_BODY_BASE);
                 f
             });
             // 下单表单输入框：数字过滤 + 占位（8 个框统一在 TradeFields 里构建）
@@ -468,7 +470,7 @@ impl BnApp {
             let mk_tpsl_field = |cx: &mut Context<Self>, id: &'static str| {
                 cx.new(|cx_tf| {
                     let mut f = TextField::new(cx_tf);
-                    f.set_id(id).set_numeric(true).set_font_size(theme::font_md());
+                    f.set_id(id).set_numeric(true).set_font_size(theme::FONT_MD_BASE);
                     f
                 })
             };
@@ -481,14 +483,26 @@ impl BnApp {
                 f.set_id("alert_price")
                     .set_numeric(true)
                     .set_placeholder(crate::i18n::tr("目标价"))
-                    .set_font_size(theme::font_md());
+                    .set_font_size(theme::FONT_MD_BASE);
                 f
             });
 
-            // 唤醒任务：tokio 通道的 waker 唤醒 GPUI 主线程上的 async 任务，
-            // 延迟与旧版 request_repaint 相当
+            // 唤醒任务：tokio 通道的 waker 唤醒 GPUI 主线程上的 async 任务。
+            // 必须合并：行情活跃时 WS 消息可达数百条/秒，逐条 notify 会让整树
+            // 按 vsync 频率全量重建（egui 版 request_repaint_after(100ms) 的
+            // 合并语义）——首条唤醒后先排空通道再统一 notify 一次，最小间隔
+            // 对齐 REPAINT_QUOTE；尾随帧由心跳任务兜底
             cx.spawn(async move |this, cx| {
-                while wake_rx.recv().await.is_some() {
+                loop {
+                    if wake_rx.recv().await.is_none() {
+                        break;
+                    }
+                    // 排空积压唤醒 + 限流到 10fps：期间新到的唤醒一并消化
+                    // （GPUI 主线程 async 无 tokio reactor，必须用背景执行器计时）
+                    cx.background_executor()
+                        .timer(Duration::from_millis(theme::REPAINT_QUOTE))
+                        .await;
+                    while wake_rx.try_recv().is_ok() {}
                     let _: Result<(), _> = this.update(cx, |_, cx| cx.notify());
                 }
             })
@@ -588,7 +602,7 @@ impl BnApp {
                         .update(cx, |app: &mut BnApp, cx| {
                             app.pw1 =
                                 Zeroizing::new(app.pw1_field.read(cx).text().to_string());
-                            unlock::try_unlock(app);
+                            unlock::try_unlock(app, cx);
                             app.phase == Phase::Main
                         })
                         .unwrap_or(false);
@@ -610,6 +624,7 @@ impl BnApp {
                             if can_save {
                                 unlock::save_keys(
                                     app,
+                                    cx,
                                     config::data_dir(),
                                     vault::vault_exists(config::data_dir()),
                                 );
@@ -745,8 +760,7 @@ impl BnApp {
         if targets.is_empty() {
             return;
         }
-        {
-            let mut cfg = self.state.cfg.write();
+        self.state.patch_cfg_persist(|cfg| {
             for (market, symbol, price, above) in &targets {
                 cfg.alerts.retain(|a| {
                     !(a.market == *market
@@ -755,8 +769,7 @@ impl BnApp {
                         && a.above == *above)
                 });
             }
-        }
-        self.state.send_cmd(crate::engine::Command::PersistConfig);
+        });
         for (_market, symbol, price, above) in targets {
             let dir = if above { "≥" } else { "≤" };
             self.state.push_toast(
@@ -804,8 +817,7 @@ impl BnApp {
             return;
         };
         let above = price >= last;
-        {
-            let mut cfg = self.state.cfg.write();
+        self.state.patch_cfg_persist(|cfg| {
             cfg.alerts
                 .retain(|a| !(a.market == market as u8 && a.symbol == symbol && a.price == price));
             cfg.alerts.push(crate::config::AlertConfig {
@@ -814,8 +826,7 @@ impl BnApp {
                 price,
                 above,
             });
-        }
-        self.state.send_cmd(crate::engine::Command::PersistConfig);
+        });
         self.alert_input.clear();
         let dir = if above { "≥" } else { "≤" };
         self.state.push_toast(
@@ -832,8 +843,11 @@ impl BnApp {
 
     /// 删除一条预警（按下标）
     pub fn remove_alert(&mut self, idx: usize) {
-        let removed = self.state.cfg.write().alerts.remove(idx);
-        self.state.send_cmd(crate::engine::Command::PersistConfig);
+        let removed = self.state.cfg.read().alerts[idx].clone();
+        self.state
+            .patch_cfg_persist(|cfg| {
+                cfg.alerts.remove(idx);
+            });
         self.state.push_toast(
             crate::engine::state::ToastKind::Info,
             format!(
@@ -964,7 +978,8 @@ impl BnApp {
     // ---------- 渲染 ----------
 
     /// 配置即时生效块：主题/语言/字号在渲染帧跟随配置变更应用
-    fn apply_cfg_changes(&mut self, cx: &mut Context<Self>) {
+    /// （取色全部由 theme::cur() 现算，这里只同步静态原子，无需 cx）
+    fn apply_cfg_changes(&mut self, _cx: &mut Context<Self>) {
         let (theme_mode, lang, font_size) = {
             let cfg = self.state.cfg.read();
             (
@@ -975,7 +990,6 @@ impl BnApp {
         };
         if self.applied_theme != theme_mode {
             theme::set_mode_str(&theme_mode);
-            cx.global_mut::<theme::UiTheme>().refresh();
             self.applied_theme = theme_mode;
         }
         if self.applied_lang != lang {
@@ -1026,7 +1040,7 @@ impl BnApp {
     /// 右侧簇内容超宽时由顶栏 overflow 遮挡裁剪——大字号 + 窄窗口下宁可
     /// 裁掉右侧指示，也不让它们压到左侧页签文字
     fn topbar(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         let mut bar = div()
             .flex()
             .items_center()
@@ -1162,38 +1176,39 @@ impl BnApp {
     /// 主题快捷切换：改配置 + 刷新全局主题 + 同步设置草稿（否则设置页
     /// 「保存并重连」会用旧草稿把切换回滚）+ 落盘走引擎命令
     fn toggle_theme(&mut self, cx: &mut Context<Self>) {
-        let mut cfg = self.state.cfg.read().clone();
-        cfg.theme_mode = if cfg.theme_mode == "light" {
-            "dark".into()
-        } else {
-            "light".into()
-        };
-        theme::set_mode_str(&cfg.theme_mode);
-        cx.global_mut::<theme::UiTheme>().refresh();
-        self.applied_theme = cfg.theme_mode.clone();
-        self.settings.theme_mode = cfg.theme_mode.clone();
-        *self.state.cfg.write() = cfg;
-        self.state.send_cmd(Command::PersistConfig);
+        let mut new_mode = String::new();
+        self.state.patch_cfg_persist(|cfg| {
+            cfg.theme_mode = if cfg.theme_mode == "light" {
+                "dark".into()
+            } else {
+                "light".into()
+            };
+            new_mode = cfg.theme_mode.clone();
+        });
+        theme::set_mode_str(&new_mode);
+        self.applied_theme = new_mode.clone();
+        self.settings.theme_mode = new_mode;
         cx.notify();
     }
 
     /// 语言快捷切换（按钮显示目标语言）：同主题的同步纪律
     fn toggle_lang(&mut self, cx: &mut Context<Self>) {
-        let mut cfg = self.state.cfg.read().clone();
-        cfg.lang = if cfg.lang == "en" {
-            "zh".into()
-        } else {
-            "en".into()
-        };
-        crate::i18n::set_lang(if cfg.lang == "en" {
+        let mut new_lang = String::new();
+        self.state.patch_cfg_persist(|cfg| {
+            cfg.lang = if cfg.lang == "en" {
+                "zh".into()
+            } else {
+                "en".into()
+            };
+            new_lang = cfg.lang.clone();
+        });
+        crate::i18n::set_lang(if new_lang == "en" {
             crate::i18n::EN
         } else {
             crate::i18n::ZH
         });
-        self.applied_lang = cfg.lang.clone();
-        self.settings.lang = cfg.lang.clone();
-        *self.state.cfg.write() = cfg;
-        self.state.send_cmd(Command::PersistConfig);
+        self.applied_lang = new_lang.clone();
+        self.settings.lang = new_lang;
         cx.notify();
     }
 
@@ -1204,7 +1219,7 @@ impl BnApp {
     // 面板宽度用固定宽 + 自绘把手锁死：不用容器自适应（egui 版可调面板会把
     // 内容宽度持久化，页签来回切会越撑越宽）
     fn trading_ui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         let mut row = div().flex_1().flex().flex_row().overflow_hidden();
         row = row.child(self.sidebar(cx));
         // 图表最大化：盘口/下单/订单区全部隐藏，图表占满中央区
@@ -1235,7 +1250,7 @@ impl BnApp {
     /// 左侧交易对列表：展开态（收起钮 + 搜索框 + 列表 + 右缘把手）/
     /// 折叠态（36px 窄条只放展开钮）。过滤词在搜索框内，折叠不丢状态
     fn sidebar(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         if self.sidebar_expanded {
             let has_filter = !self.search_field.read(cx).text().trim().is_empty();
             let top_row = div()
@@ -1316,7 +1331,7 @@ impl BnApp {
     /// 盘口面板（左，全高）：一直显示到 UI 最下面，不被底部订单区挤上去。
     /// 内容（页签/盘口行/价差/档位胶囊、成交明细）在 market.rs 渲染
     fn book_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         // 盘口内容高度预算：视口高 − 顶栏（36 行高 + 1 下边框）− 面板上内边距 8
         // − 页签行 BTN_H − 页签下分隔线（1 + 上下 my 4）。档位数/行高在
         // market.rs 内据此现算（GPUI 布局前无法询问剩余空间）
@@ -1343,7 +1358,7 @@ impl BnApp {
     /// 右缘 36px 窄条「«」。表单状态都在 page 上，折叠不丢输入；
     /// 表单本体在里程碑 7 移植
     fn trade_panel(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         if self.trade_expanded {
             let symbol = self.page.symbol.clone();
             div()
@@ -1425,7 +1440,7 @@ impl BnApp {
     /// 底部订单区：子页签 + 表格区（M8）。从盘口右缘一直铺到窗口右缘，
     /// 持仓/挂单表格的列才放得下
     fn orders_panel(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         div()
             .relative()
             .h(px(self.orders_h))
@@ -1443,7 +1458,7 @@ impl BnApp {
 
     /// 交易页底部子页签：挂单 / 持仓+资金流水(合约) / 历史 / 成交
     fn sub_tabs(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         // 资金流水与持仓一样仅合约提供（现货无统一流水端点）：
         // 合约 = 挂单/持仓/历史/成交/流水，现货 = 挂单/历史/成交
         let mut tabs: Vec<(SubTab, &str)> = vec![
@@ -1487,9 +1502,51 @@ impl BnApp {
 
     // ---------- 快捷键 ----------
 
-    /// B/S：切换买卖侧并聚焦数量框（输入框聚焦时 TextField 消费按键，不会到这）
+    /// 是否有输入框聚焦：GPUI 0.2.2 的 action 分发先于 key listener（bubble
+    /// 阶段的 action 监听器运行前就置 propagate_event=false），TextField 的
+    /// stop_propagation 拦不住已分发的 action，因此 B/S/Ctrl+Shift+C 必须
+    /// 在 handler 里自行让位于输入框——egui 版 focused() 门控的对应物
+    fn text_field_focused(&self, window: &Window, cx: &App) -> bool {
+        // window.focused() 为 None 说明焦点在非输入元素上，直接判否
+        if window.focused(cx).is_none() {
+            return false;
+        }
+        let owned = [
+            &self.pw1_field,
+            &self.pw2_field,
+            &self.api_key_field,
+            &self.api_secret_field,
+            &self.search_field,
+            &self.tpsl_sl_field,
+            &self.tpsl_tp_field,
+            &self.alert_field,
+            &self.trade_fields.price,
+            &self.trade_fields.qty,
+            &self.trade_fields.trigger,
+            &self.trade_fields.stop_limit,
+            &self.trade_fields.callback_rate,
+            &self.trade_fields.tp,
+            &self.trade_fields.sl,
+            &self.trade_fields.leverage,
+            &self.settings_fields.proxy_url,
+            &self.settings_fields.default_symbol,
+            &self.settings_fields.recv_window,
+            &self.settings_fields.http_timeout,
+            &self.settings_fields.ov_spot_rest,
+            &self.settings_fields.ov_spot_ws,
+            &self.settings_fields.ov_fut_rest,
+            &self.settings_fields.ov_fut_ws,
+        ];
+        owned.iter().any(|f| f.read(cx).is_focused(window))
+    }
+
+    /// B/S：切换买卖侧并聚焦数量框（输入框聚焦时让位，见 text_field_focused）
     fn side_shortcut(&mut self, side: Side, window: &mut Window, cx: &mut Context<Self>) {
-        if self.phase == Phase::Main && self.tab.market().is_some() && self.confirm.is_none() {
+        if self.phase == Phase::Main
+            && self.tab.market().is_some()
+            && self.confirm.is_none()
+            && !self.text_field_focused(window, cx)
+        {
             self.page.form.side = side;
             self.trade_fields.qty.update(cx, |f, _| f.focus(window));
             cx.notify();
@@ -1498,11 +1555,12 @@ impl BnApp {
 
     /// Ctrl+Shift+C 两步全撤当前交易对：武装态按 (交易对, 4 秒窗口) 匹配，
     /// 换交易对或超时即视为首次按下重新武装，杜绝「多久之前误按一次后被
-    /// 补键撤销」
-    fn cancel_all_shortcut(&mut self, _cx: &mut Context<Self>) {
+    /// 补键撤销」。输入框聚焦时让位（见 text_field_focused）
+    fn cancel_all_shortcut(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.phase != Phase::Main
             || self.tab.market().is_none()
             || self.confirm.is_some()
+            || self.text_field_focused(window, cx)
             || !self.state.has_creds()
         {
             return;
@@ -1556,7 +1614,7 @@ impl Render for BnApp {
             self.initial_load_done = false;
         }
 
-        let t = *theme::c(cx);
+        let t = theme::c(cx);
         let body = match self.phase {
             Phase::Main => self.render_main(window, cx),
             _ => self.render_auth(window, cx),
@@ -1570,16 +1628,17 @@ impl Render for BnApp {
             .font_family(theme::FONT_UI)
             .bg(t.bg)
             .text_color(t.text)
-            // 快捷键：B/S 切换买卖侧、Ctrl+Shift+C 两步全撤（输入框聚焦时
-            // TextField 消费按键，动作不会从这里触发）
+            // 快捷键：B/S 切换买卖侧、Ctrl+Shift+C 两步全撤。GPUI 的 action
+            // 分发先于 TextField 的 key listener（无法靠 stop_propagation 拦截），
+            // 输入框聚焦时的让位在各 handler 内部判定（text_field_focused）
             .on_action(cx.listener(|app: &mut BnApp, _: &Buy, window, cx| {
                 app.side_shortcut(Side::Buy, window, cx);
             }))
             .on_action(cx.listener(|app: &mut BnApp, _: &Sell, window, cx| {
                 app.side_shortcut(Side::Sell, window, cx);
             }))
-            .on_action(cx.listener(|app: &mut BnApp, _: &CancelAllShortcut, _, cx| {
-                app.cancel_all_shortcut(cx);
+            .on_action(cx.listener(|app: &mut BnApp, _: &CancelAllShortcut, window, cx| {
+                app.cancel_all_shortcut(window, cx);
             }))
             // Esc：确认下单弹窗 / 持仓 TP/SL 弹窗 / 订单类型下拉 / 副图指标
             // 下拉 / 两步撤销武装态，逐层关闭解除。输入框聚焦时 TextField
@@ -1617,6 +1676,21 @@ impl Render for BnApp {
                     hit = true;
                 }
                 if hit {
+                    cx.notify();
+                }
+            }))
+            // Enter/空格 的安全默认：确认下单弹窗打开时二者一律取消（egui 版
+            // 语义——取消键默认聚焦走安全路径）。提交必须走鼠标点击提交键，
+            // 键盘的"顺手一按"永远不可能触发真实资金下单。输入框聚焦时
+            // TextField 已对 Enter/空格消费（不冒泡到这里），不冲突
+            .on_key_down(cx.listener(|app: &mut BnApp, e: &KeyDownEvent, _, cx| {
+                if e.keystroke.key != "enter" && e.keystroke.key != "space" {
+                    return;
+                }
+                // 注意确认弹窗结构：submit 是最后入队动作，弹窗内没有聚焦
+                // 输入框，且这里排在 action 分发之后（key listener 冒泡阶段），
+                // 不会再被其他路径吞掉
+                if app.confirm.take().is_some() {
                     cx.notify();
                 }
             }))
@@ -1711,6 +1785,9 @@ impl BnApp {
                 _ => Tab::Spot,
             })
             .unwrap_or(Tab::Spot);
+        // 激活留痕：日志里出现该行即代表本次运行是演示数据（截图与日志
+        // 归档时可辨识，避免假资产快照被误当真实账户状态分析）
+        tracing::info!("演示模式已激活 (BTP_DEMO=1, tab={tab:?})");
         self.tab = tab;
         // 市场页签必须与 set_tab 走同一套换出逻辑（page swap + market），
         // 否则 BTP_DEMO_TAB=futures 仍渲染现货页，无法复现期货布局

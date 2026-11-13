@@ -17,11 +17,10 @@
 //! （外部改价，如盘口点击填价）。双向一致性由"谁改谁通知"保证。
 
 use gpui::{
-    canvas, div, font, point, prelude::FluentBuilder, px, size, App, Bounds, ClipboardItem,
-    Context,
-    EntityInputHandler, FocusHandle, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString,
-    StatefulInteractiveElement, Styled, TextRun, UTF16Selection, Window,
+    canvas, div, font, point, prelude::FluentBuilder, px, size, App, AppContext, Bounds,
+    ClipboardItem, Context, Entity, EntityInputHandler, FocusHandle, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render,
+    SharedString, StatefulInteractiveElement, Styled, TextRun, UTF16Selection, Window,
 };
 use crate::ui::theme;
 use std::ops::Range;
@@ -35,11 +34,15 @@ pub struct TextField {
     sel_anchor: Option<usize>,
     focus: FocusHandle,
     id: SharedString,
-    placeholder: SharedString,
+    /// 占位文案的中文原文 key（渲染时经 tr() 现算——语言切换即时作用于
+    /// 已存在的输入框；空串 = 无占位）
+    placeholder_key: &'static str,
     masked: bool,
     numeric: bool,
     font_family: SharedString,
-    font_size: Pixels,
+    /// 基准字号（未乘字号档位系数）：渲染时乘 font_scale 现算，
+    /// 字号设置变更即时作用于已存在的输入框（egui 版每帧重建隐式实时）
+    font_base: f32,
     line_height: Pixels,
     /// 渲染期写入的文本颜色（shape/paint 用）
     paint_color: Hsla,
@@ -53,6 +56,35 @@ pub struct TextField {
 type TextChangeFn = dyn Fn(&str, &mut Window, &mut App);
 /// 提交回调（on_submit）：回车触发
 type SubmitFn = dyn Fn(&mut Window, &mut App);
+
+// ---------- 父视图绑定/回灌辅助（trade.rs / settings.rs 共用） ----------
+
+/// 把 `on_change` 写回回调挂到文本框实体：文本变更经 WeakEntity 写回父视图
+/// （`set` 闭包接收 app 与最新文本）。实体创建在父视图 new 内、WeakEntity
+/// 只有 new 末尾才能拿到，故绑定总是独立一步调用
+pub fn bind_on_change<T: 'static>(
+    e: &Entity<TextField>,
+    weak: &gpui::WeakEntity<T>,
+    set: impl Fn(&mut T, String) + 'static,
+    cx: &mut Context<T>,
+) {
+    let weak = weak.clone();
+    e.update(cx, |tf, _| {
+        tf.set_on_change(Box::new(move |s, _, cx| {
+            let s = s.to_string();
+            let _ = weak.update(cx, |app: &mut T, _| set(app, s));
+        }));
+    });
+}
+
+/// 外部变更回灌：文本不同才 set——正在输入的框两侧已一致，不会重置光标
+pub fn sync_text(e: &Entity<TextField>, val: &str, cx: &mut impl AppContext) {
+    e.update(cx, |f, _| {
+        if f.text() != val {
+            f.set_text(val);
+        }
+    });
+}
 
 // ---------- 字节/字符/UTF-16 换算 ----------
 
@@ -122,11 +154,11 @@ impl TextField {
             sel_anchor: None,
             focus: cx.focus_handle(),
             id: "text_field".into(),
-            placeholder: "".into(),
+            placeholder_key: "",
             masked: false,
             numeric: false,
             font_family: crate::ui::theme::FONT_MONO.into(),
-            font_size: crate::ui::theme::font_md(),
+            font_base: crate::ui::theme::FONT_MD_BASE,
             line_height: px(crate::ui::theme::CONTROL_H),
             paint_color: crate::ui::theme::cur().text.into(),
             on_change: None,
@@ -141,8 +173,9 @@ impl TextField {
         self.id = id.into();
         self
     }
-    pub fn set_placeholder(&mut self, p: impl Into<SharedString>) -> &mut Self {
-        self.placeholder = p.into();
+    /// 设置占位文案：传中文原文 key（与 i18n::tr 的源串一致），渲染时现算译文
+    pub fn set_placeholder(&mut self, zh_key: &'static str) -> &mut Self {
+        self.placeholder_key = zh_key;
         self
     }
     pub fn set_masked(&mut self, masked: bool) -> &mut Self {
@@ -153,8 +186,10 @@ impl TextField {
         self.numeric = numeric;
         self
     }
-    pub fn set_font_size(&mut self, s: Pixels) -> &mut Self {
-        self.font_size = s;
+    /// 设置基准字号（未乘档位系数，如 theme::FONT_MD_BASE）；
+    /// 实际渲染字号每帧按 font_scale 现算
+    pub fn set_font_size(&mut self, base: f32) -> &mut Self {
+        self.font_base = base;
         self
     }
     pub fn set_on_change(&mut self, f: Box<TextChangeFn>) -> &mut Self {
@@ -181,6 +216,10 @@ impl TextField {
     }
     pub fn focus(&self, window: &mut Window) {
         self.focus.focus(window);
+    }
+    /// 本输入框是否持有焦点（根级快捷键让位判定用）
+    pub fn is_focused(&self, window: &Window) -> bool {
+        self.focus.is_focused(window)
     }
     pub fn select_all(&mut self) {
         self.sel_anchor = Some(0);
@@ -274,7 +313,12 @@ impl TextField {
         };
         window
             .text_system()
-            .shape_line(display.into(), self.font_size, &[run], None)
+            .shape_line(
+                display.into(),
+                px(self.font_base * crate::ui::theme::font_scale_pub()),
+                &[run],
+                None,
+            )
     }
 
     // ---- 事件处理 ----
@@ -366,7 +410,11 @@ impl TextField {
                 cx.notify();
             }
             "c" | "x" if ctrl => {
-                if let Some(r) = self.sel_range() {
+                // 掩码字段（主密码/API Key/Secret）禁止进剪贴板：系统剪贴板
+                // 全局可读，剪贴板历史/跨设备同步还可能保留超出会话的生命周期
+                if self.masked {
+                    cx.notify();
+                } else if let Some(r) = self.sel_range() {
                     let s = self.text[r.clone()].to_string();
                     cx.write_to_clipboard(ClipboardItem::new_string(s));
                     if key == "x" {
@@ -403,13 +451,14 @@ impl TextField {
 
 impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = *crate::ui::theme::c(cx);
+        let t = crate::ui::theme::c(cx);
         let focused = self.focus.is_focused(window);
         self.paint_color = t.text.into();
 
-        let show_placeholder = self.text.is_empty() && !self.placeholder.is_empty();
+        let placeholder_text = crate::i18n::tr(self.placeholder_key);
+        let show_placeholder = self.text.is_empty() && !placeholder_text.is_empty();
         let shaped_src: String = if show_placeholder {
-            self.placeholder.to_string()
+            placeholder_text.to_string()
         } else {
             self.display_text()
         };
@@ -434,7 +483,7 @@ impl Render for TextField {
         let entity = cx.entity();
         let focus = self.focus.clone();
         let font = font(self.font_family.clone());
-        let font_size = self.font_size;
+        let font_size = px(self.font_base * crate::ui::theme::font_scale_pub());
 
         // 聚焦态：accent 边框之外再叠一圈柔和 accent 光晕（BoxShadow 无偏移
         // 纯模糊），与边框同源同色，输入位置一眼可辨
@@ -694,5 +743,265 @@ mod tests {
     fn numeric_filter_keeps_decimal_chars() {
         assert_eq!(numeric_filter("12.5e-3x"), "12.5e-3");
         assert_eq!(numeric_filter("abc"), "");
+    }
+
+    // ---------- 编辑操作测试（gpui test harness：真窗口 + 真焦点门控） ----------
+
+    use gpui::{KeyDownEvent, Keystroke, Modifiers, TestAppContext};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    /// 挂着 TextField 的最小根视图：实体必须在窗口内创建，焦点句柄才归属该窗口
+    struct EditRoot {
+        tf: Entity<TextField>,
+    }
+
+    impl Render for EditRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.tf.clone())
+        }
+    }
+
+    /// 组装按键事件（key_char 由调用方给：可打印键 Some，控制键 None）
+    fn key_ev(key: &str, key_char: Option<&str>, control: bool) -> KeyDownEvent {
+        KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers: Modifiers {
+                    control,
+                    ..Default::default()
+                },
+                key: key.into(),
+                key_char: key_char.map(Into::into),
+            },
+            is_held: false,
+        }
+    }
+
+    #[gpui::test]
+    fn insert_and_boundary_edits(cx: &mut TestAppContext) {
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            EditRoot {
+                tf: cx.new(TextField::new),
+            }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        // 插入含 CJK 的文本（UTF-8 多字节）
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.insert_str("ab价c", window, cx);
+        });
+        tf.read_with(cx, |tf, _| {
+            assert_eq!(tf.text(), "ab价c");
+            assert_eq!(tf.cursor, "ab价c".len());
+        });
+
+        // backspace 一次删掉整个 'c'（字符边界，不是半截 UTF-8）
+        tf.update_in(cx, |tf, window, cx| tf.backspace(window, cx));
+        tf.read_with(cx, |tf, _| {
+            assert_eq!(tf.text(), "ab价");
+            assert_eq!(tf.cursor, "ab价".len());
+        });
+
+        // 光标移到 0 后 backspace：空转不 panic、不变文
+        tf.update_in(cx, |tf, window, cx| {
+            tf.cursor = 0;
+            tf.backspace(window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "ab价"));
+
+        // delete_forward 前删一个字符；到末尾后空转
+        tf.update_in(cx, |tf, window, cx| {
+            tf.cursor = 0;
+            tf.delete_forward(window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "b价"));
+        tf.update_in(cx, |tf, window, cx| {
+            tf.cursor = tf.text.len();
+            tf.delete_forward(window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "b价"));
+    }
+
+    #[gpui::test]
+    fn selection_delete_normalizes_reversed_anchor(cx: &mut TestAppContext) {
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            EditRoot {
+                tf: cx.new(TextField::new),
+            }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        // select_all + backspace：全删
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.set_text("123.45");
+            tf.select_all();
+            tf.backspace(window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), ""));
+
+        // 锚点在光标之后的反向选区：sel_range 归一化后按 1..4 删除
+        tf.update_in(cx, |tf, window, cx| {
+            tf.set_text("123.45");
+            tf.cursor = 1;
+            tf.sel_anchor = Some(4);
+            tf.backspace(window, cx);
+        });
+        tf.read_with(cx, |tf, _| {
+            assert_eq!(tf.text(), "145");
+            assert_eq!(tf.cursor, 1);
+        });
+    }
+
+    #[gpui::test]
+    fn on_change_fires_on_each_edit(cx: &mut TestAppContext) {
+        let log = Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            let tf = cx.new(TextField::new);
+            let log = log.clone();
+            tf.update(cx, |tf, _| {
+                tf.set_on_change(Box::new(move |s, _, _| {
+                    log.borrow_mut().push(s.to_string());
+                }));
+            });
+            EditRoot { tf }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.insert_str("1", window, cx);
+            tf.insert_str("2", window, cx);
+            tf.backspace(window, cx);
+        });
+        assert_eq!(&*log.borrow(), &["1", "12", "1"]);
+    }
+
+    #[gpui::test]
+    fn numeric_mode_filters_insert_and_paste(cx: &mut TestAppContext) {
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            EditRoot {
+                tf: cx.new(|cx| {
+                let mut t = TextField::new(cx);
+                t.set_numeric(true);
+                t
+            }),
+            }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        // 直接插入带杂质文本：过滤只留数字/小数点/科学计数符号
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.insert_str("12.5abc", window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "12.5"));
+
+        // 粘贴路径同样过滤
+        cx.write_to_clipboard(ClipboardItem::new_string("3e-1x".to_string()));
+        tf.update_in(cx, |tf, window, cx| {
+            tf.on_key(&key_ev("v", None, true), window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "12.53e-1"));
+    }
+
+    #[gpui::test]
+    fn masked_field_denies_clipboard(cx: &mut TestAppContext) {
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            EditRoot {
+                tf: cx.new(|cx| {
+                let mut t = TextField::new(cx);
+                t.set_masked(true);
+                t
+            }),
+            }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        cx.write_to_clipboard(ClipboardItem::new_string("sentinel".to_string()));
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.set_text("s3cret");
+            tf.select_all();
+            // Ctrl+C：掩码字段禁止出剪贴板
+            tf.on_key(&key_ev("c", None, true), window, cx);
+        });
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().unwrap().as_str(),
+            "sentinel"
+        );
+
+        // Ctrl+X：同样不落剪贴板、也不删除文本
+        tf.update_in(cx, |tf, window, cx| {
+            tf.on_key(&key_ev("x", None, true), window, cx);
+        });
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().unwrap().as_str(),
+            "sentinel"
+        );
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "s3cret"));
+    }
+
+    #[gpui::test]
+    fn enter_submits_escape_does_not(cx: &mut TestAppContext) {
+        let fired = Rc::new(Cell::new(0u32));
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            let tf = cx.new(TextField::new);
+            let fired = fired.clone();
+            tf.update(cx, |tf, _| {
+                tf.set_on_submit(Box::new(move |_, _| fired.set(fired.get() + 1)));
+            });
+            EditRoot { tf }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.set_text("100");
+            // 回车提交，且回调被恢复可重复触发
+            tf.on_key(&key_ev("enter", Some("\n"), false), window, cx);
+        });
+        assert_eq!(fired.get(), 1);
+        tf.update_in(cx, |tf, window, cx| {
+            tf.on_key(&key_ev("enter", Some("\n"), false), window, cx);
+        });
+        assert_eq!(fired.get(), 2);
+
+        // Esc 不触发提交也不改文（不拦截，交给根级）
+        tf.update_in(cx, |tf, window, cx| {
+            tf.on_key(&key_ev("escape", None, false), window, cx);
+        });
+        assert_eq!(fired.get(), 2);
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "100"));
+    }
+
+    #[gpui::test]
+    fn on_key_requires_focus(cx: &mut TestAppContext) {
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            EditRoot {
+                tf: cx.new(TextField::new),
+            }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        // 未聚焦：on_key 直接短路（根级快捷键不被误吃）
+        tf.update_in(cx, |tf, window, cx| {
+            tf.on_key(&key_ev("a", Some("a"), false), window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), ""));
+
+        // 聚焦后可打印字符走 key_char 插入
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.on_key(&key_ev("a", Some("a"), false), window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "a"));
+
+        // 无 key_char 的未匹配键（如功能键）：不插文
+        tf.update_in(cx, |tf, window, cx| {
+            tf.on_key(&key_ev("f5", None, false), window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "a"));
     }
 }

@@ -285,7 +285,7 @@ fn tr_row(idx: usize, h: f32, cells: Vec<Div>) -> Div {
         .flex()
         .flex_row()
         .items_center()
-        .when(idx % 2 == 1, |d| d.bg(faded(t.text, 0.035)))
+        .when(idx % 2 == 1, |d| d.bg(theme::zebra()))
         // 指针所在行整行点亮：扫读宽表时的定位反馈（斑马纹静态、悬停动态）
         .hover(|s| s.bg(t.row_hover))
         .children(cells)
@@ -1694,7 +1694,8 @@ pub fn tpsl_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
                     ),
                 ),
         );
-    // 顶部居中悬挂（egui CENTER_TOP [0, 96] 同位）：容器无监听不挡下方点击。
+    // 顶部居中悬挂（egui CENTER_TOP [0, 96] 同位）：容器不拦截，但卡片必须
+    // occlude——否则点击穿透到下层盘口/图表（GPUI 命中测试收集所有 hitbox）
     // 锚 = 顶栏 + 60pt 视觉下移，与页头下方留白对齐
     const ANCHOR_TOP: f32 = theme::TOPBAR_H + 60.0;
     Some(
@@ -1704,6 +1705,6 @@ pub fn tpsl_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
             .flex()
             .items_start()
             .justify_center()
-            .child(div().mt(px(ANCHOR_TOP)).child(card)),
+            .child(div().mt(px(ANCHOR_TOP)).child(card.occlude())),
     )
 }

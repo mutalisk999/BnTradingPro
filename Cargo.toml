@@ -60,6 +60,9 @@ winresource = "0.1"
 
 [dev-dependencies]
 http = "1"
+# gpui 测试基建（TestAppContext/TestWindow）：仅测试构建拉起，
+# 正式构建不受影响
+gpui = { version = "0.2.2", features = ["test-support"] }
 
 [profile.release]
 opt-level = 3

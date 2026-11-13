@@ -16,12 +16,12 @@ Binance 现货 / U 本位合约专业交易终端，使用 **Rust + GPUI** 构�
 
 - **双市场**：现货（Spot）与 U 本位合约（USDT-M Futures）一键切换
 - **实时行情**：WebSocket 推送 24h 行情、20 档盘口（100ms）、逐笔成交、K 线；合约附标记价格与资金费率
-- **自绘 K 线图**：蜡烛 + 成交量，滚轮缩放 / 拖动平移 / 双击回最新 / 十字光标详情；叠加挂单价与合约开仓价参考线；副图指标可选（VOL / MA / BOLL / RSI / MACD / KDJ 等）
+- **自绘 K 线图**：蜡烛 + 成交量，滚轮缩放 / 拖动平移 / 双击回最新 / 十字光标详情；主图 MA 均线开关（多周期）、叠加挂单价与合约开仓价参考线；副图指标可选（VOL / MACD / RSI / KDJ / BOLL / CCI / WR / ATR / ADX / SAR / OBV / MFI / StochRSI 共 13 项）
 - **手动下单**：限价 / 市价 / 止损限价 / 止盈限价（现货），止损市价 / 止盈市价（合约），双向持仓模式支持 LONG/SHORT
 - **下单保护**：按交易对过滤器自动量化价格（tickSize）与数量（stepSize），校验最小名义金额 / 最小数量；提交前二次确认弹窗（实盘红色警示）
 - **账户**：现货余额（可用/冻结）、合约账户概况（钱包余额 / 未实现盈亏 / 保证金 / 可用）、持仓表（开仓价 / 标记价 / 强平价 / 一键平仓）、杠杆调整、单向↔双向持仓切换
 - **订单管理**：实时挂单列表（用户数据流推送，可单笔撤销 / 撤销该对全部）、订单历史、成交明细、止盈止损（TP/SL）委托
-- **界面**：明 / 暗（暖纸色）双主题，色板经 WCAG 对比度审计（文字对底色 ≥4.5:1），切换即时生效；中 / 英双语；三档字号；绿涨红跌 ↔ 红涨绿跌切换；侧栏 / 盘口 / 下单 / 订单区可拖拽调宽
+- **界面**：明 / 暗（暖纸色）双主题，色板经 WCAG 对比度审计（正文对底色 ≥4.5:1，图表标注按 WCAG 1.4.11 ≥3:1），切换即时生效；中 / 英双语；三档字号；绿涨红跌 ↔ 红涨绿跌切换；侧栏 / 盘口 / 下单 / 订单区可拖拽调宽
 - **安全**：主密码（Argon2id 派生）+ AES-256-GCM 加密保存 API Key/Secret，密钥退出清零，日志全脱敏
 - **网络**：HTTP / SOCKS5 代理（REST 与 WebSocket 均生效）、端点覆盖、Testnet 一键切换（带醒目角标）
 
@@ -52,7 +52,7 @@ cargo build --release
 2. 输入 API Key / Secret → 保存并连接
 3. 默认即测试网模式（顶部黄色 `TESTNET` 角标）；切换实盘前请再三确认
 
-> Debug 构建支持开发/截图用的演示模式：设置 `BTP_DEMO=1` 跳过解锁页并注入假资产快照（可用 `BTP_DEMO_TAB=futures|portfolio|settings` 指定初始页）。Release 构建不编译该逻辑。
+> Debug 构建支持开发/截图用的演示模式：设置 `BTP_DEMO=1` 跳过解锁页并注入假资产快照（可用 `BTP_DEMO_TAB=spot|futures|portfolio|settings|help` 指定初始页）。Release 构建不编译该逻辑。
 
 ## 配置
 
@@ -102,8 +102,8 @@ UI（GPUI Entity，GPU 渲染）             后台引擎（独立 tokio 运行�
 ## 测试
 
 ```powershell
-cargo test          # 77 个单元测试：签名向量、量化边界、vault 回环、WS 消息解析、主题 token 等
-cargo clippy -- -D warnings
+cargo test          # 93 个单元测试：签名向量、量化边界、vault 回环、WS 消息解析、主题 token、编辑控件与闪烁高亮等
+cargo clippy --all-targets -- -D warnings
 ```
 
 ## 声明

@@ -793,20 +793,20 @@ fn show_trades(
     // 列布局：价格贴左（与盘口行一致）、时间贴右、数量左对齐紧跟价格之后。
     // 两侧间距 = 剩余空间均分：价格↔数量 与 数量↔时间 永远等宽，视觉平衡。
     // 内宽不足时的压缩次序：价格列（信息核心，被裁即叠印）永远保自然宽，
-    // 先压时间列、再压数量列——数量列贴着价格，最先被挤压就会盖住价格
+    // 时间+数量两列等比收缩——数量列贴着价格，最先被挤压就会盖住价格
     // 小数尾数（遮挡优于叠印的既有取舍）
     const MIN_GAP: f32 = 8.0;
     let content = w_price + w_qty + w_time;
     if content + 4.0 + 2.0 * MIN_GAP > avail_w && avail_w > 0.0 {
+        // 价格列（信息核心，被裁即叠印）保持自然宽，时间+数量两列按比例
+        // 缩到放得下——不可把某列压到 0（整列消失/边缘宽度闪烁）
         let budget = (avail_w - 4.0 - 2.0 * MIN_GAP).max(w_price);
-        let shrinkable = (budget - w_price).max(0.0);
-        // 先压时间（时间列最长、信息损失最小），仍不够再压数量
-        let time_over = (w_time - shrinkable).max(0.0);
-        if time_over > 0.0 {
-            w_time = shrinkable.min(w_time);
-            w_qty = (w_qty - time_over).max(0.0).min(w_qty);
-        } else {
-            w_time = (w_time - shrinkable).max(0.0);
+        let shrink_total = (budget - w_price).max(0.0);
+        let shrinkable = w_qty + w_time;
+        if shrinkable > 0.0 {
+            let k = (shrink_total / shrinkable).min(1.0);
+            w_qty *= k;
+            w_time *= k;
         }
     }
     let gap = ((avail_w - 4.0 - w_price - w_qty - w_time) * 0.5).max(MIN_GAP);
@@ -838,7 +838,11 @@ fn show_trades(
         base.child(
             div()
                 .pl(px(theme::SPACE_XS))
-                .w(px(w_price))
+                // 宽 = 文字实宽 + 左内边距：GPUI 固定宽按 border-box 解释
+                // （taffy 默认 BorderBox），定宽 w_price 会让 2px 内边距吃进
+                // 文字区，价格尾数被裁——视觉上像被数量列挡住。内边距必须
+                // 落在测量宽之外
+                .w(px(w_price + theme::SPACE_XS))
                 // 价格列禁收缩：行内总宽超预算时 taffy 会按比例压缩各固定宽
                 // 子项，价格小数尾数最先被数量列盖住（遮挡优于叠印的取舍）
                 .flex_none()
@@ -1359,12 +1363,13 @@ pub fn alerts_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         .child(widgets::separator())
         .child(list);
 
-    // 锚定：顶栏 + 右栏页头高度（面板 p(8) + 页头内容 39）→ 页头正下方
+    // 锚定：顶栏 + 右栏页头高度（面板 p(8) + 页头内容 39）→ 页头正下方。
+    // 卡片 occlude：面板悬浮在图表/盘口上方，不遮挡则点击穿透到底层元素
     Some(
         div()
             .absolute()
             .top(px(theme::TOPBAR_H + theme::SPACE_LG + MARKET_HEADER_H))
             .right(px(theme::SPACE_XXL))
-            .child(card),
+            .child(card.occlude()),
     )
 }
