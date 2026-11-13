@@ -688,11 +688,14 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .child(canvas);
 
     let mut root = div().flex_1().w_full().flex().flex_col().overflow_hidden();
+    root = root.child(tools).child(area);
     if app.sub_menu_open {
-        // 副图指标下拉菜单：铺在工具行之下的覆盖层（root 相对定位锚点）
+        // 副图指标下拉菜单：必须最后加入 children——GPUI 后加入的孩子
+        // 绘制在上层，先加入会被图表 canvas（指标数值文字）盖住形成
+        // 透明叠影（root 相对定位锚点）
         root = root.child(sub_menu(app, cx));
     }
-    root.child(tools).child(area)
+    root
 }
 
 /// 工具行第一行：周期直选（pill_tab_sm，与页头同一样式）

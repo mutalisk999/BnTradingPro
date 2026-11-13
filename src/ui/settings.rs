@@ -388,13 +388,6 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             app.state.send_cmd(Command::PersistConfig);
         },
     );
-    let vsep = || {
-        div()
-            .w(px(1.0))
-            .h(px(16.0))
-            .bg(cur().border)
-            .flex_shrink_0()
-    };
     let look_body = div()
         .flex()
         .flex_col()
@@ -402,14 +395,20 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .child(
             widgets::form_row()
                 .child(widgets::row_label(tr("语言"), 68.0))
-                .child(lang_pills)
-                .child(vsep())
+                .child(lang_pills),
+        )
+        .child(
+            widgets::form_row()
                 .child(widgets::row_label(tr("字体大小"), 68.0))
-                .child(font_pills)
-                .child(vsep())
+                .child(font_pills),
+        )
+        .child(
+            widgets::form_row()
                 .child(widgets::row_label(tr("主题"), 68.0))
-                .child(theme_pills)
-                .child(vsep())
+                .child(theme_pills),
+        )
+        .child(
+            widgets::form_row()
                 .child(widgets::row_label(tr("涨跌色"), 68.0))
                 .child(price_pills),
         )
@@ -456,19 +455,20 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             cx,
         )
     });
+    let lbl = |text: &'static str| -> Div {
+        div()
+            .text_size(font_body())
+            .text_color(cur().text)
+            .child(tr(text))
+    };
     let param_body = div()
         .flex()
         .flex_col()
         .gap(px(theme::SPACE_MD))
+        // 接收窗口：仅中文界面补英文小字说明
         .child(
             widgets::form_row()
-                .child(
-                    div()
-                        .text_size(font_body())
-                        .text_color(cur().text)
-                        .child(tr("接收窗口")),
-                )
-                // 英文界面标签本身就是 "recvWindow"，仅中文界面补英文小字说明
+                .child(lbl("接收窗口"))
                 .when(recv_hint_zh, |r| {
                     r.child(
                         div()
@@ -477,41 +477,30 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                             .child("recvWindow"),
                     )
                 })
-                .child(field_box(&app.settings_fields.recv_window, 72.0))
-                .child(vsep())
-                .child(
-                    div()
-                        .text_size(font_body())
-                        .text_color(cur().text)
-                        .child(tr("HTTP 超时")),
-                )
-                .child(field_box(&app.settings_fields.http_timeout, 64.0))
-                .child(vsep())
-                .child(
-                    div()
-                        .text_size(font_body())
-                        .text_color(cur().text)
-                        .child(tr("日志级别")),
-                )
-                .child(log_pills)
-                .child(vsep())
+                .child(field_box(&app.settings_fields.recv_window, 72.0)),
+        )
+        .child(
+            widgets::form_row()
+                .child(lbl("HTTP 超时"))
+                .child(field_box(&app.settings_fields.http_timeout, 64.0)),
+        )
+        .child(
+            widgets::form_row()
+                .child(lbl("日志级别"))
+                .child(log_pills),
+        )
+        .child(
+            widgets::form_row()
                 .child(ws_cb),
         )
         .child(
             widgets::form_row()
-                .child(
-                    div()
-                        .text_size(font_body())
-                        .text_color(cur().text)
-                        .child(tr("默认交易对")),
-                )
-                .child(field_box(&app.settings_fields.default_symbol, 110.0))
-                .child(
-                    div()
-                        .text_size(font_body())
-                        .text_color(cur().text)
-                        .child(tr("默认K线周期")),
-                )
+                .child(lbl("默认交易对"))
+                .child(field_box(&app.settings_fields.default_symbol, 110.0)),
+        )
+        .child(
+            widgets::form_row()
+                .child(lbl("默认K线周期"))
                 .child(iv_pills),
         );
     let param_card =
