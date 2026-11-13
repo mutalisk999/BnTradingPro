@@ -222,20 +222,32 @@ pub fn book_panel(
             })),
         );
     let mut panel = div()
+        // flex_1 占满右栏剩余高度：无论盘口当前有多少档，底部档位胶囊条
+        // 都钉在面板最下缘，不随档位行数减少而上浮
         .w_full()
+        .flex_1()
+        .min_h(px(0.0))
         .flex()
         .flex_col()
         .overflow_hidden()
         .child(tabs)
         .child(div().w_full().h(px(1.0)).my(px(4.0)).bg(faded(t.border, 0.7)));
     match app.book_tab {
-        BookTab::Trades => panel = panel.child(show_trades(app, window, cx, avail_h, avail_w)),
+        BookTab::Trades => panel = panel.child(
+            show_trades(app, window, cx, avail_h, avail_w)
+                .flex_1()
+                .min_h(px(0.0)),
+        ),
         BookTab::Book => {
             // 先扣除底部胶囊条的固定高度，盘口在剩余高度内做档数自适应；
             // 不扣除会把胶囊顶出面板底缘
             let book_h = (avail_h - BOOK_GROUP_H).max(0.0);
             panel = panel
-                .child(show_book(app, window, cx, book_h, avail_w))
+                .child(
+                    show_book(app, window, cx, book_h, avail_w)
+                        .flex_1()
+                        .min_h(px(0.0)),
+                )
                 .child(show_book_group(window, app, cx));
         }
     }
@@ -779,15 +791,23 @@ fn show_trades(
     }
     let time_full = w_time > tw_short;
     // 列布局：价格贴左（与盘口行一致）、时间贴右、数量左对齐紧跟价格之后。
-    // 两侧间距 = 剩余空间均分：价格↔数量 与 数量↔时间 永远等宽，视觉平衡；
-    // 内宽不足时先按预算（两侧各留 MIN_GAP）等比压列宽，绝不叠印
+    // 两侧间距 = 剩余空间均分：价格↔数量 与 数量↔时间 永远等宽，视觉平衡。
+    // 内宽不足时的压缩次序：价格列（信息核心，被裁即叠印）永远保自然宽，
+    // 先压时间列、再压数量列——数量列贴着价格，最先被挤压就会盖住价格
+    // 小数尾数（遮挡优于叠印的既有取舍）
     const MIN_GAP: f32 = 8.0;
     let content = w_price + w_qty + w_time;
     if content + 4.0 + 2.0 * MIN_GAP > avail_w && avail_w > 0.0 {
-        let k = (avail_w - 4.0 - 2.0 * MIN_GAP) / content;
-        w_price *= k;
-        w_qty *= k;
-        w_time *= k;
+        let budget = (avail_w - 4.0 - 2.0 * MIN_GAP).max(w_price);
+        let shrinkable = (budget - w_price).max(0.0);
+        // 先压时间（时间列最长、信息损失最小），仍不够再压数量
+        let time_over = (w_time - shrinkable).max(0.0);
+        if time_over > 0.0 {
+            w_time = shrinkable.min(w_time);
+            w_qty = (w_qty - time_over).max(0.0).min(w_qty);
+        } else {
+            w_time = (w_time - shrinkable).max(0.0);
+        }
     }
     let gap = ((avail_w - 4.0 - w_price - w_qty - w_time) * 0.5).max(MIN_GAP);
 
@@ -819,6 +839,9 @@ fn show_trades(
             div()
                 .pl(px(2.0))
                 .w(px(w_price))
+                // 价格列禁收缩：行内总宽超预算时 taffy 会按比例压缩各固定宽
+                // 子项，价格小数尾数最先被数量列盖住（遮挡优于叠印的取舍）
+                .flex_none()
                 .whitespace_nowrap()
                 .overflow_hidden()
                 .text_size(px(sz))

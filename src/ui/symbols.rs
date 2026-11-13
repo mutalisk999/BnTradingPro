@@ -4,9 +4,9 @@ use crate::app::BnApp;
 use crate::ui::theme::{self, cur, faded, font_md, font_sm, FONT_MONO};
 use crate::ui::widgets;
 use gpui::{
-    div, prelude::FluentBuilder, px, uniform_list, AnyElement, ClickEvent,
-    Context, ElementId, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, UniformListScrollHandle, WeakEntity,
+    div, prelude::FluentBuilder, px, uniform_list, AnyElement, Bounds, ClickEvent, Context,
+    ElementId, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels,
+    Point, SharedString, StatefulInteractiveElement, Styled, UniformListDecoration, WeakEntity,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -166,7 +166,6 @@ pub fn list(app: &mut BnApp, cx: &mut Context<BnApp>) -> AnyElement {
     }
     let rows = Arc::new(rows);
     let count = rows.len();
-    let handle = UniformListScrollHandle::new();
     let market = app.market;
 
     uniform_list(
@@ -209,10 +208,64 @@ pub fn list(app: &mut BnApp, cx: &mut Context<BnApp>) -> AnyElement {
             out
         },
     )
-    .track_scroll(handle)
+    // 滚动偏移由 element_state 按 id 持久化（不挂每帧新建的 handle——
+    // 行情心跳每 ~100ms 重渲染会把刚滚出的偏移打回 0，表现为滚不动）
+    .with_decoration(ListScrollbar::new())
     .flex_1()
     .w_full()
     .into_any_element()
+}
+
+/// 虚拟列表装饰：右侧自绘滚动条拇指。gpui 0.2.2 的 uniform_list
+/// 自带滚轮滚动但不绘制任何可视滚动条（scrollbar_width 只参与布局
+/// 不参与绘制），用 UniformListDecoration 在 viewport 裁剪内补一枚
+/// 拇指形指示条。纯视觉指示：拖拽拇指暂不支持（需常驻 ScrollHandle）
+struct ListScrollbar;
+
+impl ListScrollbar {
+    fn new() -> Self {
+        Self
+    }
+}
+
+impl UniformListDecoration for ListScrollbar {
+    fn compute(
+        &self,
+        _visible_range: std::ops::Range<usize>,
+        bounds: Bounds<Pixels>,
+        scroll_offset: Point<Pixels>,
+        item_height: Pixels,
+        item_count: usize,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::App,
+    ) -> AnyElement {
+        let t = cur();
+        let view_h = bounds.size.height;
+        let content_h = item_height * item_count as f32;
+        // 内容不足一屏：无滚动也无拇指
+        if content_h <= view_h || view_h <= px(0.0) {
+            return div().into_any_element();
+        }
+        let track_h = view_h - px(4.0);
+        let thumb_h = (track_h * f32::from(view_h) / f32::from(content_h)).max(px(24.0));
+        // scroll_offset.y 下滚为负，取负归一到 0-1
+        let frac = (-scroll_offset.y / (content_h - view_h)).clamp(0.0, 1.0);
+        div()
+            .relative()
+            .w_full()
+            .h_full()
+            .child(
+                div()
+                    .absolute()
+                    .top(px(2.0) + frac * (track_h - thumb_h))
+                    .right(px(1.0))
+                    .w(px(4.0))
+                    .h(thumb_h)
+                    .rounded_full()
+                    .bg(faded(t.text, 0.25)),
+            )
+            .into_any_element()
+    }
 }
 
 /// 小节标题行：与交易对行同槽高、垂直居中，整行淡色带与下方列表分隔
