@@ -181,3 +181,108 @@ impl FlashState {
         *self = FlashState::default();
     }
 }
+
+// ---------- 测试 ----------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_value_does_not_flash() {
+        // 初加载不着色：首值只建立基线，无强度无方向
+        let mut f = Flash::default();
+        let now = Instant::now();
+        assert_eq!(f.observe(now, 100u64), (0.0, 0));
+    }
+
+    #[test]
+    fn direction_follows_bit_comparison() {
+        // 有序 bit pattern 比较：正数变大=涨，变小=跌
+        let mut f = Flash::default();
+        let t0 = Instant::now();
+        f.observe(t0, 100u64);
+        let (s1, d1) = f.observe(t0, 200u64);
+        assert_eq!((s1, d1), (1.0, 1));
+        // 下跌
+        let (s2, d2) = f.observe(t0, 50u64);
+        assert_eq!((s2, d2), (1.0, -1));
+        // 同值不触发
+        let (s3, d3) = f.observe(t0, 50u64);
+        assert_eq!(d3, -1); // 仍在衰减，方向保留
+        assert!(s3 > 0.0);
+    }
+
+    #[test]
+    fn decays_linearly_and_resets() {
+        let mut f = Flash::default();
+        let t0 = Instant::now();
+        f.observe(t0, 1u64);
+        // 变值起闪：倒计时刚清零，强度满格
+        let (s0, d0) = f.observe(t0, 2u64);
+        assert_eq!((s0, d0), (1.0, 1));
+        // 半个 FLASH_SECS 后（同值重复渲染）强度 ≈ 0.5
+        let half = std::time::Duration::from_secs_f64(crate::ui::theme::FLASH_SECS as f64 / 2.0);
+        let (s, d) = f.observe(t0 + half, 2u64);
+        assert_eq!(d, 1);
+        assert!((s - 0.5).abs() < 0.01, "strength {s}");
+        // 一个半周期后衰减完毕、方向归零（同值重复渲染）
+        let done = std::time::Duration::from_secs_f64(crate::ui::theme::FLASH_SECS as f64 * 1.5);
+        let (s2, d2) = f.observe(t0 + done, 2u64);
+        assert_eq!((s2, d2), (0.0, 0));
+        // 结束后再变值重新起闪
+        let (s3, d3) = f.observe(t0 + done, 3u64);
+        assert_eq!((s3, d3), (1.0, 1));
+    }
+
+    #[test]
+    fn nan_and_zero_normalized() {
+        // NaN 的 bit pattern 每次比较都可能不等：规整为 0 后不再反复触发
+        let mut f = Flash::default();
+        let t0 = Instant::now();
+        f.observe_f64(t0, f64::NAN);
+        let (_, d1) = f.observe_f64(t0, f64::NAN);
+        assert_eq!(d1, 0);
+        // 0 与 -0.0 等价（v == 0.0 规整）
+        f.observe_f64(t0, 5.0);
+        let (s, d) = f.observe_f64(t0, 0.0);
+        assert_eq!(d, -1);
+        assert_eq!(s, 1.0);
+        let (_, d2) = f.observe_f64(t0, -0.0);
+        assert_eq!(d2, -1); // 未变化，无新闪烁
+    }
+
+    #[test]
+    fn book_site_pairing_and_bounds() {
+        // 数量位点与价格位点互为配对
+        assert_eq!(BookSite::AskPrice.qty_site(), BookSite::AskQty);
+        assert_eq!(BookSite::AskQty.qty_site(), BookSite::AskPrice);
+        assert_eq!(BookSite::BidPrice.qty_site(), BookSite::BidQty);
+        assert_eq!(BookSite::BidQty.qty_site(), BookSite::BidPrice);
+        // 越界下标安全返回无闪烁
+        let mut st = FlashState::default();
+        assert_eq!(st.book(BookSite::AskPrice, crate::ui::market::BOOK_MAX_LEVELS, 100.0), (0.0, 0));
+    }
+
+    #[test]
+    fn reset_clears_all_sites() {
+        let mut st = FlashState::default();
+        st.header_px(100.0);
+        st.trade_top(101.0);
+        st.book(BookSite::BidPrice, 0, 99.0);
+        st.header_px(102.0); // 触发闪烁
+        assert!(st.active());
+        st.reset();
+        assert!(!st.active());
+    }
+
+    #[test]
+    fn flash_color_maps_direction() {
+        // 方向着色走 theme 的涨跌色（green_up 基线下涨=up 色）
+        let _lock = crate::ui::theme::theme_lock();
+        crate::ui::theme::set_price_dir_str("green_up");
+        let up = crate::ui::theme::up_color();
+        assert_eq!(flash_color(1), up);
+        assert_eq!(flash_color(-1), crate::ui::theme::down_color());
+    }
+}

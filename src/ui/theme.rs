@@ -46,26 +46,28 @@ mod test_util {
     use super::set_font_size_str;
     use std::sync::Mutex;
 
-    /// 仅测试用：FONT_STEP 是进程级全局量，cargo test 的并行线程会互相
-    /// 踩——一个用例设 large 量几何的同时，另一个正按 small 断言。
-    /// 改读档位或按 font_*() 量几何的用例统一先拿这把锁；
-    /// guard 释放时把档位恢复 small，下个持锁者看到的是干净基线
-    pub struct FontGuard(std::sync::MutexGuard<'static, ()>);
-
-    impl Drop for FontGuard {
-        fn drop(&mut self) {
-            set_font_size_str("small");
-        }
+    /// MODE/PRICE_DIR/FONT_STEP 三把静态原子共用同一把测试互斥锁：
+    /// 任何写这些全局量的用例都先拿锁，guard 释放时恢复默认
+    /// （dark + green_up + small），并行用例看到干净基线
+    pub fn theme_lock() -> ThemeGuard {
+        static LOCK: Mutex<()> = Mutex::new(());
+        ThemeGuard(LOCK.lock().unwrap())
     }
 
-    pub fn font_lock() -> FontGuard {
-        static LOCK: Mutex<()> = Mutex::new(());
-        FontGuard(LOCK.lock().unwrap())
+    /// theme_lock 的句柄：释放时把三个静态原子全部恢复默认基线
+    pub struct ThemeGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+    impl Drop for ThemeGuard {
+        fn drop(&mut self) {
+            super::set_mode_str("dark");
+            super::set_price_dir_str("green_up");
+            set_font_size_str("small");
+        }
     }
 }
 
 #[cfg(test)]
-pub use test_util::{font_lock, FontGuard};
+pub use test_util::theme_lock;
 
 /// 档位系数：小 ×1.0（当前基准）、中 ×1.15、大 ×1.3
 fn font_scale() -> f32 {
@@ -565,10 +567,11 @@ pub const FONT_MONO: &str = "Cascadia Code";
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::test_util::theme_lock;
 
     #[test]
     fn font_scale_tokens_track_font_step() {
-        let _g = font_lock();
+        let _g = theme_lock();
         set_font_size_str("small");
         assert_eq!(font_body(), px(14.0));
         set_font_size_str("large");
@@ -577,12 +580,38 @@ mod tests {
 
     #[test]
     fn cur_flips_up_down_on_red_up() {
+        let _lock = theme_lock();
         let green = cur();
         set_price_dir_str("red_up");
         let red = cur();
         assert_eq!(green.up, red.down);
         assert_eq!(green.down, red.up);
         set_price_dir_str("green_up");
+    }
+
+    #[test]
+    fn theme_statics_default_and_restore() {
+        // 默认基线：dark + green_up。写过后由 theme_lock 恢复，
+        // 保证并行用例不被污染
+        let _lock = theme_lock();
+        set_mode_str("light");
+        set_price_dir_str("red_up");
+        assert!(is_light());
+        assert_eq!(mode(), LIGHT_MODE);
+        assert_eq!(PRICE_DIR.load(Ordering::Relaxed), DIR_RED_UP);
+        drop(_lock);
+        assert_eq!(mode(), DARK_MODE);
+        assert_eq!(PRICE_DIR.load(Ordering::Relaxed), DIR_GREEN_UP);
+    }
+
+    #[test]
+    fn setter_str_falls_back_to_default_on_unknown() {
+        // 未知字符串回落默认（配置文件手改损坏时不会 panic）
+        let _lock = theme_lock();
+        set_mode_str("bogus");
+        set_price_dir_str("bogus");
+        assert_eq!(mode(), DARK_MODE);
+        assert_eq!(PRICE_DIR.load(Ordering::Relaxed), DIR_GREEN_UP);
     }
 
     #[test]
@@ -601,27 +630,22 @@ mod tests {
         assert!((f.a - 0.5).abs() < 1e-3);
     }
 
-    #[test]
-    fn backdrop_alpha_per_theme_mode() {
-        // 遮罩透明度按明暗主题分档：浅色轻遮罩、深色重遮罩
+    #[gpui::test]
+    fn backdrop_alpha_per_theme_mode(cx: &mut App) {
+        // 遮罩透明度按明暗主题分档：浅色轻遮罩、深色重遮罩。
+        // 直接走真实 backdrop()（签名带 cx），不重写内部逻辑——
+        // 否则实现漂移时测试仍然全绿
+        let _lock = theme_lock();
         set_mode_str("light");
-        let light = backdrop_raw();
+        let light = backdrop(cx);
         set_mode_str("dark");
-        let dark = backdrop_raw();
-        assert!((light - BACKDROP_A_LIGHT).abs() < 1e-3);
-        assert!((dark - BACKDROP_A_DARK).abs() < 1e-3);
-        assert!(dark > light);
-        set_mode_str("light");
-    }
-
-    /// backdrop() 需要 App 才能调用（与其它取色入口签名一致），
-    /// 测试直接取同一实现的核心逻辑
-    fn backdrop_raw() -> f32 {
-        if is_light() {
-            BACKDROP_A_LIGHT
-        } else {
-            BACKDROP_A_DARK
-        }
+        let dark = backdrop(cx);
+        assert!((light.a - BACKDROP_A_LIGHT).abs() < 1e-3);
+        assert!((dark.a - BACKDROP_A_DARK).abs() < 1e-3);
+        assert!(dark.a > light.a);
+        // 纯黑遮罩
+        assert_eq!((light.l, light.s), (0.0, 0.0));
+        set_mode_str("dark");
     }
 
     #[test]
@@ -648,7 +672,7 @@ mod tests {
 
     #[test]
     fn font_caption_scales_with_step() {
-        let _g = font_lock();
+        let _g = theme_lock();
         set_font_size_str("small");
         assert_eq!(font_caption(), px(11.0));
         set_font_size_str("medium");

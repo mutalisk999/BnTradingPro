@@ -744,4 +744,264 @@ mod tests {
         assert_eq!(numeric_filter("12.5e-3x"), "12.5e-3");
         assert_eq!(numeric_filter("abc"), "");
     }
+
+    // ---------- 编辑操作测试（gpui test harness：真窗口 + 真焦点门控） ----------
+
+    use gpui::{KeyDownEvent, Keystroke, Modifiers, TestAppContext};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    /// 挂着 TextField 的最小根视图：实体必须在窗口内创建，焦点句柄才归属该窗口
+    struct EditRoot {
+        tf: Entity<TextField>,
+    }
+
+    impl Render for EditRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.tf.clone())
+        }
+    }
+
+    /// 组装按键事件（key_char 由调用方给：可打印键 Some，控制键 None）
+    fn key_ev(key: &str, key_char: Option<&str>, control: bool) -> KeyDownEvent {
+        KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers: Modifiers {
+                    control,
+                    ..Default::default()
+                },
+                key: key.into(),
+                key_char: key_char.map(Into::into),
+            },
+            is_held: false,
+        }
+    }
+
+    #[gpui::test]
+    fn insert_and_boundary_edits(cx: &mut TestAppContext) {
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            EditRoot {
+                tf: cx.new(TextField::new),
+            }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        // 插入含 CJK 的文本（UTF-8 多字节）
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.insert_str("ab价c", window, cx);
+        });
+        tf.read_with(cx, |tf, _| {
+            assert_eq!(tf.text(), "ab价c");
+            assert_eq!(tf.cursor, "ab价c".len());
+        });
+
+        // backspace 一次删掉整个 'c'（字符边界，不是半截 UTF-8）
+        tf.update_in(cx, |tf, window, cx| tf.backspace(window, cx));
+        tf.read_with(cx, |tf, _| {
+            assert_eq!(tf.text(), "ab价");
+            assert_eq!(tf.cursor, "ab价".len());
+        });
+
+        // 光标移到 0 后 backspace：空转不 panic、不变文
+        tf.update_in(cx, |tf, window, cx| {
+            tf.cursor = 0;
+            tf.backspace(window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "ab价"));
+
+        // delete_forward 前删一个字符；到末尾后空转
+        tf.update_in(cx, |tf, window, cx| {
+            tf.cursor = 0;
+            tf.delete_forward(window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "b价"));
+        tf.update_in(cx, |tf, window, cx| {
+            tf.cursor = tf.text.len();
+            tf.delete_forward(window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "b价"));
+    }
+
+    #[gpui::test]
+    fn selection_delete_normalizes_reversed_anchor(cx: &mut TestAppContext) {
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            EditRoot {
+                tf: cx.new(TextField::new),
+            }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        // select_all + backspace：全删
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.set_text("123.45");
+            tf.select_all();
+            tf.backspace(window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), ""));
+
+        // 锚点在光标之后的反向选区：sel_range 归一化后按 1..4 删除
+        tf.update_in(cx, |tf, window, cx| {
+            tf.set_text("123.45");
+            tf.cursor = 1;
+            tf.sel_anchor = Some(4);
+            tf.backspace(window, cx);
+        });
+        tf.read_with(cx, |tf, _| {
+            assert_eq!(tf.text(), "145");
+            assert_eq!(tf.cursor, 1);
+        });
+    }
+
+    #[gpui::test]
+    fn on_change_fires_on_each_edit(cx: &mut TestAppContext) {
+        let log = Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            let tf = cx.new(TextField::new);
+            let log = log.clone();
+            tf.update(cx, |tf, _| {
+                tf.set_on_change(Box::new(move |s, _, _| {
+                    log.borrow_mut().push(s.to_string());
+                }));
+            });
+            EditRoot { tf }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.insert_str("1", window, cx);
+            tf.insert_str("2", window, cx);
+            tf.backspace(window, cx);
+        });
+        assert_eq!(&*log.borrow(), &["1", "12", "1"]);
+    }
+
+    #[gpui::test]
+    fn numeric_mode_filters_insert_and_paste(cx: &mut TestAppContext) {
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            EditRoot {
+                tf: cx.new(|cx| {
+                let mut t = TextField::new(cx);
+                t.set_numeric(true);
+                t
+            }),
+            }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        // 直接插入带杂质文本：过滤只留数字/小数点/科学计数符号
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.insert_str("12.5abc", window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "12.5"));
+
+        // 粘贴路径同样过滤
+        cx.write_to_clipboard(ClipboardItem::new_string("3e-1x".to_string()));
+        tf.update_in(cx, |tf, window, cx| {
+            tf.on_key(&key_ev("v", None, true), window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "12.53e-1"));
+    }
+
+    #[gpui::test]
+    fn masked_field_denies_clipboard(cx: &mut TestAppContext) {
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            EditRoot {
+                tf: cx.new(|cx| {
+                let mut t = TextField::new(cx);
+                t.set_masked(true);
+                t
+            }),
+            }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        cx.write_to_clipboard(ClipboardItem::new_string("sentinel".to_string()));
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.set_text("s3cret");
+            tf.select_all();
+            // Ctrl+C：掩码字段禁止出剪贴板
+            tf.on_key(&key_ev("c", None, true), window, cx);
+        });
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().unwrap().as_str(),
+            "sentinel"
+        );
+
+        // Ctrl+X：同样不落剪贴板、也不删除文本
+        tf.update_in(cx, |tf, window, cx| {
+            tf.on_key(&key_ev("x", None, true), window, cx);
+        });
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().unwrap().as_str(),
+            "sentinel"
+        );
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "s3cret"));
+    }
+
+    #[gpui::test]
+    fn enter_submits_escape_does_not(cx: &mut TestAppContext) {
+        let fired = Rc::new(Cell::new(0u32));
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            let tf = cx.new(TextField::new);
+            let fired = fired.clone();
+            tf.update(cx, |tf, _| {
+                tf.set_on_submit(Box::new(move |_, _| fired.set(fired.get() + 1)));
+            });
+            EditRoot { tf }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.set_text("100");
+            // 回车提交，且回调被恢复可重复触发
+            tf.on_key(&key_ev("enter", Some("\n"), false), window, cx);
+        });
+        assert_eq!(fired.get(), 1);
+        tf.update_in(cx, |tf, window, cx| {
+            tf.on_key(&key_ev("enter", Some("\n"), false), window, cx);
+        });
+        assert_eq!(fired.get(), 2);
+
+        // Esc 不触发提交也不改文（不拦截，交给根级）
+        tf.update_in(cx, |tf, window, cx| {
+            tf.on_key(&key_ev("escape", None, false), window, cx);
+        });
+        assert_eq!(fired.get(), 2);
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "100"));
+    }
+
+    #[gpui::test]
+    fn on_key_requires_focus(cx: &mut TestAppContext) {
+        let (root, cx) = cx.add_window_view(|_, cx| {
+            EditRoot {
+                tf: cx.new(TextField::new),
+            }
+        });
+        let tf = root.read_with(cx, |r, _| r.tf.clone());
+
+        // 未聚焦：on_key 直接短路（根级快捷键不被误吃）
+        tf.update_in(cx, |tf, window, cx| {
+            tf.on_key(&key_ev("a", Some("a"), false), window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), ""));
+
+        // 聚焦后可打印字符走 key_char 插入
+        tf.update_in(cx, |tf, window, cx| {
+            tf.focus(window);
+            tf.on_key(&key_ev("a", Some("a"), false), window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "a"));
+
+        // 无 key_char 的未匹配键（如功能键）：不插文
+        tf.update_in(cx, |tf, window, cx| {
+            tf.on_key(&key_ev("f5", None, false), window, cx);
+        });
+        tf.read_with(cx, |tf, _| assert_eq!(tf.text(), "a"));
+    }
 }
