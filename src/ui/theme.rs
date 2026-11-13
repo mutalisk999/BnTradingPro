@@ -1,7 +1,8 @@
 //! 主题与字体：明暗双主题 + Windows 系统字体（微软雅黑正文 / Cascadia 等宽数字）
 //!
 //! 颜色通过 `UiTheme` 全局（gpui::Global）运行时取值，主题切换即时生效。
-//! 色板沿用 egui 版的 RGB 值（经 rgb()/rgba() 转 GPUI Rgba），保证视觉零回归。
+//! 色板经两轮 WCAG 审计精修：所有文字/语义色对各表面底色 ≥4.5:1，
+//! 每个非常规取值在字段注释里写明对比度依据，改动前先跑审计脚本核对。
 
 use gpui::{px, App, Hsla, Pixels, Rgba};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -262,8 +263,10 @@ pub struct Theme {
 }
 
 pub const DARK: Theme = Theme {
+    // 红提亮半档：原值在 card 底上对比度仅 4.11:1（白色文字/红底的短板），
+    // 提到 4.80:1；bg/panel 上同步升到 6.4+/6.6+
     up: rgb_const(0x0ecb81),
-    down: rgb_const(0xf6465d),
+    down: rgb_const(0xfb5e73),
     bg: rgb_const(0x0a0d12),
     // 工作面（侧栏/盘口/下单栏）下沉半档：bg↔panel 层次差拉开，
     // 中央内容区自然前凸（现代终端的分层手法）
@@ -278,7 +281,7 @@ pub const DARK: Theme = Theme {
     text_dim: rgb_const(0x8b95a5),
     accent: rgb_const(0xf0b90b),
     warn: rgb_const(0xf0a030),
-    err: rgb_const(0xf6465d),
+    err: rgb_const(0xfb5e73),
     grid: rgb_const(0x1c222c),
     grid_time: rgb_const(0x1a202a),
     crosshair: rgb_const(0x788294),
@@ -286,15 +289,17 @@ pub const DARK: Theme = Theme {
     tag_bg: rgb_const(0x29323f),
     row_hover: rgb_const(0x252d3b),
     btn_idle: rgb_const(0x1e2530),
-    // 涨/跌填充上的文字用深色：白色在 up=rgb_const(14,203,129) 上对比度仅 2.1:1，
-    // 深色对 up 8.1:1、对 down 4.9:1
-    on_fill: rgb_const(0x062016),
+    // 涨/跌填充上的文字用深色：白色在 up=rgb_const(14,203,129) 上对比度仅 2.1:1。
+    // down 提亮后深字同步加深补偿：对 up 9.3:1、对 down 6.6:1
+    on_fill: rgb_const(0x030c08),
     on_accent: rgb_const(0x1c1602),
 };
 
 pub const LIGHT: Theme = Theme {
-    up: rgb_const(0x069e62),
-    down: rgb_const(0xd63a50),
+    // 涨跌色加深：暖纸底上原值偏弱（up 对 bg 仅 2.88:1、down 3.82:1），
+    // 加深后 up 5.06:1、down 4.91:1（对 card 分别 5.7/5.5）；色相不变仅降明度
+    up: rgb_const(0x037146),
+    down: rgb_const(0xba2e42),
     // 纸面暖底：冷蓝灰换成米黄"报纸"色——大面积纯白/冷灰的眩光降一档（护眼），
     // 层次仍是 bg 最暗 → panel/card 最亮，卡片浮在纸面上。
     // 画布加深半档：近白面板/卡片的"浮起"落差更明确
@@ -310,22 +315,24 @@ pub const LIGHT: Theme = Theme {
     text: rgb_const(0x1c1b17),
     // 暖灰并加深：在 (250,248,240) 卡片底上对比度从 5.3:1 提到 6.1:1
     text_dim: rgb_const(0x615d52),
-    // accent/warn 加深：原色在白底上对比度 2.7:1 / 3.5:1，不满足 4.5:1
-    accent: rgb_const(0x8c6600),
-    warn: rgb_const(0x926008),
-    err: rgb_const(0xd63a50),
+    // accent/warn 加深：原色在暖纸底上对比度不足（accent 对 bg 4.35、warn 4.48），
+    // 再加深一档到 4.74 / 4.95（panel/card 上均 >4.9）
+    accent: rgb_const(0x846100),
+    warn: rgb_const(0x895a08),
+    err: rgb_const(0xba2e42),
     grid: rgb_const(0xddd8cb),
     grid_time: rgb_const(0xe2ddd1),
     crosshair: rgb_const(0x747062),
-    tooltip_bg: rgb_const(0xfdfaf3),
+    // 近白暖底：比 panel 再亮半档，浮层与工作面拉开（对 bg 1.20）
+    tooltip_bg: rgb_const(0xfffdf8),
     tag_bg: rgb_const(0xdcd6c7),
     // 随 bg 加深同步微调：悬停行在新画布上仍清晰可辨
     row_hover: rgb_const(0xebe6d8),
     btn_idle: rgb_const(0xe5dfd0),
-    // 彩色填充（up/down）上的文字用黑色：白色对浅色 up 仅 3.5:1；
-    // 黑色对 up 6.1:1、对 down 4.6:1
-    on_fill: rgb_const(0x000000),
-    // accent 加深后深色字对比度跌至 3.1:1，改白色（5.2:1）
+    // 彩色填充（up/down）上的文字用白色：up/down 加深后黑字对比度反而
+    // 跌至 3.5/4.0，白字升到 6.1/5.9
+    on_fill: rgb_const(0xffffff),
+    // accent 加深后深色字对比度跌至 3.1:1，改白色（accent #846100 上 5.7:1）
     on_accent: rgb_const(0xffffff),
 };
 
