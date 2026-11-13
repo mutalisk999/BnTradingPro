@@ -84,7 +84,7 @@ fn main() {
             Bounds::centered_at(db.center(), win_size)
         });
         let options = WindowOptions {
-            window_bounds: bounds.map(|b| WindowBounds::Windowed(b)),
+            window_bounds: bounds.map(WindowBounds::Windowed),
             titlebar: Some(TitlebarOptions {
                 title: Some("BnTradingPro".into()),
                 ..Default::default()

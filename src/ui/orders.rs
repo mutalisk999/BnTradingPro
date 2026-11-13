@@ -285,7 +285,7 @@ fn tr_row(idx: usize, h: f32, cells: Vec<Div>) -> Div {
         .flex()
         .flex_row()
         .items_center()
-        .when(idx % 2 == 1, |d| d.bg(faded(t.text, 0.035)))
+        .when(idx % 2 == 1, |d| d.bg(theme::zebra()))
         // 指针所在行整行点亮：扫读宽表时的定位反馈（斑马纹静态、悬停动态）
         .hover(|s| s.bg(t.row_hover))
         .children(cells)

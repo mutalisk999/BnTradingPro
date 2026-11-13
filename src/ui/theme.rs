@@ -122,75 +122,49 @@ pub const BTN_LG: f32 = 36.0;
 pub const CONTROL_H: f32 = 26.0;
 /// 表单行标准高度（≥ 控件高，留少量呼吸空间）
 pub const ROW_H: f32 = 30.0;
-#[allow(dead_code)]
 /// 表格表头行高（orders/assets 表头统一）
 pub const TH_H: f32 = 22.0;
-#[allow(dead_code)]
 /// 表格数据行高（orders/assets 数据行统一）
 pub const TABLE_ROW_H: f32 = 28.0;
-#[allow(dead_code)]
 /// 顶部导航栏总高（弹层锚、盘口高度预算共同引用）
 pub const TOPBAR_H: f32 = 36.0;
 
 // ---------- 间距 token ----------
 /// 全应用间距只走 6 档（2/4/6/8/12/16）；离档值（3/10/14）一律就近归档。
 /// 仅用于 padding/gap/margin 等布局间隙；图标尺寸、绘制坐标等几何量不适用
-// （Commit 2 接线全部调用点后移除该 allow）
-#[allow(dead_code)]
 pub const SPACE_XS: f32 = 2.0;
-#[allow(dead_code)]
 /// 小间隙：徽标内边距、微分隔
 pub const SPACE_SM: f32 = 4.0;
-#[allow(dead_code)]
 /// 行内间隙：表单行、紧凑列表
 pub const SPACE_MD: f32 = 6.0;
-#[allow(dead_code)]
 /// 面板标准内边距 / 组件标准间隙
 pub const SPACE_LG: f32 = 8.0;
-#[allow(dead_code)]
 /// 卡片/弹窗内边距、区块间隙
 pub const SPACE_XL: f32 = 12.0;
-#[allow(dead_code)]
 /// 页面级留白 / 浮层与窗口边缘距离
 pub const SPACE_XXL: f32 = 16.0;
 
 // ---------- faded() 透明度档 ----------
-// （Commit 2/3/4 接线全部调用点后移除该 allow）
-#[allow(dead_code)]
 /// 边框/分隔线统一淡化档（0.6 的零散用法并入此档）
 pub const FADE_BORDER: f32 = 0.7;
-#[allow(dead_code)]
-/// 淡填充档：页签选中底、图标底
 /// accent 选中态填充叠加率：pill 页签选中底色。0.16 时 LIGHT 上 accent
 /// 文字对叠加底只有 4.31:1，降到 0.10 后 4.68:1（DARK 同步 6.57:1）
 pub const TINT_FILL: f32 = 0.10;
-#[allow(dead_code)]
 /// 柔和填充档：徽标底、输入焦点环
 pub const TINT_SOFT: f32 = 0.22;
-#[allow(dead_code)]
 /// 表格斑马纹档（叠 text 色）
 pub const TINT_ZEBRA: f32 = 0.035;
-#[allow(dead_code)]
 /// 模态遮罩透明度：浅色主题（纸面底、遮罩轻）
 pub const BACKDROP_A_LIGHT: f32 = 0.27;
-#[allow(dead_code)]
 /// 模态遮罩透明度：深色主题
 pub const BACKDROP_A_DARK: f32 = 0.47;
 
-/// 边框淡化取色（分隔线/卡片描边统一入口）
-#[allow(dead_code)]
-pub fn border_fade(cx: &App) -> Hsla {
-    faded(c(cx).border, FADE_BORDER)
-}
-
 /// 表格斑马纹取色（orders/assets 奇数行底色）
-#[allow(dead_code)]
-pub fn zebra(cx: &App) -> Hsla {
-    faded(c(cx).text, TINT_ZEBRA)
+pub fn zebra() -> Hsla {
+    faded(cur().text, TINT_ZEBRA)
 }
 
 /// 模态遮罩取色（纯黑，透明度按明暗主题分档；签名带 cx 与其它取色入口一致）
-#[allow(dead_code)]
 pub fn backdrop(_cx: &App) -> Hsla {
     let a = if is_light() {
         BACKDROP_A_LIGHT
