@@ -1782,6 +1782,9 @@ impl BnApp {
                 _ => Tab::Spot,
             })
             .unwrap_or(Tab::Spot);
+        // 激活留痕：日志里出现该行即代表本次运行是演示数据（截图与日志
+        // 归档时可辨识，避免假资产快照被误当真实账户状态分析）
+        tracing::info!("演示模式已激活 (BTP_DEMO=1, tab={tab:?})");
         self.tab = tab;
         // 市场页签必须与 set_tab 走同一套换出逻辑（page swap + market），
         // 否则 BTP_DEMO_TAB=futures 仍渲染现货页，无法复现期货布局
