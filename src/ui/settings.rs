@@ -191,12 +191,15 @@ fn checkbox_row(
             cx.notify();
         }))
         .child(cb_box(checked))
-        .child(
-            div()
-                .text_size(font_body())
-                .text_color(cur().text)
-                .child(tr(label)),
-        )
+        // 空标签 = 标签由所在 form_row 的行头承担（对齐其它行的标签列）
+        .when(!label.is_empty(), |d| {
+            d.child(
+                div()
+                    .text_size(font_body())
+                    .text_color(cur().text)
+                    .child(tr(label)),
+            )
+        })
 }
 
 /// 定宽文本框容器
@@ -207,6 +210,21 @@ fn field_box(e: &Entity<TextField>, w: f32) -> Div {
 /// 小号灰色提示
 fn hint(text: &'static str) -> Div {
     div().text_size(font_sm()).text_color(cur().text_dim).child(tr(text))
+}
+
+/// 设置页表单行：标签（text_dim 辅助色，68pt 定宽）+ 控件，统一整页
+/// 标签列对齐；标签弱化为辅助色让控件成为行的视觉主体
+fn set_row(label: &'static str) -> gpui::Div {
+    widgets::form_row()
+        .child(widgets::row_label(tr(label), 68.0))
+}
+
+/// 行尾英文/补充小字（跟在标签后的辅助说明）
+fn sub_hint(text: &'static str) -> Div {
+    div()
+        .text_size(font_sm())
+        .text_color(cur().text_dim)
+        .child(tr(text))
 }
 
 /// 应用：草稿 → 配置 + 重连（原 egui 版语义逐行迁移）
@@ -324,11 +342,9 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                 |app: &mut BnApp, v: bool| app.settings.proxy_enabled = v,
             ))
             .child(
-                widgets::form_row()
-                    .child(widgets::row_label(tr("地址"), 68.0))
-                    // 明文显示：便于核对代理主机与端口（凭据泄露风险已由
-                    // ProxyConfig 的 Debug 脱敏与 config.toml 权限约束兜底）
-                    .child(field_box(&app.settings_fields.proxy_url, 320.0)),
+                // 明文显示：便于核对代理主机与端口（凭据泄露风险已由
+                // ProxyConfig 的 Debug 脱敏与 config.toml 权限约束兜底）
+                set_row("地址").child(field_box(&app.settings_fields.proxy_url, 320.0)),
             )
             .into_any_element(),
     );
@@ -392,26 +408,10 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .flex()
         .flex_col()
         .gap(px(theme::SPACE_MD))
-        .child(
-            widgets::form_row()
-                .child(widgets::row_label(tr("语言"), 68.0))
-                .child(lang_pills),
-        )
-        .child(
-            widgets::form_row()
-                .child(widgets::row_label(tr("字体大小"), 68.0))
-                .child(font_pills),
-        )
-        .child(
-            widgets::form_row()
-                .child(widgets::row_label(tr("主题"), 68.0))
-                .child(theme_pills),
-        )
-        .child(
-            widgets::form_row()
-                .child(widgets::row_label(tr("涨跌色"), 68.0))
-                .child(price_pills),
-        )
+        .child(set_row("语言").child(lang_pills))
+        .child(set_row("字体大小").child(font_pills))
+        .child(set_row("主题").child(theme_pills))
+        .child(set_row("涨跌色").child(price_pills))
         .child(hint("保存后生效；顶栏右侧 深色/浅色 与 中/EN 按钮可即时切换"));
     let look_card =
         widgets::card_with_header(tr("语言与主题"), None, look_body.into_any_element());
@@ -446,7 +446,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         cx,
         "set_ws_order",
         ws_on,
-        "WS 下单",
+        "",
         |app: &mut BnApp, v: bool| app.settings.ws_order = v,
     )
     .tooltip(move |_, cx| {
@@ -455,54 +455,26 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             cx,
         )
     });
-    let lbl = |text: &'static str| -> Div {
-        div()
-            .text_size(font_body())
-            .text_color(cur().text)
-            .child(tr(text))
-    };
     let param_body = div()
         .flex()
         .flex_col()
         .gap(px(theme::SPACE_MD))
         // 接收窗口：仅中文界面补英文小字说明
         .child(
-            widgets::form_row()
-                .child(lbl("接收窗口"))
-                .when(recv_hint_zh, |r| {
-                    r.child(
-                        div()
-                            .text_size(font_sm())
-                            .text_color(cur().text_dim)
-                            .child("recvWindow"),
-                    )
-                })
+            set_row("接收窗口")
+                .when(recv_hint_zh, |r| r.child(sub_hint("recvWindow")))
                 .child(field_box(&app.settings_fields.recv_window, 72.0)),
         )
         .child(
-            widgets::form_row()
-                .child(lbl("HTTP 超时"))
-                .child(field_box(&app.settings_fields.http_timeout, 64.0)),
+            set_row("HTTP 超时").child(field_box(&app.settings_fields.http_timeout, 64.0)),
         )
+        .child(set_row("日志级别").child(log_pills))
+        .child(set_row("WS 下单").child(ws_cb))
         .child(
-            widgets::form_row()
-                .child(lbl("日志级别"))
-                .child(log_pills),
-        )
-        .child(
-            widgets::form_row()
-                .child(ws_cb),
-        )
-        .child(
-            widgets::form_row()
-                .child(lbl("默认交易对"))
+            set_row("默认交易对")
                 .child(field_box(&app.settings_fields.default_symbol, 110.0)),
         )
-        .child(
-            widgets::form_row()
-                .child(lbl("默认K线周期"))
-                .child(iv_pills),
-        );
+        .child(set_row("默认K线周期").child(iv_pills));
     let param_card =
         widgets::card_with_header(tr("请求参数"), None, param_body.into_any_element());
 
@@ -516,14 +488,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     .iter()
     .any(|s| !s.trim().is_empty());
     let ep_row = |label: &'static str, e: &Entity<TextField>| -> Div {
-        widgets::form_row()
-            .child(
-                div()
-                    .text_size(font_body())
-                    .text_color(cur().text)
-                    .child(tr(label)),
-            )
-            .child(field_box(e, 360.0))
+        set_row(label).child(field_box(e, 360.0))
     };
     let ep_body = div()
         .flex()
@@ -661,18 +626,16 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     let about_card = widgets::card_with_header(tr("关于"), None, about_body.into_any_element());
 
     // ---------- 组页 ----------
-    let root = div()
-        .id("settings_page")
-        .flex_1()
-        .min_h(px(0.0))
-        .overflow_y_scroll()
+    // 页头：标题 + 副标题 + 主操作（保存）前置到右侧——设置页的长表单
+    // 滚动到底才够到保存键的旧布局把它埋在端点覆盖之后，主操作应一眼可见
+    let header = div()
+        .flex()
+        .items_center()
+        .gap(px(theme::SPACE_MD))
         .child(
             div()
-                .px(px(theme::SPACE_XL))
-                .py(px(theme::SPACE_LG))
                 .flex()
                 .flex_col()
-                .gap(px(theme::SPACE_LG))
                 .child(
                     div()
                         .text_size(font_lg())
@@ -680,13 +643,33 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                         .text_color(cur().text)
                         .child(tr("设置")),
                 )
+                .child(hint("修改后点击「保存并重连」应用；字号与涨跌色即时生效")),
+        )
+        .child(div().flex_1())
+        .child(save_btn);
+    // 内容限宽居中：宽窗口下全宽卡片把表单行拉得太开，标签与控件之间
+    // 出现大片空白；760pt 是表单类页面的可读上限
+    let root = div()
+        .id("settings_page")
+        .flex_1()
+        .min_h(px(0.0))
+        .overflow_y_scroll()
+        .child(
+            div()
+                .max_w(px(760.0))
+                .mx_auto()
+                .px(px(theme::SPACE_XL))
+                .py(px(theme::SPACE_LG))
+                .flex()
+                .flex_col()
+                .gap(px(theme::SPACE_LG))
+                .child(header)
                 .child(widgets::separator())
                 .child(env_card)
                 .child(proxy_card)
                 .child(look_card)
                 .child(param_card)
                 .child(ep_card)
-                .child(save_btn)
                 .child(keys_card)
                 .child(about_card),
         );

@@ -663,6 +663,15 @@ pub fn card_header(title: impl Into<SharedString>) -> gpui::Div {
         .flex()
         .items_center()
         .w_full()
+        // 标题前 3px accent 竖条：卡头可扫读锚点（chart 选中行/侧栏同款语义）
+        .child(
+            div()
+                .w(px(3.0))
+                .h(px(14.0))
+                .rounded(px(1.5))
+                .bg(t.accent)
+                .mr(px(theme::SPACE_MD)),
+        )
         .child(
             div()
                 .text_size(font_lg())
