@@ -2,20 +2,12 @@
 name = "bn-trading-pro"
 version = "0.1.0"
 edition = "2021"
-description = "Binance 现货/U本位合约专业交易终端（Rust + egui）"
+description = "Binance 现货/U本位合约专业交易终端（Rust + GPUI）"
 
 [dependencies]
-# GUI（显式选 glow 渲染器：0.36 默认 wgpu，纯 2D 无需且 wgpu-hal/dx12 在部分 Windows 工具链编不过）。
-# 不启用 accesskit：其焦点树在控件快速增删时曾触发 accesskit_consumer 的
-# unreachable panic（交易终端稳定性优先于读屏器支持）
-eframe = { version = "0.36", default-features = false, features = [
-    "default_fonts",
-    "glow",
-    "links",
-    "wayland",
-    "x11",
-] }
-egui_extras = { version = "0.36", default-features = false }
+# GPUI（Zed 出品的 GPU 加速 UI 框架）：Windows 走 DirectX 11 渲染器（crate 内置，
+# 非 blade/wgpu），窗口图标自动从 exe 资源 ID 1 加载（build.rs winresource 已嵌入）
+gpui = "0.2.2"
 
 # 异步运行时
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
@@ -57,11 +49,9 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-# log→tracing 桥接：eframe/egui/winit 走 log crate 输出错误，
-# 不桥接则事件循环出错被静默吞掉（如缩放切换时的 glow 报错）
+# log→tracing 桥接：依赖库用 log crate 输出错误，
+# 不桥接则事件循环出错被静默吞掉
 tracing-log = "0.2"
-# 运行时窗口/任务栏图标（解码内嵌 PNG）
-image = { version = "0.25", default-features = false, features = ["png"] }
 
 [build-dependencies]
 # 构建期把 PNG 转成 ico 并嵌入 exe 资源（仅 Windows）

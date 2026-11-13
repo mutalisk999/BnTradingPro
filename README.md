@@ -2,9 +2,9 @@
 
 README.md (English) | [README_CN.md (中文)](README_CN.md)
 
-A professional trading terminal for Binance Spot / USDⓈ-M Futures — a native desktop application (Windows) built with **Rust + egui**.
+A professional trading terminal for Binance Spot / USDⓈ-M Futures — a native desktop application (Windows) built with **Rust + GPUI** (the GPU-accelerated UI framework from Zed, DirectX 11 renderer on Windows).
 
-![tech](https://img.shields.io/badge/Rust-1.99+-orange) ![gui](https://img.shields.io/badge/GUI-egui%2Feframe-blue) ![license](https://img.shields.io/badge/status-beta-yellow)
+![tech](https://img.shields.io/badge/Rust-1.99+-orange) ![gui](https://img.shields.io/badge/GUI-GPUI%200.2-blue) ![license](https://img.shields.io/badge/status-beta-yellow)
 
 ## Screenshots
 
@@ -16,11 +16,12 @@ Main interface — Spot trading page, dark theme, live BTCUSDT market data (orde
 
 - **Dual markets**: one-click switching between Spot and USDⓈ-M Futures
 - **Real-time market data**: WebSocket push of 24h ticker, 20-level order book (100ms), trades, and candlesticks; futures additionally include mark price and funding rate
-- **Custom-rendered candlestick chart**: candles + volume, scroll to zoom / drag to pan / double-click to return to the latest / crosshair details; with overlays for open-order prices and futures entry-price reference lines
+- **Custom-rendered candlestick chart**: candles + volume, scroll to zoom / drag to pan / double-click to return to the latest / crosshair details; with overlays for open-order prices and futures entry-price reference lines; selectable sub-indicator panes (VOL / MA / BOLL / RSI / MACD / KDJ etc.)
 - **Manual order entry**: Limit / Market / Stop-Limit / Take-Profit Limit (Spot); Stop-Market / Take-Profit Market (Futures); Hedge Mode supported with LONG/SHORT
 - **Order protection**: prices and quantities are automatically quantized per symbol filters (tickSize / stepSize), with validation of minimum notional value / minimum quantity; a second confirmation dialog before submission (red warning in live-trading mode)
 - **Account**: Spot balances (available / locked), futures account overview (wallet balance / unrealized PnL / margin / available), positions table (entry price / mark price / liquidation price / one-click close), leverage adjustment, one-way ↔ hedge mode switching
-- **Order management**: real-time open-orders list (pushed via the user data stream; cancel a single order or all orders for the symbol), order history, trade fills
+- **Order management**: real-time open-orders list (pushed via the user data stream; cancel a single order or all orders for the symbol), order history, trade fills, TP/SL (take-profit / stop-loss) orders
+- **UI polish**: light ("warm paper") / dark themes with WCAG-audited palettes (all text ≥4.5:1 contrast), instant theme switching; Chinese / English interface; three font-size steps; green-up/red-down ↔ red-up/green-down color direction; resizable panels (sidebar / order book / order entry / orders pane)
 - **Security**: master password (Argon2id-derived) + AES-256-GCM encrypted storage of the API Key/Secret, keys zeroized on exit, fully sanitized logs
 - **Networking**: HTTP / SOCKS5 proxy (effective for both REST and WebSocket), endpoint overrides, one-click Testnet switching (with a prominent badge)
 
@@ -33,7 +34,7 @@ cargo build --release
 # Output: target\release\bn-trading-pro.exe
 ```
 
-Requires the MSVC toolchain (`rustup default stable` + Visual Studio Build Tools with the C++ workload).
+Requires the MSVC toolchain (`rustup default stable` + Visual Studio Build Tools with the C++ workload). Windows 10+ (DirectX 11).
 
 ### 2. Prepare API Keys (testnet strongly recommended first)
 
@@ -51,6 +52,8 @@ Requires the MSVC toolchain (`rustup default stable` + Visual Studio Build Tools
 2. Enter the API Key / Secret → Save and connect
 3. Defaults to Testnet mode (yellow `TESTNET` badge at the top); double-check before switching to live trading
 
+> Debug builds support a demo mode for development/screenshots: set `BTP_DEMO=1` to skip the unlock screen and inject fake assets (optionally `BTP_DEMO_TAB=futures|portfolio|settings` to pick the initial page). Compiled out of release builds.
+
 ## Configuration
 
 Config file: `%APPDATA%\BnTradingPro\config.toml`; key vault: `vault.bin` in the same directory; logs: `logs\` in the same directory.
@@ -59,7 +62,10 @@ Config file: `%APPDATA%\BnTradingPro\config.toml`; key vault: `vault.bin` in the
 |---|---|---|
 | `testnet` | `true` | Testnet toggle |
 | `default_symbol` / `default_interval` | BTCUSDT / 15m | Default trading pair and candlestick interval at startup |
+| `theme_mode` / `font_size` / `price_dir` | dark / small / green_up | Theme (light/dark), font-size step, price-direction colors — editable in Settings, applied instantly |
+| `lang` | zh | UI language (zh = Chinese / en = English) |
 | `recv_window_ms` | 5000 | Validity window for signed requests |
+| `http_timeout_secs` / `log_level` / `ws_order` | 15 / info / false | HTTP timeout (seconds), log level, place futures orders via WebSocket API (auto-fallback to REST) |
 | `proxy.enabled` / `proxy.url` | off | Proxy, e.g. `http://127.0.0.1:7890`, `socks5://user:pass@127.0.0.1:1080` |
 | `override_spot_rest` and 3 more | empty | Endpoint overrides (self-hosted reverse proxy / debugging) |
 
@@ -73,7 +79,7 @@ Built-in default endpoints:
 ## Architecture
 
 ```
-UI thread (eframe, immediate mode)           Background engine (dedicated tokio runtime)
+UI (GPUI entity, GPU-rendered)               Background engine (dedicated tokio runtime)
 ┌────────────────────────────────┐   Command   ┌────────────────────────────────────────────┐
 │  read-only snapshot → render   │ ──────────→ │  cmd_loop    REST command execution        │
 │  user actions → send command   │             │  market_ws   market stream + auto-reconnect│
@@ -90,12 +96,13 @@ UI thread (eframe, immediate mode)           Background engine (dedicated tokio 
 | `binance/symbols.rs` | exchangeInfo parsing and tick/step/minNotional quantization |
 | `engine/` | Command loop, market data WebSocket (exponential backoff reconnect), user data stream (real-time reconciliation via executionReport / ORDER_TRADE_UPDATE) |
 | `security/` | Argon2id KDF + AES-256-GCM vault |
-| `ui/` | Themes (CJK fonts), custom-rendered candlestick chart, order book / order entry / orders / assets / settings |
+| `ui/theme.rs` | Light/dark palettes (contrast-audited), font scaling (CJK: Microsoft YaHei body / Cascadia Code mono digits) |
+| `ui/` | Custom-rendered candlestick chart, order book / order entry / orders / assets / settings; shared widgets (modal shell, buttons, text fields) |
 
 ## Testing
 
 ```powershell
-cargo test          # 64 unit tests: signature vectors, quantization boundaries, vault round-trip, WS message parsing, etc.
+cargo test          # 77 unit tests: signature vectors, quantization boundaries, vault round-trip, WS message parsing, theme tokens, etc.
 cargo clippy -- -D warnings
 ```
 

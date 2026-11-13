@@ -4,86 +4,197 @@
 //! 卡头 = 市场名 + 各自的操作/徽章槽，卡体 = 明细表；合约卡另有
 //! USDT 计价的迷你统计行（可跨资产加总，现货不做跨币种假合计）。
 //! 本页只关注资产本身——持仓/平仓在期货交易页的持仓页签。
+//!
+//! 里程碑 9：GPUI 移植。账户快照短锁拷贝后绘制（acct 是引擎写热点，
+//! 不能在整个表格构建期间持有锁，与 chart.rs 的 clone-and-release 纪律一致）。
 
 use crate::app::BnApp;
+use crate::engine::state::SharedState;
 use crate::engine::Command;
-use crate::ui::{theme, widgets};
-use eframe::egui;
-use egui_extras::{Column, TableBuilder};
+use crate::i18n::tr;
+use crate::ui::theme::{self, cur, faded, font_body, font_lg, font_md};
+use crate::ui::widgets;
+use gpui::{
+    div, prelude::FluentBuilder, px, Context, Div, FontWeight, InteractiveElement, IntoElement,
+    ParentElement, StatefulInteractiveElement, Styled,
+};
 use rust_decimal::Decimal;
 use std::sync::Arc;
 
+// ---------- 本页私有表格助手（列少且定宽，无需 orders.rs 的横滚框架） ----------
+
+#[derive(Clone, Copy)]
+struct Col {
+    w: f32,
+    right: bool,
+}
+
+const fn cw(w: f32, right: bool) -> Col {
+    Col { w, right }
+}
+
+/// 数据单元格：定宽 + 数值列右对齐，溢出按边界裁剪（遮挡优于顶歪）
+fn td(c: &Col, child: impl IntoElement) -> Div {
+    div()
+        .h_full()
+        .flex()
+        .items_center()
+        .overflow_hidden()
+        .px(px(theme::SPACE_MD))
+        .w(px(c.w))
+        .when(c.right, |d| d.justify_end())
+        .child(child)
+}
+
+fn head_cell(txt: &'static str, c: &Col) -> Div {
+    div()
+        .h_full()
+        .flex()
+        .items_center()
+        .overflow_hidden()
+        .px(px(theme::SPACE_MD))
+        .w(px(c.w))
+        .when(c.right, |d| d.justify_end())
+        .child(widgets::card_label(tr(txt)))
+}
+
+fn header_row(cols: &[Col], labels: &[&'static str]) -> Div {
+    let t = cur();
+    let mut h = div()
+        .h(px(theme::TH_H))
+        .flex()
+        .flex_row()
+        .items_center()
+        .border_b_1()
+        .border_color(faded(t.border, 0.6));
+    for (i, c) in cols.iter().enumerate() {
+        h = h.child(head_cell(labels[i], c));
+    }
+    h
+}
+
+fn tr_row(idx: usize, cells: Vec<Div>) -> Div {
+    let t = cur();
+    div()
+        .h(px(theme::TABLE_ROW_H))
+        .flex()
+        .flex_row()
+        .items_center()
+        .when(idx % 2 == 1, |d| d.bg(faded(t.text, 0.035)))
+        // 与 orders.rs 表格同语义：指针所在行整行点亮
+        .hover(|s| s.bg(t.row_hover))
+        .children(cells)
+}
+
+/// 资产代码：等宽字体
+fn asset_code(code: &str) -> Div {
+    div()
+        .font_family(crate::ui::theme::FONT_MONO)
+        .text_size(font_md())
+        .text_color(cur().text)
+        .child(code.to_string())
+}
+
 /// 账户列加载失败的显式错误行 + 重试入口（避免无限"加载中…"）
-fn load_failed_row(
-    state: &Arc<crate::engine::state::SharedState>,
-    ui: &mut egui::Ui,
-    err: Option<String>,
-) {
+fn load_failed_row(_state: &Arc<SharedState>, err: Option<String>, cx: &mut Context<BnApp>) -> Div {
     match err {
-        Some(e) => {
-            ui.label(
-                egui::RichText::new(format!("{}{e}", crate::i18n::tr("加载失败: ")))
-                    .size(theme::font_sm())
-                    .color(theme::cur().err),
-            );
-            if theme::btn_default(ui, crate::i18n::tr("刷新账户"), true).clicked() {
-                state.send_cmd(Command::RefreshAccount);
-            }
-        }
-        None => {
-            widgets::loading_state(ui, crate::i18n::tr("加载中…"));
-        }
+        Some(e) => div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(theme::SPACE_LG))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .text_size(font_body())
+                    .text_color(cur().err)
+                    .child(format!("{}{e}", tr("加载失败: "))),
+            )
+            .child(
+                widgets::btn_default("assets_retry", tr("刷新账户"), true).on_click(cx.listener(
+                    |app: &mut BnApp, _, _, cx| {
+                        app.state.send_cmd(Command::RefreshAccount);
+                        cx.notify();
+                    },
+                )),
+            ),
+        None => div().child(widgets::loading_state(tr("加载中…"))),
     }
 }
 
-/// 卡头：市场名（正文字号加粗，层级压过页面标题）+ 右侧槽位
-fn card_header(ui: &mut egui::Ui, title: &str, add_right: impl FnOnce(&mut egui::Ui)) {
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(title).strong().size(theme::font_body()));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add_right);
-    });
-    ui.add_space(2.0);
-    ui.separator();
-}
+const EMPTY_ASSETS_ICON: &str = "◎";
 
-pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
+pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     let state = Arc::clone(&app.state);
     if !state.has_creds() {
-        widgets::placeholder(
-            ui,
-            ui.max_rect(),
-            crate::i18n::tr("未配置 API 密钥，无法查看资产（可在设置页配置）"),
-        );
-        return;
+        return div()
+            .flex_1()
+            .min_h(px(0.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(widgets::empty_state(
+                EMPTY_ASSETS_ICON,
+                tr("未配置 API 密钥，无法查看资产（可在设置页配置）"),
+                "",
+            ));
     }
 
     // ---------- 页头：标题 + 全局刷新 ----------
-    ui.add_space(2.0);
-    theme::form_row(ui, |ui| {
-        ui.label(
-            egui::RichText::new(crate::i18n::tr("资产总览"))
-                .strong()
-                .size(theme::font_lg()),
+    let refresh_btn = widgets::btn_default("assets_refresh", tr("刷新账户"), true).on_click(
+        cx.listener(|app: &mut BnApp, _, _, cx| {
+            app.state.send_cmd(Command::RefreshAccount);
+            cx.notify();
+        }),
+    );
+
+    let mut root = div()
+        .id("assets_page")
+        .flex_1()
+        .min_h(px(0.0))
+        .overflow_y_scroll()
+        .child(
+            div()
+                .px(px(theme::SPACE_XL))
+                .py(px(theme::SPACE_LG))
+                .flex()
+                .flex_col()
+                .gap(px(theme::SPACE_LG))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(theme::SPACE_LG))
+                        .child(
+                            div()
+                                .text_size(font_lg())
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(cur().text)
+                                .child(tr("资产总览")),
+                        )
+                        .child(div().flex_1())
+                        .child(refresh_btn),
+                ),
         );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if theme::btn_default(ui, crate::i18n::tr("刷新账户"), true).clicked() {
-                state.send_cmd(Command::RefreshAccount);
-            }
-        });
-    });
-    ui.add_space(6.0);
 
     // ---------- 现货资产卡片 ----------
-    spot_section(&state, ui);
-    ui.add_space(10.0);
+    root = root.child(spot_section(&state, cx));
 
     // ---------- 合约资产卡片 ----------
-    fut_section(&state, ui);
+    root = root.child(fut_section(&state, cx));
+
+    // 外层再包一层弹性容器（root 带 id/滚动为 Stateful<Div>，页面统一返回 Div）
+    div()
+        .flex_1()
+        .min_h(px(0.0))
+        .flex()
+        .flex_col()
+        .child(root)
 }
 
-fn spot_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) {
-    // 短锁拷贝后绘制：acct 是引擎写热点（WS 推送/REST 刷新），
-    // 不能在整个表格构建期间持有锁（与 chart.rs 的 clone-and-release 纪律一致）
+fn spot_section(state: &Arc<SharedState>, cx: &mut Context<BnApp>) -> Div {
+    // 短锁拷贝后绘制
     let (nonzero, can_trade, err) = {
         let acct = state.acct.lock();
         match acct.spot.as_ref() {
@@ -99,235 +210,199 @@ fn spot_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::U
             ),
         }
     };
-    theme::card(ui, |ui| {
-        card_header(ui, crate::i18n::tr("现货资产"), |ui| {
-            if !can_trade {
-                theme::badge(ui, crate::i18n::tr("该 Key 无交易权限"), theme::cur().warn);
+
+    let card = widgets::card()
+        .flex()
+        .flex_col()
+        .child(
+            widgets::card_header(tr("现货资产"))
+                .when(!can_trade, |h| {
+                    h.child(widgets::badge(tr("该 Key 无交易权限"), cur().warn))
+                })
+                .when(!nonzero.is_empty(), |h| {
+                    h.child(widgets::card_label(format!(
+                        "{} {}",
+                        nonzero.len(),
+                        tr("个非零资产")
+                    )))
+                }),
+        )
+        .child(widgets::separator());
+
+    if let Some(e) = err {
+        return card.child(load_failed_row(state, Some(e), cx));
+    }
+    if nonzero.is_empty() {
+        return card.child(widgets::empty_state(
+            EMPTY_ASSETS_ICON,
+            tr("暂无非零资产"),
+            tr("余额到账后自动显示"),
+        ));
+    }
+
+    // 冻结列仅在有冻结资产时显示：绝大多数账户该值常年为 0，
+    // 一整列孤零零的暗色 0 只有噪音没有信息
+    let has_locked = nonzero.iter().any(|b| b.locked != Decimal::ZERO);
+    let cols: Vec<Col> = if has_locked {
+        vec![cw(90.0, false), cw(130.0, true), cw(130.0, true), cw(130.0, true)]
+    } else {
+        vec![cw(90.0, false), cw(130.0, true), cw(130.0, true)]
+    };
+    let labels: Vec<&'static str> = if has_locked {
+        vec!["资产", "钱包余额", "可用", "冻结"]
+    } else {
+        vec!["资产", "钱包余额", "可用"]
+    };
+
+    let rows: Vec<Div> = nonzero
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            let mut cells = vec![
+                td(&cols[0], asset_code(&b.asset)),
+                td(
+                    &cols[1],
+                    widgets::num_cell(widgets::fmt_dec_grouped(&(b.free + b.locked)), None),
+                ),
+                td(
+                    &cols[2],
+                    widgets::num_cell(widgets::fmt_dec_grouped(&b.free), None),
+                ),
+            ];
+            if has_locked {
+                cells.push(td(
+                    &cols[3],
+                    widgets::num_cell(
+                        widgets::fmt_dec_grouped(&b.locked),
+                        Some(cur().text_dim),
+                    ),
+                ));
             }
-            if !nonzero.is_empty() {
-                ui.label(theme::card_label(&format!(
-                    "{} {}",
-                    nonzero.len(),
-                    crate::i18n::tr("个非零资产")
-                )));
-            }
-        });
-        if let Some(e) = err {
-            load_failed_row(state, ui, Some(e));
-            return;
-        }
-        if nonzero.is_empty() {
-            widgets::empty_state(
-                ui,
-                "◎",
-                crate::i18n::tr("暂无非零资产"),
-                crate::i18n::tr("余额到账后自动显示"),
-            );
-            return;
-        }
-        // 冻结列仅在有冻结资产时显示：绝大多数账户该值常年为 0，
-        // 一整列孤零零的暗色 0 只有噪音没有信息
-        let has_locked = nonzero.iter().any(|b| b.locked != Decimal::ZERO);
-        TableBuilder::new(ui)
-            // TableBuilder 默认 id_salt 固定 "__table_state"：同一 ui 下两张表
-            // 各需唯一 salt，冲突时 egui 会画出 "First use of Table ID …" 调试错误
-            .id_salt("spot_assets")
-            .striped(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::auto().clip(true).at_least(90.0)) // 资产
-            .column(Column::auto().clip(true).at_least(130.0)) // 钱包余额（可用+冻结）
-            .column(Column::auto().clip(true).at_least(130.0)) // 可用
-            // 数值列统一 auto+at_least：末列不用 remainder，整卡宽度下
-            // 会把末列顶到最右、中间大片留白
-            .column(Column::auto().clip(true).at_least(130.0)) // 冻结（条件显示）
-            .header(22.0, |mut h| {
-                for t in if has_locked {
-                    ["资产", "钱包余额", "可用", "冻结"].as_slice()
-                } else {
-                    ["资产", "钱包余额", "可用"].as_slice()
-                } {
-                    h.col(|ui| {
-                        if *t == "资产" {
-                            ui.label(theme::card_label(crate::i18n::tr(t)));
-                        } else {
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(theme::card_label(crate::i18n::tr(t)));
-                                },
-                            );
-                        }
-                    });
-                }
-            })
-            .body(|mut body| {
-                for b in &nonzero {
-                    body.row(22.0, |mut row| {
-                        row.col(|ui| {
-                            ui.label(theme::code(&b.asset).size(theme::font_md()));
-                        });
-                        row.col(|ui| {
-                            widgets::num_cell(
-                                ui,
-                                widgets::fmt_dec_grouped(&(b.free + b.locked)),
-                                None,
-                            );
-                        });
-                        row.col(|ui| {
-                            widgets::num_cell(ui, widgets::fmt_dec_grouped(&b.free), None);
-                        });
-                        if has_locked {
-                            row.col(|ui| {
-                                widgets::num_cell(
-                                    ui,
-                                    widgets::fmt_dec_grouped(&b.locked),
-                                    Some(theme::cur().text_dim),
-                                );
-                            });
-                        }
-                    });
-                }
-            });
-    });
+            tr_row(i, cells)
+        })
+        .collect();
+
+    card
+        .child(header_row(&cols, &labels))
+        .children(rows)
 }
 
-fn fut_section(state: &Arc<crate::engine::state::SharedState>, ui: &mut egui::Ui) {
+fn fut_section(state: &Arc<SharedState>, cx: &mut Context<BnApp>) -> Div {
     let (fut, dual, fut_err) = {
         let acct = state.acct.lock();
         (acct.fut.clone(), acct.fut_dual_side, acct.fut_err.clone())
     };
-    theme::card(ui, |ui| {
-        card_header(ui, crate::i18n::tr("合约资产 · U本位"), |ui| {
-            if theme::btn_default(ui, crate::i18n::tr("切换"), true)
-                .on_hover_text(crate::i18n::tr("切换单向/双向持仓模式"))
-                .clicked()
-            {
-                state.send_cmd(Command::SetDualSide { dual: !dual });
-            }
-            ui.label(theme::card_label(if dual {
-                crate::i18n::tr("持仓模式：双向")
-            } else {
-                crate::i18n::tr("持仓模式：单向")
-            }));
-        });
-        let Some(a) = fut else {
-            load_failed_row(state, ui, fut_err);
-            return;
-        };
-        // 迷你统计行：USDT 计价可跨资产加总；horizontal_wrapped 窄窗折行不裁切
-        ui.horizontal_wrapped(|ui| {
-            let ext =
-                |rt: egui::RichText| egui::Label::new(rt).wrap_mode(egui::TextWrapMode::Extend);
-            let stat = |ui: &mut egui::Ui, label: &str, v: String, color: egui::Color32| {
-                ui.add(ext(theme::card_label(label)));
-                ui.add(ext(egui::RichText::new(v)
-                    .monospace()
-                    .size(theme::font_md())
-                    .color(color)));
-                ui.add_space(10.0);
-            };
-            let f = |d: &Decimal| widgets::f64_decimal(d);
-            stat(
-                ui,
-                crate::i18n::tr("钱包余额"),
-                widgets::fmt_thousands(f(&a.total_wallet), 4),
-                theme::cur().text,
-            );
-            stat(
-                ui,
-                crate::i18n::tr("可用余额"),
-                widgets::fmt_thousands(f(&a.available), 4),
-                theme::cur().text,
-            );
-            stat(
-                ui,
-                crate::i18n::tr("保证金余额"),
-                widgets::fmt_thousands(f(&a.total_margin), 4),
-                theme::cur().text,
-            );
-            stat(
-                ui,
-                crate::i18n::tr("未实现盈亏"),
-                widgets::fmt_thousands(f(&a.total_unrealized), 4),
-                theme::signed_color(f(&a.total_unrealized)),
-            );
-        });
-        ui.add_space(4.0);
-        // 短锁拷贝资产明细
-        let assets: Vec<crate::binance::model::FutBalance> = {
-            let acct = state.acct.lock();
-            match acct.fut.as_ref() {
-                Some(a) => a
-                    .assets
-                    .iter()
-                    .filter(|b| b.wallet != Decimal::ZERO)
-                    .cloned()
-                    .collect(),
-                None => Vec::new(),
-            }
-        };
-        if assets.is_empty() {
-            widgets::empty_state(
-                ui,
-                "◎",
-                crate::i18n::tr("暂无非零资产"),
-                crate::i18n::tr("余额到账后自动显示"),
-            );
-            return;
+
+    let toggle_btn = widgets::btn_default("fut_dual_toggle", tr("切换"), true)
+        .tooltip(move |_, cx| widgets::tooltip_view(tr("切换单向/双向持仓模式").to_string(), cx))
+        .on_click(cx.listener(move |app: &mut BnApp, _, _, cx| {
+            app.state.send_cmd(Command::SetDualSide { dual: !dual });
+            cx.notify();
+        }));
+
+    let mut card = widgets::card()
+        .flex()
+        .flex_col()
+        .child(
+            widgets::card_header(tr("合约资产 · U本位"))
+                .child(toggle_btn)
+                .child(widgets::card_label(if dual {
+                    tr("持仓模式：双向")
+                } else {
+                    tr("持仓模式：单向")
+                })),
+        )
+        .child(widgets::separator());
+
+    let Some(a) = fut else {
+        return card.child(load_failed_row(state, fut_err, cx));
+    };
+
+    // 迷你统计行：USDT 计价可跨资产加总；flex_wrap 窄窗折行不裁切
+    let f = |d: &Decimal| widgets::f64_decimal(d);
+    let stat = |label: &'static str, v: String, color: gpui::Rgba| -> Div {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(theme::SPACE_MD))
+            .child(widgets::card_label(tr(label)))
+            .child(
+                div()
+                    .font_family(crate::ui::theme::FONT_MONO)
+                    .text_size(font_md())
+                    .text_color(color)
+                    .child(v),
+            )
+    };
+    let stats = div()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .items_center()
+        .gap_x(px(18.0))
+        .gap_y(px(4.0))
+        .child(stat("钱包余额", widgets::fmt_thousands(f(&a.total_wallet), 4), cur().text))
+        .child(stat("可用余额", widgets::fmt_thousands(f(&a.available), 4), cur().text))
+        .child(stat("保证金余额", widgets::fmt_thousands(f(&a.total_margin), 4), cur().text))
+        .child(stat(
+            "未实现盈亏",
+            widgets::fmt_thousands(f(&a.total_unrealized), 4),
+            theme_signed(f(&a.total_unrealized)),
+        ));
+    card = card.child(stats);
+
+    // 短锁拷贝资产明细
+    let assets: Vec<crate::binance::model::FutBalance> = {
+        let acct = state.acct.lock();
+        match acct.fut.as_ref() {
+            Some(a) => a
+                .assets
+                .iter()
+                .filter(|b| b.wallet != Decimal::ZERO)
+                .cloned()
+                .collect(),
+            None => Vec::new(),
         }
-        TableBuilder::new(ui)
-            // 同上：与现货表区分 id
-            .id_salt("fut_assets")
-            .striped(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::auto().clip(true).at_least(90.0)) // 资产
-            .column(Column::auto().clip(true).at_least(130.0)) // 钱包余额
-            .column(Column::auto().clip(true).at_least(130.0)) // 可用
-            // 末列不用 remainder：整卡宽度下会把末列顶到最右、中间大片留白
-            .column(Column::auto().clip(true).at_least(130.0)) // 未实现盈亏
-            .header(22.0, |mut h| {
-                for t in ["资产", "钱包余额", "可用", "未实现盈亏"] {
-                    h.col(|ui| {
-                        if t == "资产" {
-                            ui.label(theme::card_label(crate::i18n::tr(t)));
-                        } else {
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(theme::card_label(crate::i18n::tr(t)));
-                                },
-                            );
-                        }
-                    });
-                }
-            })
-            .body(|mut body| {
-                for b in &assets {
-                    body.row(22.0, |mut row| {
-                        row.col(|ui| {
-                            ui.label(theme::code(&b.asset).size(theme::font_md()));
-                        });
-                        row.col(|ui| {
-                            widgets::num_cell(ui, widgets::fmt_dec_grouped(&b.wallet), None);
-                        });
-                        row.col(|ui| {
-                            widgets::num_cell(ui, widgets::fmt_dec_grouped(&b.available), None);
-                        });
-                        row.col(|ui| {
-                            let s = widgets::fmt_dec_grouped(&b.unrealized);
-                            let sign = if b.unrealized >= Decimal::ZERO {
-                                "+"
-                            } else {
-                                ""
-                            };
-                            widgets::num_cell(
-                                ui,
-                                format!("{sign}{s}"),
-                                Some(theme::signed_color(widgets::f64_decimal(&b.unrealized))),
-                            );
-                        });
-                    });
-                }
-            });
-    });
+    };
+    if assets.is_empty() {
+        return card.child(widgets::empty_state(
+            EMPTY_ASSETS_ICON,
+            tr("暂无非零资产"),
+            tr("余额到账后自动显示"),
+        ));
+    }
+
+    let cols = [cw(90.0, false), cw(130.0, true), cw(130.0, true), cw(130.0, true)];
+    let labels = ["资产", "钱包余额", "可用", "未实现盈亏"];
+
+    let rows: Vec<Div> = assets
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            let s = widgets::fmt_dec_grouped(&b.unrealized);
+            let sign = if b.unrealized >= Decimal::ZERO { "+" } else { "" };
+            tr_row(
+                i,
+                vec![
+                    td(&cols[0], asset_code(&b.asset)),
+                    td(&cols[1], widgets::num_cell(widgets::fmt_dec_grouped(&b.wallet), None)),
+                    td(&cols[2], widgets::num_cell(widgets::fmt_dec_grouped(&b.available), None)),
+                    td(
+                        &cols[3],
+                        widgets::num_cell(
+                            format!("{sign}{s}"),
+                            Some(theme_signed(widgets::f64_decimal(&b.unrealized))),
+                        ),
+                    ),
+                ],
+            )
+        })
+        .collect();
+
+    card.child(header_row(&cols, &labels)).children(rows)
+}
+
+/// signed_color 的薄封装（本文件多处调用，缩短行宽）
+fn theme_signed(d: f64) -> gpui::Rgba {
+    crate::ui::theme::signed_color(d)
 }

@@ -1,8 +1,9 @@
 //! 后台引擎：命令处理（REST）、行情 WebSocket、用户数据流 WebSocket
 //!
-//! UI 线程通过 `SharedState::send_cmd` 发送命令；后台任务把结果写入 `SharedState` 快照并请求重绘。
+//! UI 线程通过 `SharedState::send_cmd` 发送命令；后台任务把结果写入 `SharedState` 快照，
+//! 并经唤醒通道请求 UI 重绘（GPUI 的执行器不是 Send，引擎线程不能直接调 notify，
+//! 改为向 tokio 无界通道发信号，UI 侧前台任务 recv 后 cx.notify()）。
 
-use eframe::egui;
 pub mod state;
 
 use crate::binance::client::{
@@ -21,6 +22,11 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, watch};
+
+/// UI 重绘唤醒通道：引擎写状态后向此通道发 `()`，UI 侧任务收到后触发重绘。
+/// GPUI ForegroundExecutor 非 Send（内含 PhantomData<Rc<()>>），引擎线程无法
+/// 直接触碰 UI；tokio 通道的 waker 唤醒 GPUI 主线程上的 async 任务是标准桥法
+pub type WakeTx = mpsc::UnboundedSender<()>;
 
 #[derive(Debug, Clone)]
 pub struct SubSpec {
@@ -103,7 +109,7 @@ pub enum Command {
 /// 启动后台运行时与全部任务。
 /// 命令通道的唯一入口是 `SharedState::send_cmd`（返回入队是否成功）；
 /// UI 不再持有独立 sender，避免失败提示/回滚策略按入口分裂
-pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
+pub fn spawn(state: Arc<SharedState>, wake: WakeTx) {
     let (tx, rx) = mpsc::unbounded_channel::<Command>();
     *state.cmd_tx.write() = Some(tx.clone());
 
@@ -208,7 +214,7 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
                     }
                     let (sub_tx, sub_rx) = watch::channel::<Option<SubSpec>>(None);
                     let h_cmd = tokio::spawn(cmd_loop(
-                        ctx.clone(),
+                        wake.clone(),
                         state.clone(),
                         rx,
                         sub_tx.clone(),
@@ -219,27 +225,27 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
                     // 槽位 A 承载，槽位 B 空转。pair 合并两槽状态供 UI 展示
                     let ws_pair = Arc::new(parking_lot::Mutex::new(WsPairState::default()));
                     let h_market = tokio::spawn(market_ws_loop(
-                        ctx.clone(),
+                        wake.clone(),
                         state.clone(),
                         sub_rx.clone(),
                         ws_pair.clone(),
                         MarketWsSlot::A,
                     ));
                     let h_market_b = tokio::spawn(market_ws_loop(
-                        ctx.clone(),
+                        wake.clone(),
                         state.clone(),
                         sub_rx.clone(),
                         ws_pair.clone(),
                         MarketWsSlot::B,
                     ));
                     let h_user_spot = tokio::spawn(user_ws_loop(
-                        ctx.clone(),
+                        wake.clone(),
                         state.clone(),
                         Market::Spot,
                         tx.clone(),
                     ));
                     let h_user_fut = tokio::spawn(user_ws_loop(
-                        ctx.clone(),
+                        wake.clone(),
                         state.clone(),
                         Market::UmFutures,
                         tx.clone(),
@@ -254,7 +260,7 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
                         |name: &'static str,
                          h: tokio::task::JoinHandle<()>,
                          state: Arc<SharedState>,
-                         ctx: egui::Context,
+                         ctx: WakeTx,
                          tx: mpsc::UnboundedSender<Command>,
                          sub_rx: watch::Receiver<Option<SubSpec>>,
                          pair: Arc<parking_lot::Mutex<WsPairState>>| {
@@ -332,7 +338,7 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
                         "cmd",
                         h_cmd,
                         state.clone(),
-                        ctx.clone(),
+                        wake.clone(),
                         tx.clone(),
                         sub_rx.clone(),
                         ws_pair.clone(),
@@ -341,7 +347,7 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
                         "market",
                         h_market,
                         state.clone(),
-                        ctx.clone(),
+                        wake.clone(),
                         tx.clone(),
                         sub_rx.clone(),
                         ws_pair.clone(),
@@ -350,7 +356,7 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
                         "market-b",
                         h_market_b,
                         state.clone(),
-                        ctx.clone(),
+                        wake.clone(),
                         tx.clone(),
                         sub_rx.clone(),
                         ws_pair.clone(),
@@ -359,7 +365,7 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
                         "user-spot",
                         h_user_spot,
                         state.clone(),
-                        ctx.clone(),
+                        wake.clone(),
                         tx.clone(),
                         sub_rx.clone(),
                         ws_pair.clone(),
@@ -368,7 +374,7 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
                         "user-futures",
                         h_user_fut,
                         state.clone(),
-                        ctx.clone(),
+                        wake.clone(),
                         tx.clone(),
                         sub_rx.clone(),
                         ws_pair.clone(),
@@ -383,8 +389,8 @@ pub fn spawn(ctx: egui::Context, state: Arc<SharedState>) {
         .expect("启动引擎线程失败");
 }
 
-fn repaint(ctx: &egui::Context) {
-    ctx.request_repaint();
+fn repaint(ctx: &WakeTx) {
+    let _ = ctx.send(());
 }
 
 fn toast_err(state: &SharedState, e: &BinanceError) {
@@ -468,7 +474,7 @@ struct CmdCtx {
 }
 
 async fn cmd_loop(
-    ctx: egui::Context,
+    ctx: WakeTx,
     state: Arc<SharedState>,
     mut rx: mpsc::UnboundedReceiver<Command>,
     sub_tx: watch::Sender<Option<SubSpec>>,
@@ -670,7 +676,7 @@ async fn fetch_rules(
 }
 
 async fn handle_cmd(
-    ctx: &egui::Context,
+    ctx: &WakeTx,
     c: &mut CmdCtx,
     cmd: Command,
     sub_tx: &watch::Sender<Option<SubSpec>>,
@@ -2377,7 +2383,7 @@ impl WsPairState {
 }
 
 async fn market_ws_loop(
-    ctx: egui::Context,
+    ctx: WakeTx,
     state: Arc<SharedState>,
     mut rx_sub: watch::Receiver<Option<SubSpec>>,
     pair: Arc<parking_lot::Mutex<WsPairState>>,
@@ -2532,10 +2538,10 @@ async fn market_ws_loop(
                                             resub_dl = None;
                                         }
                                         // 行情帧可达每秒数百条（depth20@100ms +
-                                        // aggTrade），逐帧立即重绘会让 UI 在无输入
-                                        // 时也持续满帧率空转；合帧到 ~10fps，
-                                        // 状态变迁/用户输入仍走立即重绘
-                                        ctx.request_repaint_after(Duration::from_millis(100));
+                                        // aggTrade）：旧实现 request_repaint_after
+                                        // 合帧 ~10fps。唤醒通道只发信号，节流交给
+                                        // UI 侧心跳任务（~100ms 档位）统一调度
+                                        let _ = ctx.send(());
                                     }
                                 }
                             }
@@ -2867,7 +2873,7 @@ fn handle_market_msg_text(state: &SharedState, spec: &SubSpec, text: &str) -> bo
 // ---------------------------------------------------------------- 用户数据流
 
 async fn user_ws_loop(
-    ctx: egui::Context,
+    ctx: WakeTx,
     state: Arc<SharedState>,
     market: Market,
     engine_tx: mpsc::UnboundedSender<Command>,
@@ -3091,8 +3097,8 @@ async fn user_ws_loop(
                                 if let Some(txt) = txt {
                                     handle_user_event(&state, market, &txt, &engine_tx);
                                     // 用户事件多为对账推送，成交风暴时可能高频；
-                                    // 合帧 100ms 与行情流一致，避免满帧率空转
-                                    ctx.request_repaint_after(Duration::from_millis(100));
+                                    // 节流交给 UI 侧心跳任务（同行情流 ~100ms 档）
+                                    let _ = ctx.send(());
                                 }
                             }
                         },

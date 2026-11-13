@@ -1,253 +1,23 @@
-//! 启动流程：已有凭据库 → 解锁；无凭据库 → 配置 API 密钥（与主密码一体设置）
+//! 启动流程页面：已有凭据库 → 解锁；无凭据库 → 配置 API 密钥（与主密码一体设置）
 //!
-//! 设计：深色背景 + 品牌光晕 + 居中认证卡片，主按钮金色。
+//! 设计：背景光晕 + 品牌标题 + 居中认证卡片，主按钮金色。
+//! 纯逻辑 try_unlock / save_keys 与 egui 版原样一致；渲染为 GPUI flex 构建器。
 
 use crate::app::{BnApp, Phase};
 use crate::config;
 use crate::engine::state::ToastKind;
 use crate::security::vault::{self, Creds};
-use crate::ui::theme;
-use eframe::egui;
-use egui::{Align2, Color32, FontId, Pos2, Stroke};
+use crate::ui::theme::{self, cur, faded, font_body, font_brand, font_lg, font_md, font_sm};
+use crate::ui::widgets;
+use gpui::{
+    div, prelude::FluentBuilder, px, Bounds, ClickEvent, Context, Corner, Div, Edges, FontWeight,
+    Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, StatefulInteractiveElement,
+    Styled, Window,
+};
+use zeroize::Zeroizing;
 
-pub fn show(app: &mut BnApp, ui: &mut egui::Ui) {
-    let mut card_h_measured = 0.0_f32;
-    // ---------- 背景 + 居中卡片同在一个 CentralPanel 内 ----------
-    // 旧实现把卡片放在独立 Area 里用锚定居中：Area 有 sizing pass，两趟算出的
-    // 卡片高度不一致，每帧锚点位置都在跳，视觉上像在"滚动"。
-    // 改为在同一面板内直接布局：位置由单趟布局确定，无二次猜测。
-    egui::CentralPanel::default()
-        .frame(egui::Frame::default().fill(theme::cur().bg))
-        .show(ui, |ui| {
-            let rect = ui.max_rect();
-            let p = ui.painter();
-            // 光晕颜色随主题派生（accent/up），避免主题调整后此处残留旧色值
-            let acc = theme::cur().accent;
-            let up = theme::cur().up;
-            p.circle_filled(
-                Pos2::new(
-                    rect.left() + rect.width() * 0.18,
-                    rect.top() + rect.height() * 0.12,
-                ),
-                rect.height() * 0.42,
-                Color32::from_rgba_unmultiplied(acc.r(), acc.g(), acc.b(), 10),
-            );
-            p.circle_filled(
-                Pos2::new(
-                    rect.right() - rect.width() * 0.15,
-                    rect.bottom() - rect.height() * 0.08,
-                ),
-                rect.height() * 0.38,
-                Color32::from_rgba_unmultiplied(up.r(), up.g(), up.b(), 8),
-            );
-
-            let avail = ui.max_rect();
-            let card_w = 440.0;
-
-            // 品牌标题固定在窗口上部：窗口再矮也不会被卡片遮挡或推出屏幕
-            let title_y = avail.top() + 26.0;
-            p.text(
-                Pos2::new(avail.center().x, title_y),
-                Align2::CENTER_CENTER,
-                "BnTradingPro",
-                FontId::proportional(theme::font_brand()),
-                theme::cur().accent,
-            );
-            p.text(
-                Pos2::new(avail.center().x, title_y + 36.0),
-                Align2::CENTER_CENTER,
-                crate::i18n::tr("Binance 现货 / U本位合约 交易终端"),
-                FontId::proportional(theme::font_body()),
-                theme::cur().text_dim,
-            );
-
-            // 卡片区域 = 标题以下到窗口底部（留 12px 底边距）。内容在该区域内
-            // 垂直居中——不能按整窗居中：标题占掉顶部后整窗居中会让卡片偏上、
-            // 下方留出大片空白。内容放不下时顶到区域顶部、由内部 ScrollArea
-            // 滚动兜底，卡片永不越过窗口底边。高度取上一帧测量值（滞后一帧
-            // 收敛），静止后完全稳定。
-            let region_top = title_y + 58.0;
-            let region_h = (avail.bottom() - 12.0 - region_top).max(60.0);
-            let card_top = region_top + ((region_h - app.auth_card_h) * 0.5).max(0.0);
-            ui.scope_builder(
-                egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
-                    Pos2::new(avail.center().x - card_w / 2.0, card_top),
-                    egui::vec2(card_w, (region_h - (card_top - region_top)).max(60.0)),
-                )),
-                |ui| {
-                    // 仅当上一帧实测高度在当前区域放不下时才启用内部滚动（滚轮才生效）：
-                    // 0.36 的 ScrollArea 带平滑惯性，常态下误滚滚轮会把表单滑出视野
-                    // （用户报告的"滚动效果"）；放得下时对滚轮完全无反应。
-                    let frame_h = if app.auth_card_h > ui.available_height() - 8.0 {
-                        egui::ScrollArea::vertical()
-                            .id_salt("auth_card_scroll")
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| card_frame(app, ui, card_w))
-                            .inner
-                    } else {
-                        card_frame(app, ui, card_w)
-                    };
-                    card_h_measured = frame_h;
-                },
-            );
-        });
-    if card_h_measured > 0.0 {
-        app.auth_card_h = card_h_measured;
-    }
-    draw_env_hint(ui.ctx(), app);
-}
-
-fn card_header(ui: &mut egui::Ui, title: &str) {
-    // 页面标题统一 FONT_LG（egui heading 默认字号与其他页不一致）
-    ui.label(egui::RichText::new(title).strong().size(theme::font_lg()));
-    ui.separator();
-}
-
-/// 认证卡片（Frame 包裹的标题+表单），返回外框实际高度供下一帧定位用
-fn card_frame(app: &mut BnApp, ui: &mut egui::Ui, card_w: f32) -> f32 {
-    egui::Frame::default()
-        .fill(theme::cur().card)
-        .stroke(Stroke::new(1.0_f32, theme::cur().border))
-        .corner_radius(theme::R_LG)
-        // 内边距收紧：原 26 四边留白过大，卡片显高、底部空洞
-        .inner_margin(egui::Margin::symmetric(22, 12))
-        .show(ui, |ui| {
-            ui.set_width(card_w - 44.0);
-            match app.phase {
-                Phase::Unlock => card_header(ui, crate::i18n::tr("解锁")),
-                Phase::EnterKeys => card_header(ui, crate::i18n::tr("配置 API 密钥")),
-                Phase::Main => {}
-            }
-            ui.add_space(2.0);
-            match app.phase {
-                Phase::Unlock => unlock(app, ui),
-                Phase::EnterKeys => enter_keys(app, ui),
-                Phase::Main => {}
-            }
-        })
-        .response
-        .rect
-        .height()
-}
-
-fn draw_env_hint(ctx: &egui::Context, app: &BnApp) {
-    let testnet = app.state.cfg.read().testnet;
-    let (txt, color) = if testnet {
-        ("TESTNET", theme::cur().accent)
-    } else {
-        (crate::i18n::tr("实盘环境 · 真实资金"), theme::cur().err)
-    };
-    egui::Area::new(egui::Id::new("unlock_env"))
-        .anchor(Align2::RIGHT_TOP, [-14.0, 14.0])
-        .show(ctx, |ui| {
-            theme::badge(ui, txt, color);
-        });
-}
-
-fn error_text(ui: &mut egui::Ui, msg: &str) {
-    ui.horizontal_wrapped(|ui| {
-        // 图标与 toast 同款画法（圆形底 + 实心圆点）：✗ 字形在等宽字体优先
-        // 的字体栈下有缺字回退成豆腐块的风险
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-        let pr = ui.painter();
-        pr.circle_filled(rect.center(), 8.0, theme::cur().err.gamma_multiply(0.2));
-        pr.circle_filled(rect.center(), 3.5, theme::cur().err);
-        ui.label(
-            egui::RichText::new(msg)
-                .color(theme::cur().err)
-                .size(theme::font_md()),
-        );
-    });
-}
-
-/// 主按钮（全宽、金色底深色字）：统一走 theme::btn_primary
-fn primary_btn(ui: &mut egui::Ui, text: &str, enabled: bool) -> bool {
-    theme::btn_primary(ui, text, enabled).clicked()
-}
-
-/// 解锁已有凭据库
-fn unlock(app: &mut BnApp, ui: &mut egui::Ui) {
-    ui.add(
-        egui::Label::new(
-            egui::RichText::new(crate::i18n::tr("输入主密码以解密本机保存的 API 密钥"))
-                .size(theme::font_md())
-                .color(theme::cur().text_dim),
-        )
-        .wrap_mode(egui::TextWrapMode::Wrap),
-    );
-    ui.add_space(6.0);
-    ui.label(theme::card_label(crate::i18n::tr("主密码")));
-    let pw_resp = ui.add(
-        egui::TextEdit::singleline(&mut *app.pw1)
-            .password(true)
-            .desired_width(f32::INFINITY)
-            .font(egui::TextStyle::Monospace),
-    );
-    // 仅在当前没有任何焦点控件时请求一次：每帧强制抢占会让用户点不进其他输入框
-    if ui.ctx().memory(|m| m.focused().is_none()) {
-        pw_resp.request_focus();
-    }
-    if pw_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-        try_unlock(app);
-    }
-    if !app.pw_err.is_empty() {
-        ui.add_space(2.0);
-        error_text(ui, &app.pw_err);
-    }
-    ui.add_space(8.0);
-    if primary_btn(ui, crate::i18n::tr("解锁"), true) {
-        try_unlock(app);
-    }
-    // 仅看行情：与主按钮同宽的次按钮（之前是弱化小按钮，几乎看不见）
-    ui.add_space(4.0);
-    if theme::btn_secondary(ui, crate::i18n::tr("仅看行情，暂不解锁"), true).clicked() {
-        app.vault_delete_armed = false;
-        app.phase = Phase::Main;
-    }
-    ui.add_space(4.0);
-    // Align::Min（顶对齐）：Align::Center 会让按钮在剩余全部高度里垂直居中，
-    // 该行的包围盒因此一路撑到区域底部——卡片被凭空拉高 ~250pt，按钮悬在半空
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-        let dir = config::data_dir();
-        // 破坏性操作两步确认：误点一次不会直接销毁唯一的本地密钥副本
-        let armed = app.vault_delete_armed;
-        let reset_btn = theme::btn_danger(
-            ui,
-            if armed {
-                crate::i18n::tr("确认删除凭据库？")
-            } else {
-                crate::i18n::tr("重置凭据库")
-            },
-            true,
-        );
-        if reset_btn.clicked() {
-            if !armed {
-                app.vault_delete_armed = true;
-            } else {
-                app.vault_delete_armed = false;
-                let gone = match std::fs::remove_file(dir.join(vault::VAULT_FILE)) {
-                    Ok(()) => true,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
-                    Err(_) => false,
-                };
-                if gone {
-                    app.pw1.clear();
-                    app.pw2.clear();
-                    app.pw_err.clear();
-                    app.phase = Phase::EnterKeys;
-                } else {
-                    app.pw_err = crate::i18n::tr("删除凭据库失败").to_string();
-                }
-            }
-        } else if armed && ui.input(|i| i.pointer.any_click()) {
-            // 点击确认按钮以外的任意位置 → 退出待确认态
-            app.vault_delete_armed = false;
-        }
-        reset_btn.on_hover_text(crate::i18n::tr("删除本机加密凭据库，重新开始设置"));
-    });
-}
-
-fn try_unlock(app: &mut BnApp) {
+/// 解锁已有凭据库：成功 → Main；库不存在 → EnterKeys；密码错误 → pw_err
+pub fn try_unlock(app: &mut BnApp) {
     let dir = config::data_dir();
     match vault::load_creds(dir, &app.pw1) {
         Ok(creds) => {
@@ -267,158 +37,8 @@ fn try_unlock(app: &mut BnApp) {
     }
 }
 
-/// 配置 API 密钥（首次/重置/更换）。
-/// 无凭据库时主密码与密钥一体设置；已有凭据库时需先输入现有主密码。
-fn enter_keys(app: &mut BnApp, ui: &mut egui::Ui) {
-    let dir = config::data_dir();
-    let vault_exists = vault::vault_exists(dir);
-    let testnet = app.state.cfg.read().testnet;
-    // 紧凑表单：默认 8px 行间距压到 3px，标签与输入框、按钮与跳过行都更贴近
-    ui.spacing_mut().item_spacing.y = 3.0;
-    ui.add(
-        egui::Label::new(
-            egui::RichText::new(if testnet {
-                crate::i18n::tr("当前环境：测试网（testnet.binance.vision / testnet.binancefuture.com 申请）")
-            } else {
-                crate::i18n::tr("当前环境：实盘（binance.com → API 管理，建议绑定 IP 白名单并只开启现货/合约交易权限）")
-            })
-            .size(theme::font_md())
-            .color(if testnet { theme::cur().accent } else { theme::cur().err }),
-        )
-        .wrap_mode(egui::TextWrapMode::Wrap),
-    );
-    ui.add_space(2.0);
-
-    // 主密码：一体设置（无库）或验证（有库）
-    let need_master = vault_exists || app.master.is_none();
-    if need_master {
-        if vault_exists {
-            // 已有凭据库时也必须能输入主密码（用于验证），否则 can_save 永远为
-            // false，"更换密钥"流程会困死在本页
-            ui.label(theme::card_label(crate::i18n::tr(
-                "主密码（验证现有主密码）",
-            )));
-            let pw_resp = ui.add(
-                egui::TextEdit::singleline(&mut *app.pw1)
-                    .password(true)
-                    .desired_width(f32::INFINITY)
-                    .font(egui::TextStyle::Monospace),
-            );
-            if ui.ctx().memory(|m| m.focused().is_none()) {
-                pw_resp.request_focus();
-            }
-            ui.add_space(2.0);
-        } else {
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(crate::i18n::tr("主密码用于加密本机保存的 API Key/Secret（Argon2id + AES-256-GCM）。忘记将无法恢复。"))
-                        .size(theme::font_md())
-                        .color(theme::cur().text_dim),
-                )
-                .wrap_mode(egui::TextWrapMode::Wrap),
-            );
-            ui.add_space(2.0);
-            // 两个密码框并排一行：省掉一整行高度，卡片更紧凑
-            ui.columns(2, |cols| {
-                cols[0].label(theme::card_label(crate::i18n::tr("主密码（至少 8 位）")));
-                cols[0].add(
-                    egui::TextEdit::singleline(&mut *app.pw1)
-                        .password(true)
-                        .desired_width(f32::INFINITY)
-                        .font(egui::TextStyle::Monospace),
-                );
-                cols[1].label(theme::card_label(crate::i18n::tr("再输一次")));
-                cols[1].add(
-                    egui::TextEdit::singleline(&mut *app.pw2)
-                        .password(true)
-                        .desired_width(f32::INFINITY)
-                        .font(egui::TextStyle::Monospace),
-                );
-            });
-            ui.add_space(2.0);
-        }
-    }
-
-    ui.label(theme::card_label("API Key"));
-    // API Key 同样遮蔽：仅凭 Key 即可创建 listenKey 读取成交/余额推送，
-    // 不能在录屏/共享屏幕时明文暴露
-    ui.add(
-        egui::TextEdit::singleline(&mut *app.api_key)
-            .password(true)
-            .desired_width(f32::INFINITY)
-            .font(egui::TextStyle::Monospace)
-            .text_color(theme::cur().text),
-    );
-    ui.add_space(2.0);
-    ui.label(theme::card_label("API Secret"));
-    let secret_resp = ui.add(
-        egui::TextEdit::singleline(&mut *app.api_secret)
-            .password(true)
-            .desired_width(f32::INFINITY)
-            .font(egui::TextStyle::Monospace)
-            .text_color(theme::cur().text),
-    );
-    if !app.keys_err.is_empty() {
-        ui.add_space(2.0);
-        error_text(ui, &app.keys_err);
-    }
-    ui.add_space(2.0);
-
-    let can_save = !app.api_key.trim().is_empty()
-        && !app.api_secret.trim().is_empty()
-        && (!need_master || !app.pw1.trim().is_empty());
-    let mut do_save = false;
-    // 禁用时给出具体原因：首屏主按钮灰掉而不知所以是最劝退的体验。
-    // （btn_primary 不预置通用提示——on_disabled_hover_text 堆叠不覆盖，
-    // 这里是唯一提示源）
-    let save_btn = theme::btn_primary(ui, crate::i18n::tr("保存并连接"), can_save);
-    let save_btn = if can_save {
-        save_btn
-    } else if need_master {
-        // 已有凭据库时缺的是主密码验证，而不是密钥本身
-        save_btn.on_disabled_hover_text(crate::i18n::tr("请输入主密码与 API Key/Secret"))
-    } else {
-        save_btn.on_disabled_hover_text(crate::i18n::tr("请填写 API Key 与 Secret"))
-    };
-    if save_btn.clicked() {
-        do_save = true;
-    }
-    // Secret 是表单最后一项：输入完直接回车保存（与解锁页密码框行为一致）
-    if secret_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && can_save {
-        do_save = true;
-    }
-    if do_save {
-        save_keys(app, dir, vault_exists);
-    }
-    // 跳过入口两种分支都要有：换钥流程（已有库）也需要能随时退出本页，
-    // 否则用户点开"更换密钥"后无路可退。
-    // 布局：说明文案在上、按钮独占下一行（之前同行居右且按钮为弱化小按钮，
-    // 底色与卡片几乎相同，非常不显眼）
-    ui.add_space(4.0);
-    ui.separator();
-    ui.add_space(8.0);
-    ui.add(
-        egui::Label::new(
-            egui::RichText::new(crate::i18n::tr(
-                "跳过后仍可查看实时行情与 K 线，随时可在设置页配置密钥",
-            ))
-            .size(theme::font_sm())
-            .color(theme::cur().text_dim),
-        )
-        .wrap_mode(egui::TextWrapMode::Wrap),
-    );
-    ui.add_space(6.0);
-    if theme::btn_secondary(ui, crate::i18n::tr("跳过，仅看行情"), true).clicked() {
-        app.api_key.clear();
-        app.api_secret.clear();
-        app.pw1.clear();
-        app.pw2.clear();
-        app.phase = Phase::Main;
-    }
-}
-
 /// 校验主密码并加密保存密钥，成功后进入主界面（保存按钮与 Secret 回车共用）
-fn save_keys(app: &mut BnApp, dir: &std::path::Path, vault_exists: bool) {
+pub fn save_keys(app: &mut BnApp, dir: &std::path::Path, vault_exists: bool) {
     let creds = Creds {
         api_key: app.api_key.trim().to_string(),
         api_secret: app.api_secret.trim().to_string(),
@@ -470,4 +90,435 @@ fn save_keys(app: &mut BnApp, dir: &std::path::Path, vault_exists: bool) {
             app.keys_err = crate::i18n::tr("请输入主密码").to_string();
         }
     }
+}
+
+// ---------- 页面渲染 ----------
+
+/// 认证页：背景光晕（canvas）+ 品牌标题 + 居中卡片 + 右上角环境徽标。
+/// 矮窗口下卡片纵向溢出时由 overflow 遮挡裁剪（既有取舍：遮挡优于顶歪）
+pub fn page(app: &mut BnApp, window: &mut Window, cx: &mut Context<BnApp>) -> Div {
+    let t = *theme::c(cx);
+    // 自动聚焦：当前无任何焦点控件时聚焦主密码框（egui 版同款——每帧强制
+    // 抢占会让用户点不进其他输入框，仅在无焦点时请求一次）
+    let has_focus = window.focused(cx).is_some();
+    let vault_exists = vault::vault_exists(config::data_dir());
+    let need_master = vault_exists || app.master.is_none();
+    let testnet = app.state.cfg.read().testnet;
+    if !has_focus {
+        match app.phase {
+            Phase::Unlock => app.pw1_field.read(cx).focus(window),
+            Phase::EnterKeys if need_master => app.pw1_field.read(cx).focus(window),
+            Phase::EnterKeys => app.api_key_field.read(cx).focus(window),
+            Phase::Main => {}
+        }
+    }
+
+    div()
+        .relative()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .bg(t.bg)
+        .overflow_hidden()
+        // 「点击其他位置解除」待确认态的兜底：点按钮以外的任意处先解除武装
+        // （按钮自身 on_mouse_down 停止传播，武装/确认由其 on_click 完成）
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|app: &mut BnApp, _, _, cx| {
+                if app.vault_delete_armed {
+                    app.vault_delete_armed = false;
+                    cx.notify();
+                }
+            }),
+        )
+        // 背景光晕：canvas 在整页 bounds 上画两枚大半透明圆
+        .child(glow_canvas())
+        // 右上角环境徽标（TESTNET / 实盘）
+        .child(env_hint(testnet))
+        // 品牌标题固定在窗口上部：窗口再矮也不会被卡片遮挡或推出屏幕
+        .child(
+            div()
+                .relative()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .items_center()
+                .pt(px(26.0))
+                .child(
+                    div()
+                        .text_size(font_brand())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(t.accent)
+                        .child("BnTradingPro"),
+                )
+                .child(
+                    div()
+                        .mt(px(theme::SPACE_MD))
+                        .text_size(font_body())
+                        .text_color(t.text_dim)
+                        .child(crate::i18n::tr("Binance 现货 / U本位合约 交易终端")),
+                )
+                // 卡片区域 = 标题以下（flex_1 剩余空间），内容纵向居中——
+                // 不能按整窗居中：标题占掉顶部后整窗居中会让卡片偏上
+                .child(
+                    div()
+                        .flex_1()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .px(px(theme::SPACE_XL))
+                        .child(card(app, cx)),
+                ),
+        )
+}
+
+/// 背景光晕：accent（左上）与 up（右下）两枚大半透明圆，
+/// 颜色随主题派生，避免主题调整后残留旧色值
+fn glow_canvas() -> impl IntoElement {
+    gpui::canvas(
+        |bounds, _, _| bounds,
+        move |bounds, _, window, _| {
+            let t = cur();
+            let h = bounds.size.height;
+            let mut circle = |center: gpui::Point<gpui::Pixels>, radius: gpui::Pixels, color| {
+                let size = radius * 2.0;
+                window.paint_quad(gpui::quad(
+                    Bounds::from_corner_and_size(
+                        Corner::TopLeft,
+                        gpui::point(center.x - radius, center.y - radius),
+                        gpui::size(size, size),
+                    ),
+                    radius,
+                    color,
+                    Edges::all(px(0.0)),
+                    gpui::transparent_black(),
+                    gpui::BorderStyle::Solid,
+                ));
+            };
+            circle(
+                gpui::point(
+                    bounds.origin.x + bounds.size.width * 0.18,
+                    bounds.origin.y + h * 0.12,
+                ),
+                h * 0.42,
+                faded(t.accent, 10.0 / 255.0),
+            );
+            circle(
+                gpui::point(
+                    bounds.origin.x + bounds.size.width - bounds.size.width * 0.15,
+                    bounds.origin.y + h - h * 0.08,
+                ),
+                h * 0.38,
+                faded(t.up, 8.0 / 255.0),
+            );
+        },
+    )
+}
+
+/// 右上角环境徽标：TESTNET（accent）/ 实盘环境 · 真实资金（err）
+fn env_hint(testnet: bool) -> impl IntoElement {
+    let (txt, color) = if testnet {
+        ("TESTNET".to_string(), cur().accent)
+    } else {
+        (
+            crate::i18n::tr("实盘环境 · 真实资金").to_string(),
+            cur().err,
+        )
+    };
+    div()
+        .absolute()
+        .top(px(theme::SPACE_XXL))
+        .right(px(theme::SPACE_XXL))
+        .child(widgets::badge(txt, color))
+}
+
+/// 认证卡片（440px：标题行 + 分隔线 + 按阶段的表单）
+fn card(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
+    let t = *theme::c(cx);
+    let title = match app.phase {
+        Phase::Unlock => crate::i18n::tr("解锁").to_string(),
+        Phase::EnterKeys => crate::i18n::tr("配置 API 密钥").to_string(),
+        Phase::Main => String::new(),
+    };
+    let card = widgets::card()
+        .w(px(440.0))
+        .px(px(theme::SPACE_XXL))
+        .py(px(theme::SPACE_XL))
+        .my(px(0.0))
+        .border_color(t.border)
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .text_size(font_lg())
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(t.text)
+                .child(title),
+        )
+        .child(widgets::separator());
+    match app.phase {
+        Phase::Unlock => unlock_form(app, cx),
+        Phase::EnterKeys => enter_keys_form(app, cx),
+        Phase::Main => card,
+    }
+}
+
+/// 错误提示行：圆形图标底 + 实心圆点 + 红字（✗ 字形在等宽字体优先的
+/// 字体栈下有缺字回退成豆腐块的风险，与 toast 同款画法）
+fn error_text(msg: &str) -> Div {
+    let t = cur();
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(theme::SPACE_MD))
+        .child(
+            div()
+                .w(px(16.0))
+                .h(px(16.0))
+                .rounded_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(faded(t.err, 0.2))
+                .child(
+                    div()
+                        .w(px(7.0))
+                        .h(px(7.0))
+                        .rounded_full()
+                        .bg(Hsla::from(t.err)),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_size(font_md())
+                .text_color(t.err)
+                .child(msg.to_string()),
+        )
+}
+
+/// 解锁表单：说明 + 主密码 + 错误 + 解锁/仅看行情/重置凭据库
+fn unlock_form(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
+    let t = *theme::c(cx);
+    div()
+        .flex()
+        .flex_col()
+        .mt(px(theme::SPACE_XS))
+        .gap(px(theme::SPACE_MD))
+        .child(
+            div()
+                .text_size(font_md())
+                .text_color(t.text_dim)
+                .child(crate::i18n::tr("输入主密码以解密本机保存的 API 密钥").to_string()),
+        )
+        .child(widgets::card_label(crate::i18n::tr("主密码")))
+        .child(app.pw1_field.clone())
+        .when(!app.pw_err.is_empty(), |d| d.child(error_text(&app.pw_err)))
+        .child(
+            widgets::btn_primary("unlock_go", crate::i18n::tr("解锁"), true).on_click(
+                cx.listener(|app: &mut BnApp, _, _, cx| {
+                    app.pw1 = Zeroizing::new(app.pw1_field.read(cx).text().to_string());
+                    try_unlock(app);
+                    cx.notify();
+                }),
+            ),
+        )
+        .child(
+            widgets::btn_secondary("unlock_skip", crate::i18n::tr("仅看行情，暂不解锁"), true)
+                .on_click(cx.listener(|app: &mut BnApp, _, window, cx| {
+                    app.vault_delete_armed = false;
+                    app.phase = Phase::Main;
+                    window.blur();
+                    cx.notify();
+                })),
+        )
+        .child(reset_row(app, cx))
+}
+
+/// 重置凭据库行（右对齐破坏性按钮 + 两步确认；武装态文案随 app 状态翻转）
+fn reset_row(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
+    let armed = app.vault_delete_armed;
+    div().flex().flex_row().justify_end().child(
+        widgets::btn_danger(
+            "vault_reset",
+            if armed {
+                crate::i18n::tr("确认删除凭据库？")
+            } else {
+                crate::i18n::tr("重置凭据库")
+            },
+            true,
+        )
+        // 阻断页级「点击其他位置解除」兜底：按钮自身的 on_click
+        // 负责武装/确认翻转
+        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+            cx.stop_propagation();
+        })
+        .on_click(cx.listener(|app: &mut BnApp, _: &ClickEvent, _, cx| {
+            if !app.vault_delete_armed {
+                app.vault_delete_armed = true;
+            } else {
+                app.vault_delete_armed = false;
+                let gone = match std::fs::remove_file(config::data_dir().join(vault::VAULT_FILE))
+                {
+                    Ok(()) => true,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                    Err(_) => false,
+                };
+                if gone {
+                    app.pw1_field.update(cx, |f, _| f.clear());
+                    app.pw2_field.update(cx, |f, _| f.clear());
+                    app.pw1.clear();
+                    app.pw2.clear();
+                    app.pw_err.clear();
+                    app.phase = Phase::EnterKeys;
+                } else {
+                    app.pw_err = crate::i18n::tr("删除凭据库失败").to_string();
+                }
+            }
+            cx.notify();
+        })),
+    )
+}
+
+/// 配钥表单：环境提示 + 主密码（一体设置/验证）+ API Key/Secret + 保存/跳过
+fn enter_keys_form(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
+    let t = *theme::c(cx);
+    let vault_exists = vault::vault_exists(config::data_dir());
+    let testnet = app.state.cfg.read().testnet;
+    let need_master = vault_exists || app.master.is_none();
+
+    let mut col = div().flex().flex_col().mt(px(theme::SPACE_XS)).gap(px(theme::SPACE_MD));
+    col = col.child(
+        div()
+            .text_size(font_md())
+            .text_color(if testnet { t.accent } else { t.err })
+            .child(
+                if testnet {
+                    crate::i18n::tr("当前环境：测试网（testnet.binance.vision / testnet.binancefuture.com 申请）")
+                } else {
+                    crate::i18n::tr("当前环境：实盘（binance.com → API 管理，建议绑定 IP 白名单并只开启现货/合约交易权限）")
+                }
+                .to_string(),
+            ),
+    );
+
+    // 主密码：一体设置（无库）或验证（有库）
+    if need_master {
+        if vault_exists {
+            // 已有凭据库时也必须能输入主密码（用于验证），否则 can_save 永远为
+            // false，"更换密钥"流程会困死在本页
+            col = col
+                .child(widgets::card_label(crate::i18n::tr(
+                    "主密码（验证现有主密码）",
+                )))
+                .child(app.pw1_field.clone());
+        } else {
+            col = col
+                .child(
+                    div()
+                        .text_size(font_md())
+                        .text_color(t.text_dim)
+                        .child(
+                            crate::i18n::tr("主密码用于加密本机保存的 API Key/Secret（Argon2id + AES-256-GCM）。忘记将无法恢复。")
+                                .to_string(),
+                        ),
+                )
+                // 两个密码框并排一行：省掉一整行高度，卡片更紧凑
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap(px(theme::SPACE_LG))
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .gap(px(theme::SPACE_XS))
+                                .child(widgets::card_label(crate::i18n::tr(
+                                    "主密码（至少 8 位）",
+                                )))
+                                .child(app.pw1_field.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .gap(px(theme::SPACE_XS))
+                                .child(widgets::card_label(crate::i18n::tr("再输一次")))
+                                .child(app.pw2_field.clone()),
+                        ),
+                );
+        }
+    }
+
+    let can_save = app.can_save_keys(cx);
+    col = col
+        .child(widgets::card_label("API Key"))
+        .child(app.api_key_field.clone())
+        .child(widgets::card_label("API Secret"))
+        .child(app.api_secret_field.clone())
+        .when(!app.keys_err.is_empty(), |d| {
+            d.child(error_text(&app.keys_err))
+        })
+        .child(
+            widgets::btn_primary("keys_save", crate::i18n::tr("保存并连接"), can_save).on_click(
+                cx.listener(|app: &mut BnApp, _, window, cx| {
+                    app.sync_auth_fields(cx);
+                    let can_save = app.can_save_keys(cx);
+                    if can_save {
+                        save_keys(
+                            app,
+                            config::data_dir(),
+                            vault::vault_exists(config::data_dir()),
+                        );
+                    }
+                    if app.phase == Phase::Main {
+                        window.blur();
+                    }
+                    cx.notify();
+                }),
+            ),
+        );
+
+    // 跳过入口两种分支都要有：换钥流程（已有库）也需要能随时退出本页，
+    // 否则用户点开"更换密钥"后无路可退
+    col = col
+        .child(
+            div()
+                .w_full()
+                .h(px(1.0))
+                .my(px(theme::SPACE_SM))
+                .bg(faded(t.border, 0.7)),
+        )
+        .child(
+            div()
+                .text_size(font_sm())
+                .text_color(t.text_dim)
+                .child(
+                    crate::i18n::tr("跳过后仍可查看实时行情与 K 线，随时可在设置页配置密钥")
+                        .to_string(),
+                ),
+        )
+        .child(
+            widgets::btn_secondary("keys_skip", crate::i18n::tr("跳过，仅看行情"), true)
+                .on_click(cx.listener(|app: &mut BnApp, _, window, cx| {
+                    app.pw1_field.update(cx, |f, _| f.clear());
+                    app.pw2_field.update(cx, |f, _| f.clear());
+                    app.api_key_field.update(cx, |f, _| f.clear());
+                    app.api_secret_field.update(cx, |f, _| f.clear());
+                    app.api_key.clear();
+                    app.api_secret.clear();
+                    app.pw1.clear();
+                    app.pw2.clear();
+                    app.phase = Phase::Main;
+                    window.blur();
+                    cx.notify();
+                })),
+        );
+    col
 }
