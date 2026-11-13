@@ -208,14 +208,6 @@ fn set_row(label: &'static str) -> gpui::Div {
         .child(widgets::row_label(tr(label), 108.0))
 }
 
-/// 行尾英文/补充小字（跟在标签后的辅助说明）
-fn sub_hint(text: &'static str) -> Div {
-    div()
-        .text_size(font_sm())
-        .text_color(cur().text_dim)
-        .child(tr(text))
-}
-
 /// 应用：草稿 → 配置 + 重连（原 egui 版语义逐行迁移）
 fn apply_settings(app: &mut BnApp) {
     let state = Arc::clone(&app.state);
@@ -402,7 +394,6 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         widgets::card_with_header(tr("语言与主题"), None, look_body.into_any_element());
 
     // ---------- 参数 ----------
-    let recv_hint_zh = crate::i18n::lang() == crate::i18n::ZH;
     let log_current = app.settings.log_level.clone();
     let log_pills = pills(
         cx,
@@ -446,9 +437,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
         .gap(px(theme::SPACE_MD))
         // 接收窗口：仅中文界面补英文小字说明
         .child(
-            set_row("接收窗口")
-                .when(recv_hint_zh, |r| r.child(sub_hint("recvWindow")))
-                .child(field_box(&app.settings_fields.recv_window, 72.0)),
+            set_row("接收窗口").child(field_box(&app.settings_fields.recv_window, 72.0)),
         )
         .child(
             set_row("HTTP 超时").child(field_box(&app.settings_fields.http_timeout, 64.0)),
