@@ -89,8 +89,9 @@ pub fn font_xl() -> Pixels {
 pub fn font_lg() -> Pixels {
     px(16.5 * font_scale())
 }
-pub fn font_hero() -> Pixels {
-    px(20.0 * font_scale())
+/// 控件内微字形（checkbox ✓、极小标注）：10px 离档提到 11
+pub fn font_caption() -> Pixels {
+    px(11.0 * font_scale())
 }
 /// 解锁/配钥页的品牌标题（页面级展示字，不属于常规字号阶梯）
 pub fn font_brand() -> Pixels {
@@ -110,6 +111,86 @@ pub const BTN_LG: f32 = 36.0;
 pub const CONTROL_H: f32 = 26.0;
 /// 表单行标准高度（≥ 控件高，留少量呼吸空间）
 pub const ROW_H: f32 = 30.0;
+#[allow(dead_code)]
+/// 表格表头行高（orders/assets 表头统一）
+pub const TH_H: f32 = 22.0;
+#[allow(dead_code)]
+/// 表格数据行高（orders/assets 数据行统一）
+pub const TABLE_ROW_H: f32 = 28.0;
+#[allow(dead_code)]
+/// 顶部导航栏总高（弹层锚、盘口高度预算共同引用）
+pub const TOPBAR_H: f32 = 36.0;
+
+// ---------- 间距 token ----------
+/// 全应用间距只走 6 档（2/4/6/8/12/16）；离档值（3/10/14）一律就近归档。
+/// 仅用于 padding/gap/margin 等布局间隙；图标尺寸、绘制坐标等几何量不适用
+// （Commit 2 接线全部调用点后移除该 allow）
+#[allow(dead_code)]
+pub const SPACE_XS: f32 = 2.0;
+#[allow(dead_code)]
+/// 小间隙：徽标内边距、微分隔
+pub const SPACE_SM: f32 = 4.0;
+#[allow(dead_code)]
+/// 行内间隙：表单行、紧凑列表
+pub const SPACE_MD: f32 = 6.0;
+#[allow(dead_code)]
+/// 面板标准内边距 / 组件标准间隙
+pub const SPACE_LG: f32 = 8.0;
+#[allow(dead_code)]
+/// 卡片/弹窗内边距、区块间隙
+pub const SPACE_XL: f32 = 12.0;
+#[allow(dead_code)]
+/// 页面级留白 / 浮层与窗口边缘距离
+pub const SPACE_XXL: f32 = 16.0;
+
+// ---------- faded() 透明度档 ----------
+// （Commit 2/3/4 接线全部调用点后移除该 allow）
+#[allow(dead_code)]
+/// 边框/分隔线统一淡化档（0.6 的零散用法并入此档）
+pub const FADE_BORDER: f32 = 0.7;
+#[allow(dead_code)]
+/// 淡填充档：页签选中底、图标底
+pub const TINT_FILL: f32 = 0.16;
+#[allow(dead_code)]
+/// 柔和填充档：徽标底、输入焦点环
+pub const TINT_SOFT: f32 = 0.22;
+#[allow(dead_code)]
+/// 表格斑马纹档（叠 text 色）
+pub const TINT_ZEBRA: f32 = 0.035;
+#[allow(dead_code)]
+/// 模态遮罩透明度：浅色主题（纸面底、遮罩轻）
+pub const BACKDROP_A_LIGHT: f32 = 0.27;
+#[allow(dead_code)]
+/// 模态遮罩透明度：深色主题
+pub const BACKDROP_A_DARK: f32 = 0.47;
+
+/// 边框淡化取色（分隔线/卡片描边统一入口）
+#[allow(dead_code)]
+pub fn border_fade(cx: &App) -> Hsla {
+    faded(c(cx).border, FADE_BORDER)
+}
+
+/// 表格斑马纹取色（orders/assets 奇数行底色）
+#[allow(dead_code)]
+pub fn zebra(cx: &App) -> Hsla {
+    faded(c(cx).text, TINT_ZEBRA)
+}
+
+/// 模态遮罩取色（纯黑，透明度按明暗主题分档；签名带 cx 与其它取色入口一致）
+#[allow(dead_code)]
+pub fn backdrop(_cx: &App) -> Hsla {
+    let a = if is_light() {
+        BACKDROP_A_LIGHT
+    } else {
+        BACKDROP_A_DARK
+    };
+    Hsla {
+        h: 0.0,
+        s: 0.0,
+        l: 0.0,
+        a,
+    }
+}
 
 // ---------- 圆角半径 token ----------
 /// 小徽标 / 行内幽灵按钮
@@ -184,10 +265,15 @@ pub const DARK: Theme = Theme {
     up: rgb_const(0x0ecb81),
     down: rgb_const(0xf6465d),
     bg: rgb_const(0x0a0d12),
-    panel: rgb_const(0x12161e),
+    // 工作面（侧栏/盘口/下单栏）下沉半档：bg↔panel 层次差拉开，
+    // 中央内容区自然前凸（现代终端的分层手法）
+    panel: rgb_const(0x10151d),
     panel2: rgb_const(0x191f2a),
-    card: rgb_const(0x1f2632),
-    border: rgb_const(0x2c3542),
+    // 卡片上提半档：与 panel2/panel 的落差更清晰，"浮起"更明确
+    // （text_dim 对比度 ≈4.7:1 仍达标）
+    card: rgb_const(0x212a36),
+    // 描边含蓄一档：层次由填充阶梯承担，轮廓线退后
+    border: rgb_const(0x263140),
     text: rgb_const(0xe8eaed),
     text_dim: rgb_const(0x8b95a5),
     accent: rgb_const(0xf0b90b),
@@ -197,8 +283,8 @@ pub const DARK: Theme = Theme {
     grid_time: rgb_const(0x1a202a),
     crosshair: rgb_const(0x788294),
     tooltip_bg: rgb_const(0x181e29),
-    tag_bg: rgb_const(0x2c3442),
-    row_hover: rgb_const(0x262e3c),
+    tag_bg: rgb_const(0x29323f),
+    row_hover: rgb_const(0x252d3b),
     btn_idle: rgb_const(0x1e2530),
     // 涨/跌填充上的文字用深色：白色在 up=rgb_const(14,203,129) 上对比度仅 2.1:1，
     // 深色对 up 8.1:1、对 down 4.9:1
@@ -210,14 +296,16 @@ pub const LIGHT: Theme = Theme {
     up: rgb_const(0x069e62),
     down: rgb_const(0xd63a50),
     // 纸面暖底：冷蓝灰换成米黄"报纸"色——大面积纯白/冷灰的眩光降一档（护眼），
-    // 层次仍是 bg 最暗 → panel/card 最亮，卡片浮在纸面上
-    bg: rgb_const(0xf0ede5),
+    // 层次仍是 bg 最暗 → panel/card 最亮，卡片浮在纸面上。
+    // 画布加深半档：近白面板/卡片的"浮起"落差更明确
+    bg: rgb_const(0xeeeae0),
     panel: rgb_const(0xfcfaf3),
     panel2: rgb_const(0xf5f2e9),
     // 卡片近白（暖）：与纸面 bg 拉开层次，卡片"浮"在页面上
     card: rgb_const(0xfaf8f0),
-    // 边框暖化并加深：原冷灰边框在浅底上对比偏弱，面板/卡片轮廓更实
-    border: rgb_const(0xcfc8b8),
+    // 边框软化一档：bg 加深后面板↔bg 对比已经抬高，描边可以退后
+    // （原深边框是在补偿纸面太平）
+    border: rgb_const(0xd5cdbb),
     // 暖墨色：报纸式深墨偏黄，在暖纸底上更融洽
     text: rgb_const(0x1c1b17),
     // 暖灰并加深：在 (250,248,240) 卡片底上对比度从 5.3:1 提到 6.1:1
@@ -231,7 +319,8 @@ pub const LIGHT: Theme = Theme {
     crosshair: rgb_const(0x747062),
     tooltip_bg: rgb_const(0xfdfaf3),
     tag_bg: rgb_const(0xdcd6c7),
-    row_hover: rgb_const(0xeee9dd),
+    // 随 bg 加深同步微调：悬停行在新画布上仍清晰可辨
+    row_hover: rgb_const(0xebe6d8),
     btn_idle: rgb_const(0xe5dfd0),
     // 彩色填充（up/down）上的文字用黑色：白色对浅色 up 仅 3.5:1；
     // 黑色对 up 6.1:1、对 down 4.6:1

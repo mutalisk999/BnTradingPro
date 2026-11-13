@@ -15,7 +15,7 @@ use crate::engine::Command;
 use crate::i18n::tr;
 use crate::security::vault;
 use crate::ui::textfield::TextField;
-use crate::ui::theme::{self, cur, font_body, font_lg, font_md, font_sm};
+use crate::ui::theme::{self, cur, font_body, font_caption, font_lg, font_md, font_sm};
 use crate::ui::widgets;
 use gpui::{
     prelude::FluentBuilder, AppContext, div, px, Context, Div, Entity, FontWeight,
@@ -165,7 +165,7 @@ fn cb_box(checked: bool) -> Div {
         .justify_center()
         .border_1()
         .border_color(if checked { t.accent } else { t.text_dim })
-        .text_size(px(10.0))
+        .text_size(font_caption())
         .text_color(t.on_accent)
         .when(checked, |d| d.bg(t.accent).child("✓"))
 }

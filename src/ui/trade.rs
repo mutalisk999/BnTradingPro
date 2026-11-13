@@ -12,7 +12,7 @@ use crate::binance::client::{OrderKind, OrderRequest, Tif};
 use crate::binance::{FutPosSide, Market, Side};
 use crate::engine::Command;
 use crate::ui::textfield::TextField;
-use crate::ui::theme::{self, cur, faded, font_body, font_md, font_sm};
+use crate::ui::theme::{self, cur, faded, font_body, font_caption, font_md, font_sm};
 use crate::ui::widgets;
 use gpui::{
     div, prelude::FluentBuilder, px, AppContext, Context, Div, ElementId, Entity, FontWeight,
@@ -1008,7 +1008,7 @@ fn checkbox(tag: &'static str, checked: bool, enabled: bool) -> Stateful<Div> {
         .justify_center()
         .border_1()
         .border_color(if checked { t.accent } else { t.text_dim })
-        .text_size(px(10.0))
+        .text_size(font_caption())
         .text_color(t.on_accent)
         .when(checked, |d| d.bg(t.accent).child("✓"))
         .when(!enabled, |d| d.opacity(0.5))

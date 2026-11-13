@@ -161,7 +161,7 @@ pub fn fmt_time_short(ms: i64) -> String {
 // ---------- 主题/样式小工具 ----------
 
 use crate::ui::theme::{
-    cur, faded, font_body, font_hero, font_lg, font_md, font_sm, is_light, lerp_color, cur as _t,
+    cur, faded, font_body, font_xl, font_lg, font_md, font_sm, is_light, lerp_color, cur as _t,
 };
 
 /// hover 反馈色：向主题文字色插值一档。浅色主题下文字是深墨（压暗），
@@ -738,7 +738,7 @@ pub fn empty_state(icon: &str, title: &str, subtitle: &str) -> gpui::Div {
         .pb(px(16.0))
         .child(
             div()
-                .text_size(font_hero())
+                .text_size(font_xl())
                 .text_color(t.text_dim)
                 .child(icon.to_string()),
         )
