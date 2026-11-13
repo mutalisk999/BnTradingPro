@@ -742,6 +742,9 @@ pub fn row_label(text: impl Into<SharedString>, w: f32) -> gpui::Div {
         .h(px(crate::ui::theme::ROW_H))
         .flex()
         .items_center()
+        // 定宽放不下（如英文 "Default Interval"）时按边界裁剪——
+        // 遮挡优于叠印：标签文字绝不溢出画到后面的控件上
+        .overflow_hidden()
         .text_size(font_body())
         .whitespace_nowrap()
         .child(text.into())

@@ -215,8 +215,10 @@ fn hint(text: &'static str) -> Div {
 /// 设置页表单行：标签（text_dim 辅助色，68pt 定宽）+ 控件，统一整页
 /// 标签列对齐；标签弱化为辅助色让控件成为行的视觉主体
 fn set_row(label: &'static str) -> gpui::Div {
+    // 108pt：最长英文标签 "Default Interval" 的自然宽度；中文（≤4 字）
+    // 远小于此，左对齐下只表现为标签列与控件列的统一间距
     widgets::form_row()
-        .child(widgets::row_label(tr(label), 68.0))
+        .child(widgets::row_label(tr(label), 108.0))
 }
 
 /// 行尾英文/补充小字（跟在标签后的辅助说明）
