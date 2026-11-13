@@ -1694,7 +1694,9 @@ pub fn tpsl_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
                     ),
                 ),
         );
-    // 顶部居中悬挂（egui CENTER_TOP [0, 96] 同位）：容器无监听不挡下方点击
+    // 顶部居中悬挂（egui CENTER_TOP [0, 96] 同位）：容器无监听不挡下方点击。
+    // 锚 = 顶栏 + 60pt 视觉下移，与页头下方留白对齐
+    const ANCHOR_TOP: f32 = theme::TOPBAR_H + 60.0;
     Some(
         div()
             .absolute()
@@ -1702,6 +1704,6 @@ pub fn tpsl_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
             .flex()
             .items_start()
             .justify_center()
-            .child(div().mt(px(96.0)).child(card)),
+            .child(div().mt(px(ANCHOR_TOP)).child(card)),
     )
 }

@@ -683,6 +683,25 @@ pub fn separator() -> gpui::Div {
         .bg(faded(t.border, theme::FADE_BORDER))
 }
 
+/// 模态/浮层卡片统一外壳：panel2 底 + FADE_BORDER 描边 + R_LG + shadow_lg
+/// + SPACE_XL 内边距 + SPACE_MD 纵向间距。
+///
+/// 调用方可再覆盖宽度/描边色等（如确认下单的买卖色描边）；
+/// 遮罩层由调用方自绘（有无遮罩因弹层而异）
+pub fn modal_card() -> gpui::Div {
+    let t = cur();
+    div()
+        .bg(t.panel2)
+        .border_1()
+        .border_color(faded(t.border, theme::FADE_BORDER))
+        .rounded(px(crate::ui::theme::R_LG))
+        .shadow_lg()
+        .p(px(theme::SPACE_XL))
+        .flex()
+        .flex_col()
+        .gap(px(theme::SPACE_MD))
+}
+
 /// 带标题行的卡片：标题 + 可选右侧操作槽 + 分隔线 + 内容体
 pub fn card_with_header(
     title: impl Into<SharedString>,

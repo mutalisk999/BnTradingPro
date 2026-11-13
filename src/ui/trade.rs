@@ -1860,19 +1860,11 @@ pub fn confirm_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         (tr("确认卖出"), t.down)
     };
 
-    let card = div()
+    // 模态统一外壳 + 买卖色描边覆盖（方向一眼可辨）
+    let card = widgets::modal_card()
         .w(px(360.0))
         .max_w(px(480.0))
-        .rounded(px(theme::R_LG))
-        .bg(t.panel2)
-        .border_1()
         .border_color(faded(side_color, 0.55))
-        // 悬浮层 elevation：模态卡从页面背景上抬起来
-        .shadow_lg()
-        .p(px(14.0))
-        .flex()
-        .flex_col()
-        .gap(px(theme::SPACE_MD))
         // 警示行是弹窗真正的信息核心，层级必须压过装饰性标题
         .child(
             div()
@@ -1937,7 +1929,7 @@ pub fn confirm_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         );
 
     // 全屏遮罩：视觉聚焦弹窗 + 点击空白即取消（与 Esc 等效）
-    let dim_alpha = if theme::is_light() { 0.27 } else { 0.47 };
+    let dim = theme::backdrop(cx);
     Some(
         div()
             .absolute()
@@ -1950,7 +1942,7 @@ pub fn confirm_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
                     .id("confirm_dim")
                     .absolute()
                     .inset_0()
-                    .bg(gpui::hsla(0.0, 0.0, 0.0, dim_alpha))
+                    .bg(dim)
                     .cursor_pointer()
                     .on_click(cx.listener(|app: &mut BnApp, _, _, cx| {
                         app.confirm = None;

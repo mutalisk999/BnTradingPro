@@ -915,6 +915,9 @@ fn show_trades(
 
 /// 页头：交易对 / 最新价与涨跌 / 24h 统计（合约附资金费率）。
 /// 周期直选在图表工具行（chart.rs，里程碑 6），页头只保留行情信息
+/// 内容自适应高度，此常量是典型行情下的近似实测值（预警浮层锚定用）
+pub const MARKET_HEADER_H: f32 = 47.0;
+
 pub fn header(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     let t = cur();
     let state = Arc::clone(&app.state);
@@ -1327,13 +1330,7 @@ pub fn alerts_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
             .children(rows)
     };
 
-    let card = widgets::card()
-        .w(px(272.0))
-        // 悬浮层 elevation：无遮罩悬挂面板靠阴影与页面分层
-        .shadow_lg()
-        .flex()
-        .flex_col()
-        .gap(px(theme::SPACE_MD))
+    let card = widgets::modal_card().w(px(272.0))
         .child(
             div()
                 .flex()
@@ -1362,11 +1359,12 @@ pub fn alerts_dialog(app: &mut BnApp, cx: &mut Context<BnApp>) -> Option<Div> {
         .child(widgets::separator())
         .child(list);
 
+    // 锚定：顶栏 + 右栏页头高度（面板 p(8) + 页头内容 39）→ 页头正下方
     Some(
         div()
             .absolute()
-            .top(px(92.0))
-            .right(px(16.0))
+            .top(px(theme::TOPBAR_H + theme::SPACE_LG + MARKET_HEADER_H))
+            .right(px(theme::SPACE_XXL))
             .child(card),
     )
 }
