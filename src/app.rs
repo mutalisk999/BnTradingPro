@@ -977,7 +977,8 @@ impl BnApp {
     // ---------- 渲染 ----------
 
     /// 配置即时生效块：主题/语言/字号在渲染帧跟随配置变更应用
-    fn apply_cfg_changes(&mut self, cx: &mut Context<Self>) {
+    /// （取色全部由 theme::cur() 现算，这里只同步静态原子，无需 cx）
+    fn apply_cfg_changes(&mut self, _cx: &mut Context<Self>) {
         let (theme_mode, lang, font_size) = {
             let cfg = self.state.cfg.read();
             (
@@ -1672,6 +1673,21 @@ impl Render for BnApp {
                     hit = true;
                 }
                 if hit {
+                    cx.notify();
+                }
+            }))
+            // Enter/空格 的安全默认：确认下单弹窗打开时二者一律取消（egui 版
+            // 语义——取消键默认聚焦走安全路径）。提交必须走鼠标点击提交键，
+            // 键盘的"顺手一按"永远不可能触发真实资金下单。输入框聚焦时
+            // TextField 已对 Enter/空格消费（不冒泡到这里），不冲突
+            .on_key_down(cx.listener(|app: &mut BnApp, e: &KeyDownEvent, _, cx| {
+                if e.keystroke.key != "enter" && e.keystroke.key != "space" {
+                    return;
+                }
+                // 注意确认弹窗结构：submit 是最后入队动作，弹窗内没有聚焦
+                // 输入框，且这里排在 action 分发之后（key listener 冒泡阶段），
+                // 不会再被其他路径吞掉
+                if app.confirm.take().is_some() {
                     cx.notify();
                 }
             }))

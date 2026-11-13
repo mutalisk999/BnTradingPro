@@ -161,7 +161,9 @@ pub const SPACE_XXL: f32 = 16.0;
 pub const FADE_BORDER: f32 = 0.7;
 #[allow(dead_code)]
 /// 淡填充档：页签选中底、图标底
-pub const TINT_FILL: f32 = 0.16;
+/// accent 选中态填充叠加率：pill 页签选中底色。0.16 时 LIGHT 上 accent
+/// 文字对叠加底只有 4.31:1，降到 0.10 后 4.68:1（DARK 同步 6.57:1）
+pub const TINT_FILL: f32 = 0.10;
 #[allow(dead_code)]
 /// 柔和填充档：徽标底、输入焦点环
 pub const TINT_SOFT: f32 = 0.22;
@@ -266,6 +268,14 @@ pub struct Theme {
     pub row_hover: Rgba,
     /// 大按钮未选中态底色（买/卖切换、页签等）
     pub btn_idle: Rgba,
+    /// 徽标前景专用变体：badge 的底色是同色 0.22 叠加半透明层，基础色板
+    /// 值直接当文字用对比度只有 3.6~4.5:1；这组值按"自身 0.22 叠加到
+    /// 全部上下文底色（bg/panel/panel2/card）的最差情况 ≥4.5:1"校准，
+    /// 与基础色的色相一致，仅明度偏差——徽标内文字请一律取这里
+    pub badge_up: Rgba,
+    pub badge_down: Rgba,
+    pub badge_accent: Rgba,
+    pub badge_warn: Rgba,
     /// 涨/跌等彩色填充（买卖按钮、最新价标签）上的前景文字
     pub on_fill: Rgba,
     /// 金色 accent 填充（主按钮）上的前景文字
@@ -303,6 +313,12 @@ pub const DARK: Theme = Theme {
     // down 提亮后深字同步加深补偿：对 up 9.3:1、对 down 6.6:1
     on_fill: rgb_const(0x030c08),
     on_accent: rgb_const(0x1c1602),
+    // 徽标变体：基础值在 0.22 自色叠加底上最差 3.57:1（down）；
+    // up/warn 提亮 12%、down 提亮 40% 后全上下文最差 ≥4.66:1（accent 原值已达标）
+    badge_up: rgb_const(0x2bd190),
+    badge_down: rgb_const(0xfd9eab),
+    badge_accent: rgb_const(0xf0b90b),
+    badge_warn: rgb_const(0xf2ab49),
 };
 
 pub const LIGHT: Theme = Theme {
@@ -344,6 +360,12 @@ pub const LIGHT: Theme = Theme {
     on_fill: rgb_const(0xffffff),
     // accent 加深后深色字对比度跌至 3.1:1，改白色（accent #846100 上 5.7:1）
     on_accent: rgb_const(0xffffff),
+    // 徽标变体：基础值在 0.22 自色叠加底上最差 3.92:1（accent）；
+    // 全部加深 18~20% 后全上下文（bg/panel/card）最差 ≥4.65:1
+    badge_up: rgb_const(0x025d39),
+    badge_down: rgb_const(0x952535),
+    badge_accent: rgb_const(0x6a4e00),
+    badge_warn: rgb_const(0x704a07),
 };
 
 // ---------- 主题状态与取色入口 ----------

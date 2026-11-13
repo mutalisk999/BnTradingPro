@@ -228,11 +228,11 @@ fn glow_canvas() -> impl IntoElement {
 /// 右上角环境徽标：TESTNET（accent）/ 实盘环境 · 真实资金（err）
 fn env_hint(testnet: bool) -> impl IntoElement {
     let (txt, color) = if testnet {
-        ("TESTNET".to_string(), cur().accent)
+        ("TESTNET".to_string(), cur().badge_accent)
     } else {
         (
             crate::i18n::tr("实盘环境 · 真实资金").to_string(),
-            cur().err,
+            cur().badge_down,
         )
     };
     div()

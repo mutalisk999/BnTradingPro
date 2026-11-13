@@ -217,7 +217,7 @@ fn spot_section(state: &Arc<SharedState>, cx: &mut Context<BnApp>) -> Div {
         .child(
             widgets::card_header(tr("现货资产"))
                 .when(!can_trade, |h| {
-                    h.child(widgets::badge(tr("该 Key 无交易权限"), cur().warn))
+                    h.child(widgets::badge(tr("该 Key 无交易权限"), cur().badge_warn))
                 })
                 .when(!nonzero.is_empty(), |h| {
                     h.child(widgets::card_label(format!(

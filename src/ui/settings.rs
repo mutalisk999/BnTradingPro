@@ -308,7 +308,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
             .child(div().flex_1())
             .child(widgets::badge(
                 if testnet { "TESTNET" } else { tr("实盘 · 真实资金") },
-                if testnet { t.accent } else { t.err },
+                if testnet { t.badge_accent } else { t.badge_down },
             )),
     );
     if testnet {
@@ -503,7 +503,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     // 自定义端点会把携带 API Key 的请求重定向到任意主机，必须显式可见
     let ep_right: Option<gpui::AnyElement> = if overridden {
         Some(
-            widgets::badge(tr("自定义端点已启用"), cur().warn).into_any_element(),
+            widgets::badge(tr("自定义端点已启用"), cur().badge_warn).into_any_element(),
         )
     } else {
         None
@@ -537,7 +537,7 @@ pub fn show(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
                     } else {
                         tr("未配置（仅公开行情）")
                     },
-                    if has_creds { cur().up } else { cur().warn },
+                    if has_creds { cur().badge_up } else { cur().badge_warn },
                 ))
                 .child(
                     widgets::btn_default(

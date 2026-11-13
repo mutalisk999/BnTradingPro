@@ -21,7 +21,7 @@ Main interface — Spot trading page, dark theme, live BTCUSDT market data (orde
 - **Order protection**: prices and quantities are automatically quantized per symbol filters (tickSize / stepSize), with validation of minimum notional value / minimum quantity; a second confirmation dialog before submission (red warning in live-trading mode)
 - **Account**: Spot balances (available / locked), futures account overview (wallet balance / unrealized PnL / margin / available), positions table (entry price / mark price / liquidation price / one-click close), leverage adjustment, one-way ↔ hedge mode switching
 - **Order management**: real-time open-orders list (pushed via the user data stream; cancel a single order or all orders for the symbol), order history, trade fills, TP/SL (take-profit / stop-loss) orders
-- **UI polish**: light ("warm paper") / dark themes with WCAG-audited palettes (all text ≥4.5:1 contrast), instant theme switching; Chinese / English interface; three font-size steps; green-up/red-down ↔ red-up/green-down color direction; resizable panels (sidebar / order book / order entry / orders pane)
+- **UI polish**: light ("warm paper") / dark themes with WCAG-audited palettes (body text ≥4.5:1 contrast; chart annotations ≥3:1 per WCAG 1.4.11), instant theme switching; Chinese / English interface; three font-size steps; green-up/red-down ↔ red-up/green-down color direction; resizable panels (sidebar / order book / order entry / orders pane)
 - **Security**: master password (Argon2id-derived) + AES-256-GCM encrypted storage of the API Key/Secret, keys zeroized on exit, fully sanitized logs
 - **Networking**: HTTP / SOCKS5 proxy (effective for both REST and WebSocket), endpoint overrides, one-click Testnet switching (with a prominent badge)
 
