@@ -144,9 +144,9 @@ fn now_secs() -> f64 {
     base.elapsed().as_secs_f64()
 }
 
-/// 文本实宽测量（成交明细列宽 / 档位胶囊统一槽宽用）：单行排布取宽度。
-/// egui 版用 painter.layout_no_wrap；GPUI 走 text_system().shape_line
-fn measure(text: &str, size: f32, mono: bool, window: &Window) -> f32 {
+/// 文本实宽测量（成交明细列宽 / 档位胶囊统一槽宽 / 下单类型菜单宽用）：
+/// 单行排布取宽度。egui 版用 painter.layout_no_wrap；GPUI 走 text_system().shape_line
+pub(crate) fn measure(text: &str, size: f32, mono: bool, window: &Window) -> f32 {
     let font = Font {
         family: if mono { FONT_MONO } else { theme::FONT_UI }.into(),
         ..gpui::font("")

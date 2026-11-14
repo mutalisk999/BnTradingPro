@@ -38,9 +38,11 @@ const SIDE_W_MAX: f32 = 240.0;
 const BOOK_W: f32 = 240.0;
 const BOOK_W_MIN: f32 = 180.0;
 const BOOK_W_MAX: f32 = 340.0;
-const TRADE_W: f32 = 300.0;
-const TRADE_W_MIN: f32 = 300.0;
-const TRADE_W_MAX: f32 = 360.0;
+// 下单面板默认宽：英文行标签列占 92pt，300pt 装不下——比例行 100% 芯片、
+// 价格行的参考价芯片都会被裁；330 留出余量
+const TRADE_W: f32 = 330.0;
+const TRADE_W_MIN: f32 = 330.0;
+const TRADE_W_MAX: f32 = 380.0;
 const ORDERS_H: f32 = 240.0;
 const ORDERS_H_MIN: f32 = 120.0;
 const ORDERS_H_MAX: f32 = 500.0;
@@ -1244,7 +1246,7 @@ impl BnApp {
         let mut chart_row = div().flex_1().flex().flex_row().overflow_hidden();
         chart_row = chart_row.child(central);
         if !self.chart_maximized {
-            chart_row = chart_row.child(self.trade_panel(cx).flex_none());
+            chart_row = chart_row.child(self.trade_panel(window, cx).flex_none());
         }
         // mid 同样 overflow_hidden：min-content（图表工具行 + 下单面板）若
         // 向 row 传播，mid 会超出自身份额、右缘溢出被裁掉下单面板
@@ -1365,7 +1367,7 @@ impl BnApp {
     /// 右侧下单面板：展开态顶部「»」收起 + 左缘拖宽把手；收起态退为
     /// 右缘 36px 窄条「«」。表单状态都在 page 上，折叠不丢输入；
     /// 表单本体在里程碑 7 移植
-    fn trade_panel(&mut self, cx: &mut Context<Self>) -> Div {
+    fn trade_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = theme::c(cx);
         if self.trade_expanded {
             let symbol = self.page.symbol.clone();
@@ -1415,9 +1417,9 @@ impl BnApp {
                         .flex_1()
                         .min_h(px(0.0))
                         .overflow_y_scroll()
-                        .child(trade::panel(self, cx)),
+                        .child(trade::panel(self, window, cx)),
                 )
-                // 左缘拖宽把手：范围 300~360（指针左移 = 变宽）
+                // 左缘拖宽把手：范围 330~380（指针左移 = 变宽）
                 .child(h_resize_strip::<DragTrade>("trade_resize", false))
         } else {
             div()

@@ -208,11 +208,13 @@ pub const REPAINT_QUOTE: u64 = 100;
 pub const REPAINT_IDLE: u64 = 400;
 
 /// 窗口初始逻辑尺寸
-pub const START_W: f64 = 1200.0;
-pub const START_H: f64 = 600.0;
-/// 窗口最小逻辑尺寸（初始即最小：默认打开就是最大信息密度布局）
-pub const MIN_W: f64 = 1200.0;
-pub const MIN_H: f64 = 600.0;
+pub const START_W: f64 = 1240.0;
+pub const START_H: f64 = 700.0;
+/// 窗口最小逻辑尺寸（初始即最小：默认打开就是最大信息密度布局）。
+/// 1240 = 侧栏 190 + 盘口 240 + 下单 330 + K 线区 480（周期芯片行全宽）；
+/// 高 700 在 768 高的屏（1366×768）上扣除任务栏后仍放得下
+pub const MIN_W: f64 = 1240.0;
+pub const MIN_H: f64 = 700.0;
 
 // ---------- 主题定义 ----------
 

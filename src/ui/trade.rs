@@ -11,13 +11,14 @@ use crate::app::{BnApp, ConfirmOrder};
 use crate::binance::client::{OrderKind, OrderRequest, Tif};
 use crate::binance::{FutPosSide, Market, Side};
 use crate::engine::Command;
+use crate::ui::market::measure;
 use crate::ui::textfield::TextField;
 use crate::ui::theme::{self, cur, faded, font_body, font_caption, font_md, font_sm};
 use crate::ui::widgets;
 use gpui::{
     div, prelude::FluentBuilder, px, AppContext, Context, Div, ElementId, Entity, FontWeight,
     InteractiveElement, MouseButton, ParentElement, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, WeakEntity,
+    StatefulInteractiveElement, Styled, WeakEntity, Window,
 };
 use rust_decimal::Decimal;
 
@@ -1027,7 +1028,7 @@ fn best_px_vis(
 
 /// 下单面板：买/卖、类型下拉、有效期、价格/数量、附加止盈止损、比例填充、提交。
 /// 由 app.rs 右栏容器承载（宽度 trade_width 300~360），内容紧凑无滚动
-pub fn panel(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
+pub fn panel(app: &mut BnApp, window: &mut Window, cx: &mut Context<BnApp>) -> Div {
     let state = app.state.clone();
     let market = app.market;
     let symbol = app.page.symbol.clone();
@@ -1040,8 +1041,15 @@ pub fn panel(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
     fields.sync_all(app, cx);
 
     // ---------- 行内控件区宽度（一键填价按钮可见性阈值） ----------
-    // 面板内容宽 - 卡片内边距 20 - 标签列 48 - 行内间距 8
-    let row_inner = (app.trade_width - 76.0).max(0.0);
+    // 面板内容宽 - 卡片内边距 20 - 标签列（EN 92 / ZH 52，与 row() 同源）- 行内间距 8。
+    // 标签列宽随语言变化：若按 ZH 口径计算，EN 下三个参考价芯片会把
+    // flex_1 的价格输入框挤到 0（框消失只剩芯片）
+    let label_w = if crate::i18n::lang() == crate::i18n::EN {
+        92.0
+    } else {
+        52.0
+    } * theme::font_scale_pub();
+    let row_inner = (app.trade_width - 20.0 - label_w - 8.0).max(0.0);
     let (bid_px, ask_px, last_px) = {
         let md = state.md.lock();
         md.get(market, &symbol).map_or((None, None, None), |m| {
@@ -1668,12 +1676,20 @@ pub fn panel(app: &mut BnApp, cx: &mut Context<BnApp>) -> Div {
 
     // ---------- 订单类型下拉菜单（覆盖层最后渲染，盖住表单行） ----------
     if app.kind_menu_open {
-        // 位置：买/卖行(28+pb2) + 卡片 my2/py6 ≈ 类型行顶 40，菜单自按钮下缘展开
+        // 位置：买/卖行(28+pb2) + 卡片 my2/py6 ≈ 类型行顶 40，菜单自按钮下缘展开。
+        // 宽度按当前语言全部候选项实测取最大：定宽 96 装不下英文
+        // "Take-Profit Limit"，whitespace_nowrap 文字溢出盒外叠画到底层界面
+        let menu_w = kinds
+            .iter()
+            .map(|k| measure(k.label(), f32::from(font_sm()), false, window))
+            .fold(0.0f32, f32::max)
+            + 20.0 // 条目 px(10) 水平内边距 ×2
+            + 2.0; // border_1 边框（border-box 内占宽）
         let menu = div()
             .absolute()
             .top(px(62.0))
             .left(px(56.0))
-            .w(px(96.0))
+            .w(px(menu_w))
             .py(px(theme::SPACE_SM))
             .rounded(px(theme::R_MD))
             .bg(t.card)
