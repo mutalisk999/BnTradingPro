@@ -10,7 +10,7 @@ Binance 现货 / U 本位合约专业交易终端，使用 **Rust + GPUI** 构�
 
 主界面 —— 现货交易页（暗色主题，实盘 BTCUSDT 实时行情：盘口 / K 线图 / 下单面板）：
 
-![主界面](docs/images/main-en.png)
+![主界面](docs/images/main-zh.png)
 
 ## 功能
 
