@@ -424,12 +424,11 @@ pub fn pill_tab(
         .rounded(px(crate::ui::theme::R_MD))
         .text_size(font_body())
         .text_color(if active { t.accent } else { t.text_dim })
-        // 选中态加粗：与底色描边一起强化当前页（所有 pill 页签统一语义）
-        .when(active, |d| d.font_weight(FontWeight::SEMIBOLD))
         .whitespace_nowrap()
         .cursor_pointer()
         // 无条件带 1px 描边：选中 accent 描边、未选中透明，选中态有
-        // 轮廓且两种状态间无布局抖动
+        // 轮廓且两种状态间无布局抖动（不加粗：字重变化会让页签宽度
+        // 随选中状态漂移，相邻页签横移抖动）
         .border_1()
         .border_color(if active {
             faded(t.accent, theme::TINT_SOFT)
@@ -492,12 +491,11 @@ pub fn pill_tab_rect(
         .rounded(px(crate::ui::theme::R_MD))
         .text_size(font_body())
         .text_color(if active { t.accent } else { t.text_dim })
-        // 选中态加粗：与底色描边一起强化当前页（所有 pill 页签统一语义）
-        .when(active, |d| d.font_weight(FontWeight::SEMIBOLD))
         .whitespace_nowrap()
         .cursor_pointer()
         // 无条件带 1px 描边：选中 accent 描边、未选中透明，选中态有
-        // 轮廓且两种状态间无布局抖动
+        // 轮廓且两种状态间无布局抖动（不加粗：字重变化会让页签宽度
+        // 随选中状态漂移，相邻页签横移抖动）
         .border_1()
         .border_color(if active {
             faded(t.accent, theme::TINT_SOFT)
@@ -533,7 +531,7 @@ pub fn badge(text: impl Into<SharedString>, fg: Rgba) -> gpui::Div {
 /// 错误原因）收进悬停提示
 pub fn status_light(name: &str, st: &ConnState) -> Stateful<gpui::Div> {
     let (c, st_txt) = status_light_info(name, st);
-    status_item(name, c, *st == ConnState::Connected, st_txt)
+    status_item(name, c, st_txt)
 }
 
 /// 顶栏布尔状态项（REST 接口）：结构与 status_light 一致，仅状态来自布尔
@@ -542,7 +540,6 @@ pub fn status_light_ok(name: &str, ok: bool, ok_txt: &str, err_txt: &str) -> Sta
     status_item(
         name,
         if ok { t.up } else { t.err },
-        ok,
         if ok {
             ok_txt.to_string()
         } else {
@@ -570,7 +567,7 @@ pub fn status_light_info(name: &str, st: &ConnState) -> (Rgba, String) {
     (c, st_txt)
 }
 
-fn status_item(name: &str, c: Rgba, _glow: bool, hover: String) -> Stateful<gpui::Div> {
+fn status_item(name: &str, c: Rgba, hover: String) -> Stateful<gpui::Div> {
     let t = cur();
     let tip = format!("{name} · {hover}");
     let el = div()

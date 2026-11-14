@@ -935,6 +935,12 @@ impl TradeFields {
 /// 计算（中文 4 字 = 4×12px；英文最长 "Time in Force" ≈ 88px），随 font_sm
 /// 同步缩放——固定宽度在中/大字号档会裁切四字标签
 fn row(label: &'static str) -> Div {
+    row_h(label, theme::CONTROL_H)
+}
+
+/// row 的指定行高变体：预估金额等纯文本行不需要容纳输入框，用更矮的
+/// 行高省出纵向预算（合约面板默认高度下纵向空间紧张）
+fn row_h(label: &'static str, h: f32) -> Div {
     let tr = crate::i18n::tr;
     let label_w = if crate::i18n::lang() == crate::i18n::EN {
         92.0
@@ -942,7 +948,7 @@ fn row(label: &'static str) -> Div {
         52.0
     } * theme::font_scale_pub();
     div()
-        .h(px(theme::CONTROL_H))
+        .h(px(h))
         .flex()
         .flex_row()
         .items_center()
@@ -1130,11 +1136,13 @@ pub fn panel(app: &mut BnApp, window: &mut Window, cx: &mut Context<BnApp>) -> D
     };
     let mut card = widgets::card()
         .px(px(10.0))
-        .py(px(theme::SPACE_LG))
+        .py(px(theme::SPACE_MD))
         .my(px(theme::SPACE_XS))
         .flex()
         .flex_col()
-        .gap(px(theme::SPACE_MD));
+        // 保持 SPACE_SM 不放宽：合约面板行数最多（9 行），默认 700 高下
+        // 再放宽一档会把提交按钮挤出面板底缘
+        .gap(px(theme::SPACE_SM));
 
     // 类型行：下拉按钮（菜单覆盖层在 root 末尾统一渲染，保证盖住后续行）
     let mut kind_row = row("类型");
@@ -1549,7 +1557,7 @@ pub fn panel(app: &mut BnApp, window: &mut Window, cx: &mut Context<BnApp>) -> D
                     None => SharedString::from("—"),
                 }),
         );
-    card = card.child(row("预估金额").child(total_val));
+    card = card.child(row_h("预估金额", 18.0).child(total_val));
     root = root.child(card);
     // 量化预览提示
     if let Some(r) = &rule {

@@ -668,7 +668,7 @@ fn show_book_group(window: &mut Window, app: &mut BnApp, cx: &mut Context<BnApp>
         .collect();
     let widest = labels
         .iter()
-        .map(|l| measure(l, f32::from(font_sm()), false, window))
+        .map(|l| measure(l, f32::from(font_sm()), true, window))
         .fold(0.0f32, f32::max);
     let btn_w = widest + 12.0;
     let mut group = div()
