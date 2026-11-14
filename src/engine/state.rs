@@ -160,6 +160,10 @@ pub struct SharedState {
 
     pub rest_ok: AtomicBool,
 
+    /// 演示模式（BTP_DEMO=1）：假凭据的签名请求必然失败，错误 toast 在
+    /// 演示/截图场景全是噪声——置位后 push_toast 静音错误类 toast（日志照记）
+    pub demo: AtomicBool,
+
     pub rules: RwLock<[RuleBook; 2]>,
     /// 规则簿代次：ReloadAll 重写后递增（UI 侧符号列表缓存据此失效）
     pub rules_version: AtomicU64,
@@ -184,6 +188,7 @@ impl Default for SharedState {
             cfg_version: AtomicU64::new(1),
             creds_version: AtomicU64::new(0),
             rest_ok: AtomicBool::new(false),
+            demo: AtomicBool::new(false),
             rules: RwLock::new([RuleBook::default(), RuleBook::default()]),
             rules_version: AtomicU64::new(0),
             md: Mutex::new(MarketMd::default()),
@@ -304,6 +309,11 @@ impl SharedState {
     }
 
     pub fn push_toast(&self, kind: ToastKind, msg: impl Into<String>) {
+        // 演示模式静音错误 toast：假凭据的签名请求必然失败，反复弹出的
+        // 错误提示在演示/截图场景全是噪声；失败本身仍经 tracing 落日志
+        if kind == ToastKind::Err && self.demo.load(Ordering::Relaxed) {
+            return;
+        }
         let mut t = self.toasts.lock();
         let msg = msg.into();
         // 相同文本去重：引擎死亡后每个命令（含 WS 重连循环触发的 RefreshKlines）

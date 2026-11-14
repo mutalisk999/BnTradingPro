@@ -248,6 +248,9 @@ fn en_lookup(zh: &'static str) -> &'static str {
         "保存后生效；顶栏右侧 深色/浅色 与 中/EN 按钮可即时切换" => {
             "Takes effect on save; the Dark/Light and 中/EN buttons in the top bar switch instantly"
         }
+        "修改后点击「保存并重连」应用；字号与涨跌色即时生效" => {
+            "Click “Save & Reconnect” to apply; font size and price colors take effect instantly"
+        }
         "数据目录" => "Data dir:",
         "本工具仅供个人交易辅助与研究，不构成任何投资建议；使用实盘交易产生的一切后果由使用者自行承担。" => {
             "For personal trading assistance and research only — not investment advice. You bear all consequences of live trading."

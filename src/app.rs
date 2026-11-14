@@ -1221,16 +1221,22 @@ impl BnApp {
     fn trading_ui(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = theme::c(cx);
         let mut row = div().flex_1().flex().flex_row().overflow_hidden();
-        row = row.child(self.sidebar(cx));
+        // 三个固定宽面板 flex_none：min-content 超预算时 taffy 会按比例压缩
+        // 各可收缩子项，侧栏/盘口会被中央区内容挤窄（交易对列表遮挡）——
+        // 宽度锁死，超出预算的只有中央区自己
+        row = row.child(self.sidebar(cx).flex_none());
         // 图表最大化：盘口/下单/订单区全部隐藏，图表占满中央区
         if !self.chart_maximized {
-            row = row.child(self.book_panel(window, cx));
+            row = row.child(self.book_panel(window, cx).flex_none());
         }
-        // 中央：页头（交易对/最新价/24h 统计）+ 图表
+        // 中央：页头（交易对/最新价/24h 统计）+ 图表。overflow_hidden 让
+        // 本列 min-content 归零：页头统计行较宽，若向上传播会挤窄固定宽
+        // 面板——超宽时在自身边界裁剪（遮挡优于重叠）
         let central = div()
             .flex_1()
             .flex()
             .flex_col()
+            .overflow_hidden()
             .p(px(theme::SPACE_LG))
             .bg(t.bg)
             .child(market::header(self, cx))
@@ -1238,9 +1244,11 @@ impl BnApp {
         let mut chart_row = div().flex_1().flex().flex_row().overflow_hidden();
         chart_row = chart_row.child(central);
         if !self.chart_maximized {
-            chart_row = chart_row.child(self.trade_panel(cx));
+            chart_row = chart_row.child(self.trade_panel(cx).flex_none());
         }
-        let mut mid = div().flex_1().flex().flex_col().child(chart_row);
+        // mid 同样 overflow_hidden：min-content（图表工具行 + 下单面板）若
+        // 向 row 传播，mid 会超出自身份额、右缘溢出被裁掉下单面板
+        let mut mid = div().flex_1().flex().flex_col().overflow_hidden().child(chart_row);
         if !self.chart_maximized {
             mid = mid.child(self.orders_panel(cx));
         }
@@ -1808,7 +1816,9 @@ impl BnApp {
         use crate::binance::model::{Balance, FutAccount, FutBalance, PositionRisk, SpotAccount};
         use crate::security::vault::Creds;
         let d = |s: &str| rust_decimal::Decimal::from_str_exact(s).unwrap_or_default();
-        // 假凭据让 has_creds 门槛放行（签名请求会失败并弹错误 toast，截图时可忽略）
+        // 假凭据让 has_creds 门槛放行（签名请求必然失败，demo 标记会让
+        // push_toast 静音错误 toast，避免演示/截图被错误提示刷屏）
+        state.demo.store(true, std::sync::atomic::Ordering::Relaxed);
         if !state.has_creds() {
             state.set_creds(Some(Creds {
                 api_key: "demo".into(),

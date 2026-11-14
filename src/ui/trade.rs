@@ -881,16 +881,15 @@ impl TradeFields {
                 f
             })
         };
-        let tr = crate::i18n::tr;
         Self {
-            price: mk(cx, "price_in", tr("价格")),
-            qty: mk(cx, "qty_in", tr("数量")),
-            trigger: mk(cx, "trig_in", tr("触发价")),
-            stop_limit: mk(cx, "sl_limit_in", tr("委托价")),
-            callback_rate: mk(cx, "cb_rate_in", tr("百分比")),
-            tp: mk(cx, "tp_in", tr("触发价")),
-            sl: mk(cx, "sl_in", tr("触发价")),
-            leverage: mk(cx, "lev_in", tr("杠杆倍数")),
+            price: mk(cx, "price_in", "价格"),
+            qty: mk(cx, "qty_in", "数量"),
+            trigger: mk(cx, "trig_in", "触发价"),
+            stop_limit: mk(cx, "sl_limit_in", "委托价"),
+            callback_rate: mk(cx, "cb_rate_in", "百分比"),
+            tp: mk(cx, "tp_in", "触发价"),
+            sl: mk(cx, "sl_in", "触发价"),
+            leverage: mk(cx, "lev_in", "杠杆倍数"),
         }
     }
 
