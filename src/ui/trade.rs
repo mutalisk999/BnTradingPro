@@ -984,6 +984,7 @@ fn side_btn(on: bool, side: Side, market: Market, tag: &'static str) -> Stateful
         .text_color(if on { t.on_fill } else { t.text })
         .whitespace_nowrap()
         .cursor_pointer()
+        .active(|s| s.opacity(0.85))
         .when(!on, |d| d.hover(|s| s.bg(t.row_hover)))
         .child(txt)
 }
@@ -1129,11 +1130,11 @@ pub fn panel(app: &mut BnApp, window: &mut Window, cx: &mut Context<BnApp>) -> D
     };
     let mut card = widgets::card()
         .px(px(10.0))
-        .py(px(theme::SPACE_MD))
+        .py(px(theme::SPACE_LG))
         .my(px(theme::SPACE_XS))
         .flex()
         .flex_col()
-        .gap(px(theme::SPACE_SM));
+        .gap(px(theme::SPACE_MD));
 
     // 类型行：下拉按钮（菜单覆盖层在 root 末尾统一渲染，保证盖住后续行）
     let mut kind_row = row("类型");
@@ -1478,10 +1479,27 @@ pub fn panel(app: &mut BnApp, window: &mut Window, cx: &mut Context<BnApp>) -> D
     }
 
     // ---------- 百分比快捷填充 ----------
+    // 与有效期行同款分段样式（等宽、无边框、hover 变底）：两张操作条
+    // 上下相邻，视觉语言统一成一组
     let mut pct_row = row("比例");
     for (i, pct) in [25.0, 50.0, 75.0, 100.0].into_iter().enumerate() {
         pct_row = pct_row.child(
-            widgets::btn_ghost(ElementId::from(("pct", i)), format!("{}%", pct as i32), true)
+            div()
+                .id(ElementId::from(("pct", i)))
+                .flex_1()
+                .min_w(px(0.0))
+                .h(px(18.0))
+                .rounded(px(theme::R_SM))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(font_sm())
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .text_color(t.text_dim)
+                .hover(|s| s.bg(t.row_hover))
+                .cursor_pointer()
+                .child(format!("{}%", pct as i32))
                 .tooltip(move |_, cx| widgets::tooltip_view(tr("按可用余额估算").to_string(), cx))
                 .on_click(cx.listener(move |app: &mut BnApp, _, _, cx| {
                     fill_by_pct(app, pct / 100.0);
@@ -1490,7 +1508,6 @@ pub fn panel(app: &mut BnApp, window: &mut Window, cx: &mut Context<BnApp>) -> D
         );
     }
     card = card.child(pct_row);
-    root = root.child(card);
 
     // ---------- 汇总与量化预览 ----------
     let (qty_dec, price_dec) = (
@@ -1513,31 +1530,27 @@ pub fn panel(app: &mut BnApp, window: &mut Window, cx: &mut Context<BnApp>) -> D
     if let (Some(q), Some(p)) = (qty_dec, ref_px) {
         total = q.checked_mul(p);
     }
-    // 预估金额：紧凑单行小字
+
+    // ---------- 预估金额：随表单进卡片，标签与各输入行同列对齐，数值右缘对齐 ----------
     let total_val = div()
-        .text_size(font_sm())
-        .font_family(theme::FONT_MONO)
-        .whitespace_nowrap()
+        .flex_1()
+        .min_w(px(0.0))
+        .flex()
+        .justify_end()
         .overflow_hidden()
-        .child(match total {
-            Some(t) => t.normalize().round_dp(8).to_string().into(),
-            None => SharedString::from("—"),
-        });
-    root = root.child(
-        div()
-            .h(px(18.0))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(theme::SPACE_LG))
-            .child(
-                div()
-                    .text_size(font_sm())
-                    .text_color(t.text_dim)
-                    .child(tr("预估金额").to_string()),
-            )
-            .child(total_val),
-    );
+        .child(
+            div()
+                .text_size(font_sm())
+                .font_family(theme::FONT_MONO)
+                .text_color(if total.is_none() { t.text_dim } else { t.text })
+                .whitespace_nowrap()
+                .child(match total {
+                    Some(t) => t.normalize().round_dp(8).to_string().into(),
+                    None => SharedString::from("—"),
+                }),
+        );
+    card = card.child(row("预估金额").child(total_val));
+    root = root.child(card);
     // 量化预览提示
     if let Some(r) = &rule {
         let mut hints: Vec<String> = Vec::new();
@@ -1657,6 +1670,7 @@ pub fn panel(app: &mut BnApp, window: &mut Window, cx: &mut Context<BnApp>) -> D
             .when(!btn_enabled, |d| d.opacity(0.5))
             .when(btn_enabled, |d| {
                 d.cursor_pointer()
+                    .active(|s| s.opacity(0.85))
                     .hover(|s| s.bg(theme::lerp_color(color, t.text, 0.12)))
             })
             .when(btn_enabled, |d| {

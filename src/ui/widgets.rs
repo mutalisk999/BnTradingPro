@@ -424,6 +424,8 @@ pub fn pill_tab(
         .rounded(px(crate::ui::theme::R_MD))
         .text_size(font_body())
         .text_color(if active { t.accent } else { t.text_dim })
+        // 选中态加粗：与底色描边一起强化当前页（所有 pill 页签统一语义）
+        .when(active, |d| d.font_weight(FontWeight::SEMIBOLD))
         .whitespace_nowrap()
         .cursor_pointer()
         // 无条件带 1px 描边：选中 accent 描边、未选中透明，选中态有
@@ -490,6 +492,8 @@ pub fn pill_tab_rect(
         .rounded(px(crate::ui::theme::R_MD))
         .text_size(font_body())
         .text_color(if active { t.accent } else { t.text_dim })
+        // 选中态加粗：与底色描边一起强化当前页（所有 pill 页签统一语义）
+        .when(active, |d| d.font_weight(FontWeight::SEMIBOLD))
         .whitespace_nowrap()
         .cursor_pointer()
         // 无条件带 1px 描边：选中 accent 描边、未选中透明，选中态有
@@ -566,7 +570,7 @@ pub fn status_light_info(name: &str, st: &ConnState) -> (Rgba, String) {
     (c, st_txt)
 }
 
-fn status_item(name: &str, c: Rgba, glow: bool, hover: String) -> Stateful<gpui::Div> {
+fn status_item(name: &str, c: Rgba, _glow: bool, hover: String) -> Stateful<gpui::Div> {
     let t = cur();
     let tip = format!("{name} · {hover}");
     let el = div()
@@ -581,8 +585,9 @@ fn status_item(name: &str, c: Rgba, glow: bool, hover: String) -> Stateful<gpui:
                 .whitespace_nowrap()
                 .child(name.to_string()),
         )
+        // 状态灯：10px 槽位内 9px 圆点（原连接态外的微光晕环已移除——
+        // 浅色主题下淡色描边看着像圆点上叠了个白圈）
         .child(
-            // 状态灯：10px 槽位内 9px 圆点；已连接时加一圈微光晕（13px 描边环）
             div()
                 .relative()
                 .w(px(10.0))
@@ -595,20 +600,7 @@ fn status_item(name: &str, c: Rgba, glow: bool, hover: String) -> Stateful<gpui:
                         .items_center()
                         .justify_center()
                         .child(div().w(px(9.0)).h(px(9.0)).rounded_full().bg(c)),
-                )
-                .when(glow, |d| {
-                    d.child(
-                        div()
-                            .absolute()
-                            .top(px(-1.5))
-                            .left(px(-1.5))
-                            .w(px(13.0))
-                            .h(px(13.0))
-                            .rounded_full()
-                            .border_1()
-                            .border_color(faded(c, 0.35)),
-                    )
-                }),
+                ),
         );
     with_tooltip(el, tip)
 }

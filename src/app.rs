@@ -1056,7 +1056,7 @@ impl BnApp {
             // 品牌：与页签同一行内垂直居中
             .child(
                 div()
-                    .text_size(theme::font_xl())
+                    .text_size(theme::font_lg())
                     .font_weight(FontWeight::BOLD)
                     .text_color(t.accent)
                     .whitespace_nowrap()

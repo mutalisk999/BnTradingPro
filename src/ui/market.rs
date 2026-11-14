@@ -696,8 +696,12 @@ fn show_book_group(window: &mut Window, app: &mut BnApp, cx: &mut Context<BnApp>
                 .rounded(px(theme::R_SM))
                 .text_size(font_sm())
                 .whitespace_nowrap()
+                // 数值标签用等宽字体：四档数字小数点纵向成列
+                .font_family(theme::FONT_MONO)
                 .text_color(if selected { t.accent } else { t.text_dim })
-                .when(selected, |d| d.bg(t.row_hover))
+                // 选中态 accent 淡底：与有效期 chips / 页签同一套选中语言
+                .when(selected, |d| d.bg(faded(t.accent, theme::TINT_FILL)))
+                .when(!selected, |d| d.hover(|s| s.bg(t.row_hover)))
                 .cursor_pointer()
                 .on_click(cx.listener(move |app: &mut BnApp, _, _, cx| {
                     if app.page.book_group != i {
